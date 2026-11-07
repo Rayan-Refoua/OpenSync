@@ -1,0 +1,31 @@
+# Builds
+/build/
+/dist/
+/bin/
+*.exe
+*.dll
+*.pdb
+
+# Local research and generated data
+/scratch/
+/cache/
+/tmp/
+/testdata-local/
+/proprietary/
+/vendor-local/
+
+# Python tooling
+__pycache__/
+.venv/
+*.pyc
+
+# Editors
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Logs
+*.log
