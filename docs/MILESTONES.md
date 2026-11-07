@@ -41,6 +41,14 @@ Reference: docs/PROGRESSIVE-ENGINE.md
 
 Exit: Repeatable and measurable reference tests.
 
+## M1 memory/cache benchmarks
+
+- [ ] Test adaptive RAM budget enforcement
+- [ ] Measure disk writes during RAM-first operation
+- [ ] Test memory-pressure spill and recovery
+- [ ] Test project reopening with reusable analysis cache
+- [ ] Test reopening when cache files are missing
+
 ## M2 — Audio analysis prototype
 
 - [ ] Decode representative audio formats

@@ -48,3 +48,23 @@ Benchmark both accuracy and throughput.
 ## Decision record
 
 No final architecture decisions have been made.
+
+## RAM-001 — Memory and cache policy
+
+Status: Approved design direction
+Date: 2026-11-07
+
+- Adaptive, RAM-first processing.
+- User-preferred configurable memory budget: 8 GiB.
+- Default budget: auto-detected based on available RAM.
+- Memory budget is a ceiling, not a preallocation.
+- Stream decoding and reuse compact in-memory features.
+- Avoid unnecessary intermediate media files.
+- Disk spill permitted under memory pressure, with limits.
+- Optional persistent analysis cache across sessions.
+- Saved projects retain sync decisions without their cache.
+- Validate cache entries against source and algorithm changes.
+- Allow users to inspect, limit and clear disk caches.
+- Benchmark peak RAM, disk writes and cache reuse.
+
+Implementation details and automatic budget formula: TBD.
