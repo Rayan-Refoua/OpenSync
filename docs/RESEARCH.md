@@ -173,3 +173,79 @@ implementation material into the public repository.
 4. Determine how drift is estimated and corrected.
 5. Examine project/export interchange formats.
 6. Establish reference behavior using test media.
+
+## M0 Audio Engine Investigation — 2026-11-07
+
+Binary: PEServer.exe, image base 0x140000000.
+Addresses below are from this installed binary version.
+
+### Confirmed function relationships
+
+sub_14028e340
+    -> sub_140288810 (19,667 bytes)
+        -> sub_1402c8b20 (15,780 bytes)
+
+sub_1402c3700
+    -> sub_1402c26c0 (1,615 bytes)
+
+The first call chain is confirmed through Binary Ninja
+cross-references and HLIL. The peak-detector path has
+not yet been connected to the main matching path.
+
+### Main matching function
+
+sub_140288810 contains:
+
+- SoundfileMatchEqualLength diagnostic
+- Using snippet-matching algorithm diagnostic
+- At least two calls to sub_1402c8b20
+- Weighted offset diagnostic
+
+The two calls occur around HLIL lines 938 and 2328.
+HLIL line numbers are analysis-specific, not stable IDs.
+
+### Offset-fitting function
+
+sub_1402c8b20 contains:
+
+"Position, Offset, L1 Fit, L2 Fit"
+
+It is directly called by sub_140288810.
+
+Its mathematical operation, input representation,
+output representation and drift role remain UNKNOWN.
+
+### Peak detector
+
+sub_1402c26c0 contains:
+
+"FindPeaks: nAfter = %u, nDataPerBin = %u"
+
+Caller: sub_1402c3700.
+
+Connection to main matching path: UNKNOWN.
+
+### Relevant earlier discoveries
+
+- Drift correction is a distinct operation.
+- A diagnostic explicitly announces restarting sync
+  after drift correction.
+- Audio processing classes include FIR filtering,
+  decimation, downmixing and block normalization.
+- Metadata-based timing uses graph/outlier concepts.
+- Source-track creation and synchronization are
+  separate concerns for the OpenSync design.
+
+### Current priorities
+
+1. Determine what sub_1402c8b20 fits and returns.
+2. Trace snippet selection and matching features.
+3. Determine how drift observations are generated.
+4. Map drift correction and re-synchronization.
+5. Develop a ground-truth benchmark corpus.
+
+### Research caution
+
+Diagnostic names do not establish algorithms.
+Decompiled variables and types may be inaccurate.
+All OpenSync algorithms will be independently written.
