@@ -18,6 +18,16 @@ All milestones are provisional until research concludes.
 
 Exit: Sufficient evidence to propose architecture.
 
+## M0.5 — Progressive engine design [DOCUMENTED]
+
+- [x] Establish evidence-driven progressive matching policy
+- [x] Define graph-consistency requirements
+- [x] Define contextual retry and short-clip strategies
+- [x] Separate source identity from synchronization timing
+- [ ] Validate strategies experimentally in M1/M2
+
+Reference: docs/PROGRESSIVE-ENGINE.md
+
 ## M1 — Requirements and test corpus
 
 - [ ] Define functional requirements
