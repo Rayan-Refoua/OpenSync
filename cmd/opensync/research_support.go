@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"math"
 	"os"
 	"strings"
 
@@ -75,19 +74,8 @@ func researchSupportCommand(projectPath, indexPath, discoveryPath, output string
 		return err
 	}
 	defer query.Close()
-	cfg := researchmatch.Dream()
-	if math.Abs(discovery.Research.HopMS-8) < 1e-9 && math.Abs(discovery.Research.IntegrationMS-8) < 1e-9 {
-		cfg.HopSamples = 128
-	} else if math.Abs(discovery.Research.HopMS-2) < 1e-9 {
-		cfg.HopSamples = 32
-		if math.Abs(discovery.Research.IntegrationMS-8) < 1e-9 {
-			cfg.IntegrationFrames = 4
-		} else if math.Abs(discovery.Research.IntegrationMS-2) > 1e-9 {
-			return fmt.Errorf("unknown 2ms integration scheme")
-		}
-	} else {
-		return fmt.Errorf("unsupported feature resolution and integration")
-	}
+	cfg, err := researchSupportConfig(discovery.Research)
+	if err != nil { return err }
 	if len(discovery.Research.Peaks) > cfg.Peaks {
 		return fmt.Errorf("too many reported discovery peaks")
 	}
@@ -129,4 +117,31 @@ func researchSupportCommand(projectPath, indexPath, discoveryPath, output string
 			len(p.Windows), p.WindowsWithMeasurableSignal, p.PositiveLocalWindows)
 	}
 	return nil
+}
+
+func researchSupportConfig(result researchmatch.Result) (researchmatch.Config, error) {
+	cfg := researchmatch.Dream()
+	// M22 reports omit integration_ms because their original Result
+	// schema contained only hop_ms. Default ONLY for those known modes.
+	// Explicit unknown integration settings remain errors.
+	switch result.HopMS {
+	case 8:
+		cfg.HopSamples = 128
+		if result.IntegrationMS != 0 && result.IntegrationMS != 8 {
+			return cfg, fmt.Errorf("unsupported 8ms integration: %g", result.IntegrationMS)
+		}
+	case 2:
+		cfg.HopSamples = 32
+		switch result.IntegrationMS {
+		case 0, 2:
+			// M22 2ms reports or explicit 2ms integration.
+		case 8:
+			cfg.IntegrationFrames = 4
+		default:
+			return cfg, fmt.Errorf("unsupported 2ms integration: %g", result.IntegrationMS)
+		}
+	default:
+		return cfg, fmt.Errorf("unsupported feature hop: %g", result.HopMS)
+	}
+	return cfg, nil
 }
