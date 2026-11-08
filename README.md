@@ -5,7 +5,14 @@ application inspired by the capabilities of Red Giant PluralEyes.
 
 Status: Research / Discovery
 Project name: Provisional
-License: To be selected before publishing code
+License: GNU GPL v3.0 or later (GPL-3.0-or-later)
+
+## License
+
+OpenSync is distributed under the GNU General Public License, version 3
+or (at your option) any later version (`GPL-3.0-or-later`). See [LICENSE](LICENSE)
+for the full text. Modifications and redistributions must comply with its
+terms. Contributions should be submitted under this same project license.
 
 ## Mission
 
