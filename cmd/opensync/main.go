@@ -35,6 +35,9 @@ func main() {
 	case len(os.Args) == 4 && os.Args[1] == "schedule":
 		err = scheduleDiscovery(os.Args[2], os.Args[3])
 
+	case len(os.Args) == 5 && os.Args[1] == "replan":
+		err = replanDiscovery(os.Args[2], os.Args[3], os.Args[4])
+
 	case len(os.Args) == 5 && os.Args[1] == "probe":
 		err = probeHypothesis(os.Args[2], os.Args[3], os.Args[4])
 
