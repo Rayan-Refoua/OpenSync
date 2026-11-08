@@ -113,12 +113,12 @@ func BuildFullPreviewManifest(original, preview []byte, p *projectstate.Project,
 			state = "diagnostic_measured_not_certified"
 		}
 		placements[recordingID] = RecordingPlacement{
-			RecordingID: recordingID,
-			SourcePath: p.Recordings[recordingID].SourcePath,
-			VideoClipID: id,
-			AudioClipIDs: []string{},
+			RecordingID:   recordingID,
+			SourcePath:    p.Recordings[recordingID].SourcePath,
+			VideoClipID:   id,
+			AudioClipIDs:  []string{},
 			OriginalStart: b.Start, PreviewStart: a.Start,
-			DurationFrames: b.End-b.Start, Status: state,
+			DurationFrames: b.End - b.Start, Status: state,
 		}
 	}
 	if len(placements) != len(p.Recordings) {
@@ -161,7 +161,7 @@ func BuildFullPreviewManifest(original, preview []byte, p *projectstate.Project,
 	}
 	sort.Strings(recordingIDs)
 	result := FullPreviewManifest{Version: 1,
-		Status: "FULL_SEQUENCE_PREVIEW_MIXED_DIAGNOSTIC_AND_INHERITED",
+		Status:          "FULL_SEQUENCE_PREVIEW_MIXED_DIAGNOSTIC_AND_INHERITED",
 		TotalRecordings: len(p.Recordings), Placements: make([]RecordingPlacement, 0, len(p.Recordings)),
 	}
 	for _, id := range recordingIDs {
