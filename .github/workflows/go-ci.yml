@@ -1,0 +1,41 @@
+name: Go CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: go-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Go checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Format
+        shell: bash
+        run: |
+          files="$(gofmt -l cmd internal)"
+          if [[ -n "$files" ]]; then
+            printf 'Unformatted files:\n%s\n' "$files"
+            exit 1
+          fi
+      - name: Unit and integration tests
+        run: go test ./...
+      - name: Static analysis
+        run: go vet ./...
+      - name: Build CLI
+        run: go build -o /tmp/opensync ./cmd/opensync
