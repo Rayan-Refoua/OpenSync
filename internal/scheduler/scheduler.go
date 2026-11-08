@@ -11,13 +11,13 @@ import (
 )
 
 type Anchor struct {
-	RecordingID       string  `json:"recording_id"`
-	SourcePath        string  `json:"source_path"`
-	DurationSeconds   float64 `json:"duration_seconds"`
-	UniqueNeighbors   int     `json:"unique_neighbors"`
-	HypothesisCount   int     `json:"hypothesis_count"`
-	DiscoveryWindows  int     `json:"discovery_windows"`
-	Priority          float64 `json:"priority"`
+	RecordingID      string  `json:"recording_id"`
+	SourcePath       string  `json:"source_path"`
+	DurationSeconds  float64 `json:"duration_seconds"`
+	UniqueNeighbors  int     `json:"unique_neighbors"`
+	HypothesisCount  int     `json:"hypothesis_count"`
+	DiscoveryWindows int     `json:"discovery_windows"`
+	Priority         float64 `json:"priority"`
 }
 
 type Investigation struct {
