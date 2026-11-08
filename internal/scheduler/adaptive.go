@@ -23,26 +23,26 @@ type Feedback struct {
 }
 
 type NextStep struct {
-	HypothesisID      string  `json:"hypothesis_id"`
-	Reference         string  `json:"reference"`
-	Query             string  `json:"query"`
-	OffsetNS          int64   `json:"discovery_offset_ns"`
-	Reason            string  `json:"reason"`
-	Phase             string  `json:"phase"`
-	SupportWindows    int     `json:"discovery_windows"`
-	Score             float64 `json:"investigation_priority"`
-	CompetingOptions  int     `json:"competing_options"`
+	HypothesisID     string  `json:"hypothesis_id"`
+	Reference        string  `json:"reference"`
+	Query            string  `json:"query"`
+	OffsetNS         int64   `json:"discovery_offset_ns"`
+	Reason           string  `json:"reason"`
+	Phase            string  `json:"phase"`
+	SupportWindows   int     `json:"discovery_windows"`
+	Score            float64 `json:"investigation_priority"`
+	CompetingOptions int     `json:"competing_options"`
 }
 
 type AdaptivePlan struct {
-	Version             int        `json:"version"`
-	Status              string     `json:"status"`
-	SeedRecordingID     string     `json:"seed_recording_id"`
-	VerifiedRecordings  []string   `json:"verified_recordings"`
-	Next                *NextStep  `json:"next,omitempty"`
-	Pending             int        `json:"pending"`
-	Deferred            []Attempt  `json:"deferred"`
-	RejectedExcluded    int        `json:"rejected_excluded"`
+	Version            int        `json:"version"`
+	Status             string     `json:"status"`
+	SeedRecordingID    string     `json:"seed_recording_id"`
+	VerifiedRecordings []string   `json:"verified_recordings"`
+	Next               *NextStep  `json:"next,omitempty"`
+	Pending            int        `json:"pending"`
+	Deferred           []Attempt  `json:"deferred"`
+	RejectedExcluded   int        `json:"rejected_excluded"`
 }
 
 // Replan chooses exactly one next diagnostic action after incorporating
