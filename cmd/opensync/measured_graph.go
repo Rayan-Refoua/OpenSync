@@ -86,7 +86,7 @@ func measuredGraphCommand(projectPath,manifestPath,output string)error{
  for _,entry:=range manifest.Reports{
   if entry.Training==""||entry.Holdout==""{return fmt.Errorf("missing report file path")}
   var train TrainingReport
-  if err:=readJSONStrict(entry.Training,&train);err!=nil{return err}
+  if data,err:=os.ReadFile(entry.Training);err!=nil{return err}else if err:=json.Unmarshal(data,&train);err!=nil{return fmt.Errorf("training report %q: %w",entry.Training,err)}
   var hold HoldoutReport
   if err:=readJSONStrict(entry.Holdout,&hold);err!=nil{return err}
   c,err:=candidateFromReports(train,hold,entry.Holdout);if err!=nil{return err}
