@@ -72,7 +72,6 @@ func TestBaselineCoverageRejectsMediaLossAndBrokenAudio(t *testing.T) {
 	}
 }
 
-
 func TestBaselineCoverageAllowsValidVideoTrackReassignment(t *testing.T) {
 	baseline := completePreviewFixture()
 	clip := []byte(`<clipitem id="target"><name>B</name><start>10</start><end>30</end><in>0</in><out>20</out></clipitem>`)
