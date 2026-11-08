@@ -81,20 +81,28 @@ func TestFailedTrainingQueryStillExcludedFromHoldout(t *testing.T) {
 
 func TestHoldoutCapacityRespectsFailedAndAdjacentTraining(t *testing.T) {
 	training := []TrainProbe{
-		{QuerySeconds:10}, {QuerySeconds:20}, {QuerySeconds:30},
+		{QuerySeconds: 10}, {QuerySeconds: 20}, {QuerySeconds: 30},
 	}
-	none := disjointHoldoutCandidates(training,8_000_000_000,10,38)
-	if len(none)!=0 {t.Fatalf("unexpected heldout from densely occupied region: %v",none)}
-	available := disjointHoldoutCandidates(training,8_000_000_000,0,65)
+	none := disjointHoldoutCandidates(training, 8_000_000_000, 10, 38)
+	if len(none) != 0 {
+		t.Fatalf("unexpected heldout from densely occupied region: %v", none)
+	}
+	available := disjointHoldoutCandidates(training, 8_000_000_000, 0, 65)
 	for i, start := range available {
-		if start < 0 || start+8 > 65 {t.Fatalf("out of bounds: %.3f",start)}
-		if i>0 && start < available[i-1]+8.5 {t.Fatalf("overlapping holdouts: %v",available)}
-		for _,p := range training {
+		if start < 0 || start+8 > 65 {
+			t.Fatalf("out of bounds: %.3f", start)
+		}
+		if i > 0 && start < available[i-1]+8.5 {
+			t.Fatalf("overlapping holdouts: %v", available)
+		}
+		for _, p := range training {
 			if start < p.QuerySeconds+8.5 && p.QuerySeconds < start+8.5 {
-				t.Fatalf("training leaked into holdout: %.3f",start)
+				t.Fatalf("training leaked into holdout: %.3f", start)
 			}
 		}
 	}
-	got := disjointHoldouts(training,8_000_000_000,0,65,3)
-	if len(got)>3||len(got)>len(available) {t.Fatalf("wrong holdout budget: %v",got)}
+	got := disjointHoldouts(training, 8_000_000_000, 0, 65, 3)
+	if len(got) > 3 || len(got) > len(available) {
+		t.Fatalf("wrong holdout budget: %v", got)
+	}
 }
