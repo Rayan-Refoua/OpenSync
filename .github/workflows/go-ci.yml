@@ -31,7 +31,7 @@ jobs:
           files="$(gofmt -l cmd internal)"
           if [[ -n "$files" ]]; then
             printf 'Unformatted files:\n%s\n' "$files"
-            gofmt -d internal/measuredgraph/graph.go internal/measuredgraph/graph_test.go cmd/opensync/measured_graph.go cmd/opensync/measured_graph_test.go
+            gofmt -d internal/researchmatch/match.go internal/researchmatch/match_test.go cmd/opensync/research_match.go
             exit 1
           fi
       - name: Unit and integration tests
