@@ -20,11 +20,13 @@ type TrainProbe struct {
 	Error        string                      `json:"error"`
 }
 type TrainingReport struct {
-	HypothesisID string       `json:"hypothesis_id"`
-	Reference    string       `json:"reference"`
-	Query        string       `json:"query"`
-	QualityMode  string       `json:"quality_mode"`
-	Probes       []TrainProbe `json:"probes"`
+	HypothesisID                string       `json:"hypothesis_id"`
+	Reference                   string       `json:"reference"`
+	Query                       string       `json:"query"`
+	QualityMode                 string       `json:"quality_mode"`
+	Probes                      []TrainProbe `json:"probes"`
+	Schedule                    string       `json:"schedule"`
+	ReservedHoldoutQuerySeconds []float64    `json:"reserved_holdout_query_seconds"`
 }
 
 type HoldoutWindow struct {
@@ -58,6 +60,7 @@ type HoldoutReport struct {
 	ControlWins                int             `json:"control_wins"`
 	Result                     string          `json:"result"`
 	GraphCertification         string          `json:"graph_certification"`
+	ValidationAllocation       string          `json:"validation_allocation"`
 	Windows                    []HoldoutWindow `json:"windows"`
 }
 
@@ -283,9 +286,38 @@ func verifyHoldout(projectPath, indexPath, trainPath, mode, output string) error
 	high := math.Min(float64(query.Frames())/16000-windowSeconds,
 		float64(ref.Frames())/16000-float64(h.OffsetNS)/1e9-windowSeconds-radiusSeconds) - 0.25
 	positions := disjointHoldouts(training.Probes, preset.WindowNS, low, high, preset.HeldOutChecks)
+	report.ValidationAllocation = "post_training_disjoint_legacy"
 	report.HoldoutsAvailable = len(disjointHoldoutCandidates(training.Probes, preset.WindowNS, low, high))
+	if training.Schedule != "" {
+		if training.Schedule != "preallocated_disjoint_v1" {
+			return fmt.Errorf("unknown reservation schedule %q", training.Schedule)
+		}
+		report.ValidationAllocation = training.Schedule
+		positions = append([]float64(nil), training.ReservedHoldoutQuerySeconds...)
+		report.HoldoutsAvailable = len(positions)
+		if len(positions) > preset.HeldOutChecks {
+			return fmt.Errorf("reserved more holdouts than preset")
+		}
+		for i, t := range positions {
+			if math.IsNaN(t) || math.IsInf(t, 0) || t < low-0.001 || t > high+0.001 {
+				return fmt.Errorf("reserved window out of bounds")
+			}
+			if i > 0 && t < positions[i-1]+windowSeconds+0.5-0.001 {
+				return fmt.Errorf("reserved windows overlap or unsorted")
+			}
+			for _, train := range training.Probes {
+				if t < train.QuerySeconds+windowSeconds+0.5 &&
+					train.QuerySeconds < t+windowSeconds+0.5 {
+					return fmt.Errorf("reserved validation overlaps training at %.3fs", t)
+				}
+			}
+		}
+	}
 	report.HoldoutsTested = len(positions)
 	report.HoldoutSelection = "disjoint_windows_available"
+	if training.Schedule == "preallocated_disjoint_v1" {
+		report.HoldoutSelection = "pre_reserved_before_training"
+	}
 	if report.HoldoutsAvailable < report.HoldoutsRequested {
 		report.HoldoutSelection = "insufficient_disjoint_audio_duration"
 	}
