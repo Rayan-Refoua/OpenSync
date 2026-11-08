@@ -115,7 +115,7 @@ func transform(input []float64,kind string,seed int64)[]int16{
  return output
 }
 func writeWAV(path string,samples []int16)error{
- if len(samples)>math.MaxUint32/2-22{return fmt.Errorf("WAV too large")}
+ if int64(len(samples)) > (int64(^uint32(0))-36)/2 { return fmt.Errorf("WAV too large") }
  wav:=make([]byte,44+2*len(samples))
  copy(wav[:4],"RIFF")
  binary.LittleEndian.PutUint32(wav[4:],uint32(len(wav)-8))
