@@ -19,10 +19,13 @@ type Config struct {
 	MinOverlapSeconds float64 `json:"min_overlap_seconds"`
 	Peaks             int     `json:"peaks"`
 	SeparationSeconds float64 `json:"separation_seconds"`
+	// IntegrationFrames smooths acoustic derivatives over consecutive hops
+	// without changing the search grid or its sampling rate.
+	IntegrationFrames int `json:"integration_frames"`
 }
 
 func Dream() Config {
-	return Config{HopSamples: 32, MinOverlapSeconds: 8, Peaks: 12, SeparationSeconds: 1}
+	return Config{HopSamples: 32, MinOverlapSeconds: 8, Peaks: 12, SeparationSeconds: 1, IntegrationFrames: 1}
 }
 
 type Peak struct {
@@ -36,6 +39,7 @@ type Result struct {
 	Status           string  `json:"status"`
 	Method           string  `json:"method"`
 	HopMS            float64 `json:"hop_ms"`
+	IntegrationMS    float64 `json:"integration_ms"`
 	ReferenceSeconds float64 `json:"reference_seconds"`
 	QuerySeconds     float64 `json:"query_seconds"`
 	LagsExamined     int     `json:"lags_examined"`
@@ -46,6 +50,9 @@ type Result struct {
 func (c Config) validate() error {
 	if c.HopSamples != 32 && c.HopSamples != 128 {
 		return fmt.Errorf("supported research hop sizes: 32 (2 ms), 128 (8 ms)")
+	}
+	if (c.IntegrationFrames != 1 && c.IntegrationFrames != 4) || (c.IntegrationFrames == 4 && c.HopSamples != 32) {
+		return fmt.Errorf("supported feature integration: 1 hop or four 2ms hops (8ms)")
 	}
 	if c.MinOverlapSeconds < 2 || c.MinOverlapSeconds > 300 || c.Peaks < 1 || c.Peaks > 30 || c.SeparationSeconds <= 0 || c.SeparationSeconds > 30 {
 		return fmt.Errorf("invalid research configuration")
@@ -111,6 +118,25 @@ func Extract(r *audio.Reader, c Config) ([3][]float64, error) {
 			}
 		}
 		pos += count
+	}
+	if c.IntegrationFrames > 1 {
+		// Causal integration avoids an artificial timestamp shift between
+		// clips while reducing high-frequency frame-to-frame variations.
+		for band := range result {
+			original := result[band]
+			integrated := make([]float64, len(original))
+			var sum float64
+			for i, value := range original {
+				sum += value
+				if i >= c.IntegrationFrames {
+					sum -= original[i-c.IntegrationFrames]
+				}
+				n := i + 1
+				if n > c.IntegrationFrames { n = c.IntegrationFrames }
+				integrated[i] = sum / float64(n)
+			}
+			result[band] = integrated
+		}
 	}
 	return result, nil
 }
@@ -234,6 +260,7 @@ func MatchFeatures(ref, query [3][]float64, c Config) (Result, error) {
 	result := Result{Status: "EXHAUSTIVE_DISCOVERY_DIAGNOSTIC_NOT_CERTIFIED",
 		Method:           "three_band_log_energy_derivative_fft_pearson_v1",
 		HopMS:            float64(c.HopSamples) * 1000 / SampleRate,
+		IntegrationMS: float64(c.IntegrationFrames*c.HopSamples)*1000/SampleRate,
 		ReferenceSeconds: float64(len(ref[0])*c.HopSamples) / SampleRate,
 		QuerySeconds:     float64(len(query[0])*c.HopSamples) / SampleRate,
 		LagsExamined:     len(bands[0]), Peaks: []Peak{}, Certification: "not_assessed"}
