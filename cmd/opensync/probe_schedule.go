@@ -85,3 +85,48 @@ func planReservedWindows(low, high float64, preset quality.Preset) reservedSched
 	}
 	return result
 }
+
+type adaptiveSchedule struct {
+	WindowNS int64
+	Low      float64
+	High     float64
+	Plan     reservedSchedule
+}
+
+// chooseAdaptiveSchedule examines only clip durations and the proposed offset.
+// It does not inspect audio samples, correlation or verification residuals.
+// Prefer the longest window providing the preset's requested independent
+// holdouts alongside at least two training regions; otherwise retain the
+// longest usable window with the greatest available validation budget.
+func chooseAdaptiveSchedule(queryFrames, refFrames int64, offsetNS int64, preset quality.Preset) (adaptiveSchedule, bool) {
+	offset := float64(offsetNS) / 1e9
+	radius := float64(preset.SearchRadiusNS) / 1e9
+	candidates := []int64{preset.WindowNS, 4_000_000_000, 2_000_000_000}
+	var best adaptiveSchedule
+	for _, windowNS := range candidates {
+		if windowNS > preset.WindowNS || windowNS <= 0 {
+			continue
+		}
+		window := float64(windowNS) / 1e9
+		low := math.Max(0, radius-offset) + 0.25
+		high := math.Min(float64(queryFrames)/16000-window,
+			float64(refFrames)/16000-offset-window-radius) - 0.25
+		p := preset
+		p.WindowNS = windowNS
+		plan := planReservedWindows(low, high, p)
+		if len(plan.Training) < 2 {
+			continue
+		}
+		candidate := adaptiveSchedule{WindowNS: windowNS, Low: low, High: high, Plan: plan}
+		if best.WindowNS == 0 {
+			best = candidate
+		}
+		if len(plan.Holdout) >= preset.HeldOutChecks {
+			return candidate, true
+		}
+		if len(plan.Holdout) > len(best.Plan.Holdout) {
+			best = candidate
+		}
+	}
+	return best, best.WindowNS != 0
+}

@@ -121,6 +121,8 @@ func probeHypothesisScheduled(projectPath, inventoryPath, hypothesisID, mode str
 		Schedule                    string    `json:"schedule,omitempty"`
 		ReservedHoldoutQuerySeconds []float64 `json:"reserved_holdout_query_seconds,omitempty"`
 		AvailableDisjointRegions    int       `json:"available_disjoint_regions,omitempty"`
+		EffectiveWindowNS           int64     `json:"effective_window_ns,omitempty"`
+		AdaptiveSelection           string    `json:"adaptive_selection,omitempty"`
 		Probes                      []outcome `json:"probes"`
 	}{
 		Status:        "DIAGNOSTIC_NOT_CERTIFIED",
@@ -134,7 +136,15 @@ func probeHypothesisScheduled(projectPath, inventoryPath, hypothesisID, mode str
 
 	queryTimes := make([]float64, 0, len(preset.ProbeFractions))
 	if reserve {
-		allocation := planReservedWindows(low, high, preset)
+		selection, ok := chooseAdaptiveSchedule(query.Frames(), ref.Frames(), h.OffsetNS, preset)
+		if !ok {
+			return fmt.Errorf("insufficient independent audio even with 2-second windows")
+		}
+		preset.WindowNS = selection.WindowNS
+		low, high = selection.Low, selection.High
+		allocation := selection.Plan
+		result.EffectiveWindowNS = preset.WindowNS
+		result.AdaptiveSelection = "duration_capacity_only_v1"
 		queryTimes = allocation.Training
 		result.Schedule = "preallocated_disjoint_v1"
 		result.ReservedHoldoutQuerySeconds = allocation.Holdout
