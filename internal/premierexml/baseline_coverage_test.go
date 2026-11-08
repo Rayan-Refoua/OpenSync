@@ -24,10 +24,10 @@ func TestBaselineCoverageDoesNotCountUnverifiedPairsAsCertified(t *testing.T) {
 		t.Fatalf("incorrect baseline: %+v", same)
 	}
 	plan := Plan{Placements: []Placement{
-		{ClipID:"target",Media:"video",Track:2,
-			ExpectedStart:170,ExpectedEnd:190,NewStart:10},
-		{ClipID:"target-a",Media:"audio",Track:1,
-			ExpectedStart:170,ExpectedEnd:190,NewStart:10},
+		{ClipID: "target", Media: "video", Track: 2,
+			ExpectedStart: 170, ExpectedEnd: 190, NewStart: 10},
+		{ClipID: "target-a", Media: "audio", Track: 1,
+			ExpectedStart: 170, ExpectedEnd: 190, NewStart: 10},
 	}}
 	moved, err := Patch(baseline, plan)
 	if err != nil {
