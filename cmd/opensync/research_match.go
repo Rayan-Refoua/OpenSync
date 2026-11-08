@@ -71,10 +71,13 @@ func researchMatchCommand(projectPath, indexPath, referenceID, queryID, hopMS, o
 	switch hopMS {
 	case "2":
 		cfg.HopSamples = 32
+	case "2s8":
+		cfg.HopSamples = 32
+		cfg.IntegrationFrames = 4
 	case "8":
 		cfg.HopSamples = 128
 	default:
-		return fmt.Errorf("supported hop resolutions: 2 or 8 milliseconds")
+		return fmt.Errorf("supported modes: 8, 2, or 2s8 (2ms hop with 8ms integration)")
 	}
 	result, err := researchmatch.Match(ref, query, cfg)
 	if err != nil {
@@ -94,8 +97,8 @@ func researchMatchCommand(projectPath, indexPath, referenceID, queryID, hopMS, o
 	if err := exclusiveCreatePreview(outPath, encoded); err != nil {
 		return err
 	}
-	fmt.Printf("STATUS: %s\nREFERENCE: %s\nQUERY: %s\nHOP_MS: %.1f\nLAGS: %d\nPEAKS: %d\nCERTIFICATION: %s\nREPORT: %s\n",
-		report.Status, referenceID, queryID, result.HopMS, result.LagsExamined, len(result.Peaks), result.Certification, outPath)
+	fmt.Printf("STATUS: %s\nREFERENCE: %s\nQUERY: %s\nHOP_MS: %.1f\nINTEGRATION_MS: %.1f\nLAGS: %d\nPEAKS: %d\nCERTIFICATION: %s\nREPORT: %s\n",
+		report.Status, referenceID, queryID, result.HopMS, result.IntegrationMS, result.LagsExamined, len(result.Peaks), result.Certification, outPath)
 	for i, peak := range result.Peaks {
 		if i >= 5 {
 			break
