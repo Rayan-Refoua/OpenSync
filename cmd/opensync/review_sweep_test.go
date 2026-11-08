@@ -34,7 +34,7 @@ func TestSweepReviewFlagsC0594AndRetainsC0599(t *testing.T) {
 			windows[i] = map[string]any{
 				"measurement": map[string]any{
 					"measured_offset_ns": int64(52_711_000_000 + i*1_000_000),
-					"correlation": correlation,
+					"correlation":        correlation,
 				},
 				"spectral": map[string]any{
 					"band_correlation": []float64{spectral, spectral, spectral},
