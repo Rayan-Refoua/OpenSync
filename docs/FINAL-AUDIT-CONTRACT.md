@@ -33,7 +33,8 @@ applicable acceptance condition is evidenced by artifacts and real media.
 - [x] Preserve genuinely unsyncable/unresolved recordings; no invented acoustic offset
 - [x] Baseline-preserving XML exporter with externally reviewed placements and explicit loss-of-overlap authorization
 - [x] Detailed provenance on inherited versus externally reviewed positions; no false certification
-- [ ] Global timing graph reconstruction with redundant-cycle consistency, disconnected components, alternate paths and uncertainty propagation
+- [x] M19 diagnostic graph enumerates disconnected components and alternate candidate paths with raw cycle residuals (not acoustic certificates)
+- [ ] Certified global timing graph with calibrated cycle consistency, independently checked paths and uncertainty propagation
 - [ ] Native machine-produced independent verification certificates consumed by the exporter (currently external review only)
 - [ ] Output real dataset Premiere XML based on evidence-gated placements, not experimental graph guesses
 
