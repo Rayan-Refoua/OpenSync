@@ -9,8 +9,8 @@ import (
 
 	"opensync/internal/acousticverify"
 	"opensync/internal/audio"
-	"opensync/internal/quality"
 	"opensync/internal/projectstate"
+	"opensync/internal/quality"
 )
 
 type probeCacheEntry struct {
@@ -107,21 +107,21 @@ func probeHypothesisPreset(projectPath, inventoryPath, hypothesisID, mode string
 	}
 
 	result := struct {
-		Status       string    `json:"status"`
-		HypothesisID string    `json:"hypothesis_id"`
-		Reference    string    `json:"reference"`
-		Query        string    `json:"query"`
-		PredictedS   float64   `json:"predicted_offset_seconds"`
-		QualityMode  string    `json:"quality_mode"`
-		HeldOutStatus string `json:"held_out_status"`
-		Probes       []outcome `json:"probes"`
+		Status        string    `json:"status"`
+		HypothesisID  string    `json:"hypothesis_id"`
+		Reference     string    `json:"reference"`
+		Query         string    `json:"query"`
+		PredictedS    float64   `json:"predicted_offset_seconds"`
+		QualityMode   string    `json:"quality_mode"`
+		HeldOutStatus string    `json:"held_out_status"`
+		Probes        []outcome `json:"probes"`
 	}{
-		Status:       "DIAGNOSTIC_NOT_CERTIFIED",
-		HypothesisID: hypothesisID,
-		Reference:    h.Reference,
-		Query:        h.Query,
-		PredictedS:   offset,
-		QualityMode:  string(preset.Mode),
+		Status:        "DIAGNOSTIC_NOT_CERTIFIED",
+		HypothesisID:  hypothesisID,
+		Reference:     h.Reference,
+		Query:         h.Query,
+		PredictedS:    offset,
+		QualityMode:   string(preset.Mode),
 		HeldOutStatus: "not_yet_independently_verified",
 	}
 
