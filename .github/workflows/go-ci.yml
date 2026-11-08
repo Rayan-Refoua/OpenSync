@@ -31,7 +31,7 @@ jobs:
           files="$(gofmt -l cmd internal)"
           if [[ -n "$files" ]]; then
             printf 'Unformatted files:\n%s\n' "$files"
-            gofmt -d internal/sourcetracks/sequence_priority.go internal/sourcetracks/sequence_priority_test.go cmd/opensync/sequence_plan.go cmd/opensync/sequence_plan_test.go cmd/opensync/recover.go
+            gofmt -d cmd/opensync/sequence_batch.go cmd/opensync/sequence_batch_test.go
             exit 1
           fi
       - name: Unit and integration tests
