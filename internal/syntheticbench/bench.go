@@ -217,13 +217,13 @@ func Generate(dir string) ([]Scenario, error) {
 	aThird := targetOffset(refStart, thirdStart)
 	bThird := targetOffset(queryStart, thirdStart)
 	cases := []Scenario{
-		{"clean", "reference.wav", "query-clean.wav", truth, "positive baseline shared source"},
-		{"microphone", "reference.wav", "query-mic.wav", truth, "gain, filtering and independent mic noise"},
-		{"gate-compression", "reference.wav", "query-gated.wav", truth, "gate, saturation and microphone noise"},
-		{"drift-250ppm", "reference.wav", "query-drift.wav", truth, "increasing nonlinear-in-position mismatch; single offset not sufficient"},
-		{"unrelated-negative", "reference.wav", "query-unrelated.wav", nil, "independent noise must not be automatically certified"},
-		{"triangle-A-C", "reference.wav", "third.wav", aThird, "known time offset on third camera"},
-		{"triangle-B-C", "query-clean.wav", "third.wav", bThird, "known independent triangle leg"},
+		{"clean", "reference.wav", "query-clean.wav", nil, truth, "positive baseline shared source"},
+		{"microphone", "reference.wav", "query-mic.wav", nil, truth, "gain, filtering and independent mic noise"},
+		{"gate-compression", "reference.wav", "query-gated.wav", nil, truth, "gate, saturation and microphone noise"},
+		{"drift-250ppm", "reference.wav", "query-drift.wav", nil, truth, "increasing nonlinear-in-position mismatch; single offset not sufficient"},
+		{"unrelated-negative", "reference.wav", "query-unrelated.wav", nil, nil, "independent noise must not be automatically certified"},
+		{"triangle-A-C", "reference.wav", "third.wav", nil, aThird, "known time offset on third camera"},
+		{"triangle-B-C", "query-clean.wav", "third.wav", nil, bThird, "known independent triangle leg"},
 		{Name: "repeated-content", Reference: "repeat-reference.wav", Query: "repeat-query.wav", ExpectedOffsetNS: targetOffset(0, 0), ValidOffsetsNS: []int64{0, 24_000_000_000}, Purpose: "two equally genuine placements at offsets 0s and +24s"},
 		{Name: "missing-70pct", Reference: "reference.wav", Query: "query-dropout.wav", ExpectedOffsetNS: truth, Purpose: "long missing-gated intervals replaced by independent noise"},
 		{Name: "short-overlap-8s", Reference: "short-reference.wav", Query: "short-query.wav", ExpectedOffsetNS: targetOffset(0, 30), Purpose: "eight-second shared segment at end of 38-second reference"},
