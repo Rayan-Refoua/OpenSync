@@ -32,6 +32,9 @@ func main() {
 	case len(os.Args) == 7 && os.Args[1] == "verify-holdout":
 		err = verifyHoldout(os.Args[2], os.Args[3], os.Args[4], os.Args[5], os.Args[6])
 
+	case len(os.Args) == 4 && os.Args[1] == "graph-triage":
+		err = graphTriageCommand(os.Args[2], os.Args[3])
+
 	case len(os.Args) == 4 && os.Args[1] == "graph-audit":
 		err = graphAuditCommand(os.Args[2], os.Args[3])
 
