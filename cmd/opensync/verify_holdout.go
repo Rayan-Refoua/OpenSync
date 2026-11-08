@@ -48,6 +48,12 @@ type HoldoutReport struct {
 	TrainingRMSMS         float64         `json:"training_rms_ms"`
 	HoldoutsRequested     int             `json:"holdouts_requested"`
 	HoldoutsTested        int             `json:"holdouts_tested"`
+	HoldoutsAvailable     int             `json:"holdouts_available"`
+	HoldoutSelection      string          `json:"holdout_selection"`
+	HoldoutFailures       int             `json:"holdout_failures"`
+	HoldoutsWithoutControls int           `json:"holdouts_without_controls"`
+	HoldoutAbsResidualMaxMS float64        `json:"holdout_max_abs_residual_ms"`
+	HoldoutAbsResidualMedianMS float64     `json:"holdout_median_abs_residual_ms"`
 	ValidHoldouts         int             `json:"valid_holdouts"`
 	ControlWins           int             `json:"control_wins"`
 	Result                string          `json:"result"`
@@ -120,56 +126,53 @@ func fitTiming(samples []timeOffset, mode quality.Mode) (timingModel, error) {
 	}
 	return best, nil
 }
-func disjointHoldouts(training []TrainProbe, windowNS int64, availableStart, availableEnd float64, count int) []float64 {
-	if count == 0 {
-		return nil
-	}
-	used := make([]float64, 0)
-	window := float64(windowNS) / 1e9
-	for _, p := range training {
-		// Every attempted training event reserves its entire audio window,
-		// including measurements that failed. Otherwise a held-out event
-		// could overlap a failed training query and leak evidence.
-		used = append(used, p.QuerySeconds)
-	}
-	// Candidate positions are midpoints of disjoint gaps between training
-	// intervals. Entire holdout window must stay outside every train window.
-	bounds := append([]float64{availableStart}, used...)
-	sort.Float64s(bounds)
-	positions := make([]float64, 0)
-	for i := 0; i < len(bounds); i++ {
-		end := availableEnd
-		if i+1 < len(bounds) {
-			end = bounds[i+1]
-		}
-		start := bounds[i]
-		if i > 0 {
-			start += window
-		}
-		if end-start >= window+1 {
-			candidate := start + (end-start-window)/2
-			separated := true
-			for _, u := range used {
-				if candidate < u+window+0.5 && u < candidate+window+0.5 {
-					separated = false
-					break
-				}
-			}
-			if separated {
-				positions = append(positions, candidate)
-			}
-		}
-	}
-	// Pick spread-out windows rather than repeatedly querying one gap.
-	result := make([]float64, 0, count)
-	for len(result) < count && len(positions) > 0 {
-		index := len(positions) / 2
-		result = append(result, positions[index])
-		positions = append(positions[:index], positions[index+1:]...)
-	}
-	sort.Float64s(result)
-	return result
+// disjointHoldoutCandidates produces deterministic, non-overlapping,
+ // unmeasured test windows. Failed training attempts reserve their full span.
+ // Query times must not overlap any source region examined for training.
+func disjointHoldoutCandidates(training []TrainProbe, windowNS int64, availableStart, availableEnd float64) []float64 {
+ window := float64(windowNS)/1e9
+ if window<=0 || availableEnd-availableStart<window { return nil }
+ const guard = 0.5
+ used := make([]float64,0,len(training))
+ for _,p:=range training {
+  if math.IsNaN(p.QuerySeconds)||math.IsInf(p.QuerySeconds,0){return nil}
+  used=append(used,p.QuerySeconds)
+ }
+ sort.Float64s(used)
+ // Build free intervals using the union of training windows expanded by
+ // 0.5s each side. This avoids reuse of a previously inspected event.
+ cursor:=availableStart
+ result:=make([]float64,0)
+ addGap:=func(start,end float64){
+  for start+window<=end+1e-9 {
+   result=append(result,start)
+   start+=window+guard
+  }
+ }
+ for _,t:=range used{
+  left:=t-guard
+  right:=t+window+guard
+  if left>cursor {addGap(cursor,math.Min(left,availableEnd))}
+  if right>cursor{cursor=right}
+  if cursor>=availableEnd {break}
+ }
+ if cursor<availableEnd {addGap(cursor,availableEnd)}
+ return result
 }
+func disjointHoldouts(training []TrainProbe, windowNS int64, availableStart, availableEnd float64, count int) []float64 {
+ if count<=0{return nil}
+ candidates:=disjointHoldoutCandidates(training,windowNS,availableStart,availableEnd)
+ if len(candidates)<=count{return candidates}
+ // Uniform distribution across eligible events; never repeat a candidate.
+ result:=make([]float64,0,count)
+ for i:=0;i<count;i++{
+  index:=int(math.Floor((float64(i)+0.5)*float64(len(candidates))/float64(count)))
+  if index>=len(candidates){index=len(candidates)-1}
+  result=append(result,candidates[index])
+ }
+ return result
+}
+
 func verifyHoldout(projectPath, indexPath, trainPath, mode, output string) error {
 	preset, err := quality.Parse(mode)
 	if err != nil {
@@ -261,7 +264,13 @@ func verifyHoldout(projectPath, indexPath, trainPath, mode, output string) error
 	high := math.Min(float64(query.Frames())/16000-windowSeconds,
 		float64(ref.Frames())/16000-float64(h.OffsetNS)/1e9-windowSeconds-radiusSeconds) - 0.25
 	positions := disjointHoldouts(training.Probes, preset.WindowNS, low, high, preset.HeldOutChecks)
+	report.HoldoutsAvailable = len(disjointHoldoutCandidates(training.Probes,preset.WindowNS,low,high))
 	report.HoldoutsTested = len(positions)
+	report.HoldoutSelection = "disjoint_windows_available"
+	if report.HoldoutsAvailable < report.HoldoutsRequested {
+		report.HoldoutSelection = "insufficient_disjoint_audio_duration"
+	}
+	absResiduals := make([]float64,0,len(positions))
 	for _, t := range positions {
 		predicted := int64(math.Round(model.predict(t)))
 		item := HoldoutWindow{QueryStartNS: int64(math.Round(t * 1e9)), PredictedOffsetNS: predicted}
@@ -270,9 +279,11 @@ func verifyHoldout(projectPath, indexPath, trainPath, mode, output string) error
 		})
 		if err != nil {
 			item.Error = err.Error()
+			report.HoldoutFailures++
 		} else {
 			item.MeasuredOffsetNS = m.MeasuredNS
 			item.ResidualMS = float64(m.MeasuredNS-predicted) / 1e6
+			absResiduals=append(absResiduals,math.Abs(item.ResidualMS))
 			item.Correlation = m.Correlation
 			for _, wrong := range quality.ValidControls(ref.Frames(), item.QueryStartNS, predicted, preset.WindowNS, preset.SearchRadiusNS, preset.ControlOffsetsSeconds) {
 				control, err := acousticverify.Measure(ref, query, acousticverify.Probe{
@@ -287,11 +298,19 @@ func verifyHoldout(projectPath, indexPath, trainPath, mode, output string) error
 					report.ControlWins++
 				}
 			}
+			if item.ValidControls==0 {report.HoldoutsWithoutControls++}
 			report.ValidHoldouts++
 		}
 		report.Windows = append(report.Windows, item)
 	}
+	if len(absResiduals)>0 {
+		sort.Float64s(absResiduals)
+		report.HoldoutAbsResidualMaxMS=absResiduals[len(absResiduals)-1]
+		report.HoldoutAbsResidualMedianMS=absResiduals[len(absResiduals)/2]
+		if len(absResiduals)%2==0 { report.HoldoutAbsResidualMedianMS=(absResiduals[len(absResiduals)/2-1]+absResiduals[len(absResiduals)/2])/2 }
+	}
 	report.Result = "insufficient_independent_events"
+	if report.HoldoutsAvailable < report.HoldoutsRequested {report.Result="insufficient_disjoint_audio_duration"} else if report.HoldoutFailures>0 {report.Result="holdout_measurement_failed"}
 	if report.HoldoutsRequested == 0 {
 		report.Result = "preset_does_not_request_holdouts"
 	}
@@ -299,6 +318,8 @@ func verifyHoldout(projectPath, indexPath, trainPath, mode, output string) error
 		report.Result = "heldout_measurements_available_review_required"
 		if report.ControlWins > 0 {
 			report.Result = "heldout_competing_offsets_detected"
+		} else if report.HoldoutsWithoutControls>0 {
+			report.Result = "heldout_controls_unavailable"
 		}
 	}
 	outputBytes, err := json.MarshalIndent(report, "", "  ")
@@ -309,6 +330,6 @@ func verifyHoldout(projectPath, indexPath, trainPath, mode, output string) error
 	if err := exclusiveCreatePreview(output, outputBytes); err != nil {
 		return err
 	}
-	fmt.Printf("STATUS: %s\nMODEL: %s\nTRAINING: %d\nHELDOUT: %d/%d\nCONTROL_WINS: %d\nRESULT: %s\nREPORT: %s\n", report.Status, report.Model, report.TrainingWindows, report.ValidHoldouts, report.HoldoutsRequested, report.ControlWins, report.Result, output)
+	fmt.Printf("STATUS: %s\nMODEL: %s\nTRAINING: %d\nHELDOUT: %d/%d\nAVAILABLE_WINDOWS: %d\nSELECTION: %s\nMEASUREMENT_FAILURES: %d\nCONTROLS_UNAVAILABLE: %d\nMEDIAN_ABS_RESIDUAL_MS: %.3f\nMAX_ABS_RESIDUAL_MS: %.3f\nCONTROL_WINS: %d\nRESULT: %s\nREPORT: %s\n", report.Status, report.Model, report.TrainingWindows, report.ValidHoldouts, report.HoldoutsRequested, report.HoldoutsAvailable, report.HoldoutSelection, report.HoldoutFailures, report.HoldoutsWithoutControls, report.HoldoutAbsResidualMedianMS, report.HoldoutAbsResidualMaxMS, report.ControlWins, report.Result, output)
 	return nil
 }
