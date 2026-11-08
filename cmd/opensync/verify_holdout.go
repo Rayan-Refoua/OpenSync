@@ -127,9 +127,10 @@ func disjointHoldouts(training []TrainProbe, windowNS int64, availableStart, ava
 	used := make([]float64, 0)
 	window := float64(windowNS) / 1e9
 	for _, p := range training {
-		if p.Measurement != nil {
-			used = append(used, float64(p.Measurement.QueryStartNS)/1e9)
-		}
+		// Every attempted training event reserves its entire audio window,
+		// including measurements that failed. Otherwise a held-out event
+		// could overlap a failed training query and leak evidence.
+		used = append(used, p.QuerySeconds)
 	}
 	// Candidate positions are midpoints of disjoint gaps between training
 	// intervals. Entire holdout window must stay outside every train window.
