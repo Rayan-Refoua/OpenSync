@@ -44,6 +44,12 @@ func main() {
 	case len(os.Args) == 5 && os.Args[1] == "probe":
 		err = probeHypothesis(os.Args[2], os.Args[3], os.Args[4])
 
+	case len(os.Args) == 6 && os.Args[1] == "probe":
+		err = probeHypothesisPreset(os.Args[2], os.Args[3], os.Args[4], os.Args[5])
+
+	case len(os.Args) == 3 && os.Args[1] == "preset":
+		err = showPreset(os.Args[2])
+
 	case len(os.Args) == 5 && os.Args[1] == "export-premiere":
 		err = exportPremiere(os.Args[2], os.Args[3], os.Args[4])
 

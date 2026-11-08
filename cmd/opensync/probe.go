@@ -10,6 +10,7 @@ import (
 	"opensync/internal/acousticverify"
 	"opensync/internal/audio"
 	"opensync/internal/projectstate"
+	"opensync/internal/quality"
 )
 
 type probeCacheEntry struct {
@@ -18,6 +19,14 @@ type probeCacheEntry struct {
 }
 
 func probeHypothesis(projectPath, inventoryPath, hypothesisID string) error {
+	return probeHypothesisPreset(projectPath, inventoryPath, hypothesisID, "normal")
+}
+
+func probeHypothesisPreset(projectPath, inventoryPath, hypothesisID, mode string) error {
+	preset, err := quality.Parse(mode)
+	if err != nil {
+		return err
+	}
 	project, err := projectstate.Load(projectPath)
 	if err != nil {
 		return err
@@ -65,8 +74,8 @@ func probeHypothesis(projectPath, inventoryPath, hypothesisID string) error {
 	}
 	defer query.Close()
 
-	const window = 8.0
-	const radius = 0.5
+	window := float64(preset.WindowNS) / 1e9
+	radius := float64(preset.SearchRadiusNS) / 1e9
 	offset := float64(h.OffsetNS) / 1e9
 
 	// Every probe must fit inside both recordings, including search margin.
@@ -98,27 +107,31 @@ func probeHypothesis(projectPath, inventoryPath, hypothesisID string) error {
 	}
 
 	result := struct {
-		Status       string    `json:"status"`
-		HypothesisID string    `json:"hypothesis_id"`
-		Reference    string    `json:"reference"`
-		Query        string    `json:"query"`
-		PredictedS   float64   `json:"predicted_offset_seconds"`
-		Probes       []outcome `json:"probes"`
+		Status        string    `json:"status"`
+		HypothesisID  string    `json:"hypothesis_id"`
+		Reference     string    `json:"reference"`
+		Query         string    `json:"query"`
+		PredictedS    float64   `json:"predicted_offset_seconds"`
+		QualityMode   string    `json:"quality_mode"`
+		HeldOutStatus string    `json:"held_out_status"`
+		Probes        []outcome `json:"probes"`
 	}{
-		Status:       "DIAGNOSTIC_NOT_CERTIFIED",
-		HypothesisID: hypothesisID,
-		Reference:    h.Reference,
-		Query:        h.Query,
-		PredictedS:   offset,
+		Status:        "DIAGNOSTIC_NOT_CERTIFIED",
+		HypothesisID:  hypothesisID,
+		Reference:     h.Reference,
+		Query:         h.Query,
+		PredictedS:    offset,
+		QualityMode:   string(preset.Mode),
+		HeldOutStatus: "not_yet_independently_verified",
 	}
 
-	for _, fraction := range []float64{0.10, 0.50, 0.90} {
+	for _, fraction := range preset.ProbeFractions {
 		qtime := low + (high-low)*fraction
 		p := acousticverify.Probe{
 			QueryStartNS: int64(math.Round(qtime * 1e9)),
 			OffsetNS:     h.OffsetNS,
-			WindowNS:     8_000_000_000,
-			RadiusNS:     500_000_000,
+			WindowNS:     preset.WindowNS,
+			RadiusNS:     preset.SearchRadiusNS,
 		}
 		m, err := acousticverify.Measure(ref, query, p)
 		entry := outcome{QuerySeconds: qtime}
@@ -137,8 +150,8 @@ func probeHypothesis(projectPath, inventoryPath, hypothesisID string) error {
 			// Deliberately wrong offsets: same query event, same
 			// window and search radius, different reference regions.
 			// These are negative controls, not independent holdouts.
-			for _, delta := range []int64{-15, 15} {
-				controlOffset := h.OffsetNS + delta*1_000_000_000
+			for _, controlOffset := range quality.ValidControls(ref.Frames(), p.QueryStartNS, h.OffsetNS, p.WindowNS, p.RadiusNS, preset.ControlOffsetsSeconds) {
+				delta := (controlOffset - h.OffsetNS) / 1_000_000_000
 				control := acousticverify.Probe{
 					QueryStartNS: p.QueryStartNS,
 					OffsetNS:     controlOffset,
