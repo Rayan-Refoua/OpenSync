@@ -23,10 +23,10 @@ func probeHypothesis(projectPath, inventoryPath, hypothesisID string) error {
 }
 
 func probeHypothesisPreset(projectPath, inventoryPath, hypothesisID, mode string) error {
-	return probeHypothesisScheduled(projectPath,inventoryPath,hypothesisID,mode,false)
+	return probeHypothesisScheduled(projectPath, inventoryPath, hypothesisID, mode, false)
 }
 
-func probeHypothesisScheduled(projectPath,inventoryPath,hypothesisID,mode string,reserve bool) error {
+func probeHypothesisScheduled(projectPath, inventoryPath, hypothesisID, mode string, reserve bool) error {
 	preset, err := quality.Parse(mode)
 	if err != nil {
 		return err
@@ -111,17 +111,17 @@ func probeHypothesisScheduled(projectPath,inventoryPath,hypothesisID,mode string
 	}
 
 	result := struct {
-		Status        string    `json:"status"`
-		HypothesisID  string    `json:"hypothesis_id"`
-		Reference     string    `json:"reference"`
-		Query         string    `json:"query"`
-		PredictedS    float64   `json:"predicted_offset_seconds"`
-		QualityMode   string    `json:"quality_mode"`
-		HeldOutStatus string    `json:"held_out_status"`
-		Schedule string `json:"schedule,omitempty"`
+		Status                      string    `json:"status"`
+		HypothesisID                string    `json:"hypothesis_id"`
+		Reference                   string    `json:"reference"`
+		Query                       string    `json:"query"`
+		PredictedS                  float64   `json:"predicted_offset_seconds"`
+		QualityMode                 string    `json:"quality_mode"`
+		HeldOutStatus               string    `json:"held_out_status"`
+		Schedule                    string    `json:"schedule,omitempty"`
 		ReservedHoldoutQuerySeconds []float64 `json:"reserved_holdout_query_seconds,omitempty"`
-		AvailableDisjointRegions int `json:"available_disjoint_regions,omitempty"`
-		Probes        []outcome `json:"probes"`
+		AvailableDisjointRegions    int       `json:"available_disjoint_regions,omitempty"`
+		Probes                      []outcome `json:"probes"`
 	}{
 		Status:        "DIAGNOSTIC_NOT_CERTIFIED",
 		HypothesisID:  hypothesisID,
@@ -132,16 +132,20 @@ func probeHypothesisScheduled(projectPath,inventoryPath,hypothesisID,mode string
 		HeldOutStatus: "not_yet_independently_verified",
 	}
 
-	queryTimes:=make([]float64,0,len(preset.ProbeFractions))
+	queryTimes := make([]float64, 0, len(preset.ProbeFractions))
 	if reserve {
-		allocation:=planReservedWindows(low,high,preset)
-		queryTimes=allocation.Training
-		result.Schedule="preallocated_disjoint_v1"
-		result.ReservedHoldoutQuerySeconds=allocation.Holdout
-		result.AvailableDisjointRegions=allocation.Capacity
-		if len(queryTimes)<2 {return fmt.Errorf("insufficient disjoint training windows: %d",len(queryTimes))}
-	}else{
-		for _,fraction:=range preset.ProbeFractions {queryTimes=append(queryTimes,low+(high-low)*fraction)}
+		allocation := planReservedWindows(low, high, preset)
+		queryTimes = allocation.Training
+		result.Schedule = "preallocated_disjoint_v1"
+		result.ReservedHoldoutQuerySeconds = allocation.Holdout
+		result.AvailableDisjointRegions = allocation.Capacity
+		if len(queryTimes) < 2 {
+			return fmt.Errorf("insufficient disjoint training windows: %d", len(queryTimes))
+		}
+	} else {
+		for _, fraction := range preset.ProbeFractions {
+			queryTimes = append(queryTimes, low+(high-low)*fraction)
+		}
 	}
 	for _, qtime := range queryTimes {
 		p := acousticverify.Probe{
