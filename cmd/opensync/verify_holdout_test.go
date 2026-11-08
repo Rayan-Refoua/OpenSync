@@ -67,14 +67,14 @@ func TestHoldoutRequiresEnoughTrainingEvidence(t *testing.T) {
 
 func TestFailedTrainingQueryStillExcludedFromHoldout(t *testing.T) {
 	training := []TrainProbe{
-		{QuerySeconds:10,Measurement:&acousticverify.Measurement{QueryStartNS:10_000_000_000}},
-		{QuerySeconds:30,Error:"failed acoustic probe"},
-		{QuerySeconds:50,Measurement:&acousticverify.Measurement{QueryStartNS:50_000_000_000}},
+		{QuerySeconds: 10, Measurement: &acousticverify.Measurement{QueryStartNS: 10_000_000_000}},
+		{QuerySeconds: 30, Error: "failed acoustic probe"},
+		{QuerySeconds: 50, Measurement: &acousticverify.Measurement{QueryStartNS: 50_000_000_000}},
 	}
-	holds:=disjointHoldouts(training,8_000_000_000,0,70,3)
-	for _,h:=range holds {
-		if h<38.5 && h+8.5>30 {
-			t.Fatalf("holdout %v overlaps failed training query at 30s",h)
+	holds := disjointHoldouts(training, 8_000_000_000, 0, 70, 3)
+	for _, h := range holds {
+		if h < 38.5 && h+8.5 > 30 {
+			t.Fatalf("holdout %v overlaps failed training query at 30s", h)
 		}
 	}
 }
