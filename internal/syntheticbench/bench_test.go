@@ -38,8 +38,12 @@ func TestSyntheticGroundTruthAndValidWAV(t *testing.T) {
 		}
 		r.Close()
 	}
-	if len(cases[7].ValidOffsetsNS)!=2 || cases[7].ValidOffsetsNS[0]!=0 || cases[7].ValidOffsetsNS[1]!=24_000_000_000 { t.Fatal("repeated-source ambiguity lost") }
-	if cases[9].ExpectedOffsetNS==nil || *cases[9].ExpectedOffsetNS!=30_000_000_000 { t.Fatal("short-overlap ground truth lost") }
+	if len(cases[7].ValidOffsetsNS) != 2 || cases[7].ValidOffsetsNS[0] != 0 || cases[7].ValidOffsetsNS[1] != 24_000_000_000 {
+		t.Fatal("repeated-source ambiguity lost")
+	}
+	if cases[9].ExpectedOffsetNS == nil || *cases[9].ExpectedOffsetNS != 30_000_000_000 {
+		t.Fatal("short-overlap ground truth lost")
+	}
 	if _, err := Generate(dir); err == nil {
 		t.Fatal("rewrote existing dataset")
 	}
@@ -70,7 +74,9 @@ func TestSyntheticMatcherEndToEnd(t *testing.T) {
 				t.Errorf("%dms synthetic clean positive control missed: rank=%d error_ms=%.3f top=%.3fs", run.HopMS, run.Rank, run.NearestErrorMS, run.TopOffsetSeconds)
 			}
 		}
-		if run.IntegrationMS != run.HopMS && (run.HopMS!=2 || run.IntegrationMS!=8) { t.Fatalf("invalid research configuration labeling: %+v",run) }
+		if run.IntegrationMS != run.HopMS && (run.HopMS != 2 || run.IntegrationMS != 8) {
+			t.Fatalf("invalid research configuration labeling: %+v", run)
+		}
 		if run.Scenario == "unrelated-negative" && run.Status != "negative_control_unlabeled_peaks" {
 			t.Errorf("negative case falsely labeled as verified: %s", run.Status)
 		}
