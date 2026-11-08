@@ -3,6 +3,8 @@ package researchmatch
 import (
  "fmt"
  "math"
+
+ "opensync/internal/audio"
 )
 
 // WindowSupport describes a distinct acoustic time region examined at an
