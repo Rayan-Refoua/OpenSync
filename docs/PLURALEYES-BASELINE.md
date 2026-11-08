@@ -46,3 +46,9 @@ evidence and ideally visual spot checks, not overlap counts alone.
 
 Parallel execution is deferred until the deterministic single-worker
 algorithm and evidence model are stable.
+
+The comparison permits track reassignment where source identity, in/out,
+duration and linked-audio shift remain intact. Video/audio lane changes
+are reported separately from timing changes. Our first experimental
+87-file XML rearranged multiple tracks, so rejecting lane changes
+would incorrectly prevent a useful baseline comparison.
