@@ -13,14 +13,14 @@ import (
 // and the linked audio slots. An inherited placement is NOT synchronized by
 // OpenSync, even when it happens to be correct.
 type RecordingPlacement struct {
-	RecordingID       string   `json:"recording_id"`
-	SourcePath        string   `json:"source_path"`
-	VideoClipID       string   `json:"video_clip_id"`
-	AudioClipIDs      []string `json:"audio_clip_ids"`
-	OriginalStart     int64    `json:"original_start_frame"`
-	PreviewStart      int64    `json:"preview_start_frame"`
-	DurationFrames    int64    `json:"duration_frames"`
-	Status            string   `json:"status"`
+	RecordingID    string   `json:"recording_id"`
+	SourcePath     string   `json:"source_path"`
+	VideoClipID    string   `json:"video_clip_id"`
+	AudioClipIDs   []string `json:"audio_clip_ids"`
+	OriginalStart  int64    `json:"original_start_frame"`
+	PreviewStart   int64    `json:"preview_start_frame"`
+	DurationFrames int64    `json:"duration_frames"`
+	Status         string   `json:"status"`
 }
 
 // FullPreviewManifest is a provenance record for a complete Premiere
