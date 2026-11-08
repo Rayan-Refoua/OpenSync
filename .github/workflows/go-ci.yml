@@ -31,7 +31,7 @@ jobs:
           files="$(gofmt -l cmd internal)"
           if [[ -n "$files" ]]; then
             printf 'Unformatted files:\n%s\n' "$files"
-            gofmt -d cmd/opensync/verify_holdout.go cmd/opensync/verify_holdout_test.go
+            gofmt -d cmd/opensync/probe_schedule.go cmd/opensync/probe_schedule_test.go cmd/opensync/probe.go cmd/opensync/verify_holdout.go
             exit 1
           fi
       - name: Unit and integration tests
