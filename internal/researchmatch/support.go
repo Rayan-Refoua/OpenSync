@@ -73,7 +73,7 @@ func scoreLocal(ref,query [3][]float64,qStart,offset,n int)(float64,[3]float64,b
 func integerOffset(p Peak,hop int)(int,error){
  if hop<=0{return 0,fmt.Errorf("invalid hop")}
  frames:=math.Round(float64(p.OffsetNS)*SampleRate/(1e9*float64(hop)))
- if math.IsNaN(frames)||math.IsInf(frames,0)||frames>float64(math.MaxInt32)||frames<float64(math.MinInt32){
+ if math.IsNaN(frames)||math.IsInf(frames,0)||frames>float64(1<<31-1)||frames<float64(-1<<31){
   return 0,fmt.Errorf("offset outside research frame range")
  }
  lag:=int(frames)
