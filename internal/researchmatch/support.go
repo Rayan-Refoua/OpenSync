@@ -88,15 +88,15 @@ func integerOffset(p Peak, hop int) (int, error) {
 	if hop <= 0 {
 		return 0, fmt.Errorf("invalid hop")
 	}
-	frames := math.Round(float64(p.OffsetNS) * SampleRate / (1e9 * float64(hop)))
-	if math.IsNaN(frames) || math.IsInf(frames, 0) || frames > float64(1<<31-1) || frames < float64(-1<<31) {
-		return 0, fmt.Errorf("offset outside research frame range")
-	}
-	lag := int(frames)
-	if math.Abs(float64(p.OffsetNS)-float64(lag*hop)*1e9/SampleRate) > 1 {
+	frameNS := int64(hop) * 1e9 / SampleRate
+	if frameNS <= 0 || p.OffsetNS%frameNS != 0 {
 		return 0, fmt.Errorf("discovery offset not aligned with feature hop")
 	}
-	return lag, nil
+	frames := p.OffsetNS / frameNS
+	if frames > 1<<31-1 || frames < -1<<31 {
+		return 0, fmt.Errorf("offset outside research frame range")
+	}
+	return int(frames), nil
 }
 
 // AnalyzeSupport computes local residuals for every supplied discovery peak.
