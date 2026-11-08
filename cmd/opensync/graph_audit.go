@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 
 	"opensync/internal/graphdiagnostic"
 	"opensync/internal/projectstate"
