@@ -210,7 +210,7 @@ func Replan(p *projectstate.Project, feedback Feedback) (AdaptivePlan, error) {
 				windows = h.Discovery.SupportWindows
 			}
 			score := math.Log1p(float64(windows)) +
-				0.15*(priority[h.Reference]+priority[h.Query])
+				0.15 * (priority[h.Reference]+priority[h.Query])
 			phase := "expand"
 			if a && b {
 				phase = "cycle_or_alternative"
