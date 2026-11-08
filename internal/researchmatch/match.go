@@ -132,7 +132,9 @@ func Extract(r *audio.Reader, c Config) ([3][]float64, error) {
 					sum -= original[i-c.IntegrationFrames]
 				}
 				n := i + 1
-				if n > c.IntegrationFrames { n = c.IntegrationFrames }
+				if n > c.IntegrationFrames {
+					n = c.IntegrationFrames
+				}
 				integrated[i] = sum / float64(n)
 			}
 			result[band] = integrated
@@ -260,7 +262,7 @@ func MatchFeatures(ref, query [3][]float64, c Config) (Result, error) {
 	result := Result{Status: "EXHAUSTIVE_DISCOVERY_DIAGNOSTIC_NOT_CERTIFIED",
 		Method:           "three_band_log_energy_derivative_fft_pearson_v1",
 		HopMS:            float64(c.HopSamples) * 1000 / SampleRate,
-		IntegrationMS: float64(c.IntegrationFrames*c.HopSamples)*1000/SampleRate,
+		IntegrationMS:    float64(c.IntegrationFrames*c.HopSamples) * 1000 / SampleRate,
 		ReferenceSeconds: float64(len(ref[0])*c.HopSamples) / SampleRate,
 		QuerySeconds:     float64(len(query[0])*c.HopSamples) / SampleRate,
 		LagsExamined:     len(bands[0]), Peaks: []Peak{}, Certification: "not_assessed"}
