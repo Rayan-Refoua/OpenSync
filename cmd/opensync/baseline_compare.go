@@ -47,6 +47,8 @@ func baselineCompareCommand(baselinePath, candidatePath, projectPath, outputPath
 	fmt.Println("NEW_OVERLAP_PAIRS:", len(result.NewOverlapPairs))
 	fmt.Println("LOST_OVERLAP_PAIRS:", len(result.LostOverlapPairs))
 	fmt.Println("CHANGED_VIDEO_PLACEMENTS:", result.ChangedVideoPlacements)
+	fmt.Println("REASSIGNED_VIDEO_TRACKS:", result.ReassignedVideoTracks)
+	fmt.Println("REASSIGNED_AUDIO_TRACKS:", result.ReassignedAudioTracks)
 	fmt.Println("ACOUSTIC_CERTIFICATION:", result.AcousticCertification)
 	fmt.Println("REPORT:", outputPath)
 	return nil
