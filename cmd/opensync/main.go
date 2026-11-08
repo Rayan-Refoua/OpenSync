@@ -47,6 +47,9 @@ func main() {
 	case len(os.Args) == 6 && os.Args[1] == "probe":
 		err = probeHypothesisPreset(os.Args[2], os.Args[3], os.Args[4], os.Args[5])
 
+	case len(os.Args) == 7 && os.Args[1] == "sequence-probe":
+		err = sequenceBatchCommand(os.Args[2], os.Args[3], os.Args[4], os.Args[5], os.Args[6])
+
 	case len(os.Args) == 4 && os.Args[1] == "sequence-plan":
 		err = sequencePlanCommand(os.Args[2], os.Args[3])
 
