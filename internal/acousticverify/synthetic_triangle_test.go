@@ -116,11 +116,11 @@ func TestSyntheticAcousticTriangleEndToEnd(t *testing.T) {
 	const toleranceNS = int64(1_000_000) // 1ms; synthetic truth is exact.
 	const windowNS = int64(1_200_000_000)
 	const radiusNS = int64(25_000_000)
-	probeTimes := []int64{600_000_000, 1_900_000_000, 3_400_000_000}
+	trainingTimes := []int64{600_000_000, 1_900_000_000}
 	constraints := make([]syncgraph.Constraint, 0, len(cases))
 	for _, pair := range cases {
 		var offsets []int64
-		for _, qtime := range probeTimes {
+		for _, qtime := range trainingTimes {
 			m, err := acousticverify.Measure(readers[pair.ref], readers[pair.query],
 				acousticverify.Probe{
 					QueryStartNS: qtime,
@@ -139,8 +139,8 @@ func TestSyntheticAcousticTriangleEndToEnd(t *testing.T) {
 			offsets = append(offsets, m.MeasuredNS)
 		}
 		sort.Slice(offsets, func(i, j int) bool { return offsets[i] < offsets[j] })
-		// Hold out the last chronological probe: it must agree with the
-		// training probes; it does not participate in the graph fit.
+		// The third region is never used for the fit: held-out acoustic
+		// evidence must agree with the first two measured regions.
 		holdout, err := acousticverify.Measure(readers[pair.ref], readers[pair.query],
 			acousticverify.Probe{
 				QueryStartNS: 3_400_000_000,
