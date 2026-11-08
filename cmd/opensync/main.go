@@ -20,6 +20,9 @@ func main() {
 	var err error
 
 	switch {
+	case len(os.Args) >= 2 && os.Args[1] == "benchmark":
+		err = benchmarkCommand(os.Args[2:])
+
 	case len(os.Args) == 3 && os.Args[1] == "inspect":
 		err = inspect(os.Args[2])
 
@@ -103,7 +106,7 @@ func main() {
 
 	default:
 		fmt.Fprintln(os.Stderr,
-			"Usage: opensync inspect <cache-index.json> | solve <constraints.json> | import-discovery <inventory.json> <discovery.json> <project.json>")
+			"Usage: opensync benchmark --output NEW_DIR [--profile quick|full] [--gate readiness|regression] | inspect <cache-index.json> | solve <constraints.json> | import-discovery <inventory.json> <discovery.json> <project.json>")
 		os.Exit(2)
 	}
 

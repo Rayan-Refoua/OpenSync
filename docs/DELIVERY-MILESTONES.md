@@ -4,6 +4,11 @@ These are product acceptance milestones, not feature-count milestones.
 The baseline is the existing Go acoustic/discovery engine and the
 Premiere-compatible PluralEyes FCP7 XML export.
 
+Current sequencing (2026-11-08): validate with the executable engine
+acceptance benchmark first, finish the usable headless engine next, and
+build the UI afterward. The delivery milestones below remain acceptance
+targets, not a claim that the engine can already synchronize all 87 files.
+
 ## M9 — 87 recordings to a Premiere-editable project (next priority)
 
 **Input:** the real 87-file dataset and its cached audio, with no required

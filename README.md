@@ -3,7 +3,7 @@
 An independent, community-driven audio/video synchronization
 application inspired by the capabilities of Red Giant PluralEyes.
 
-Status: Research / Discovery
+Status: Research engine with executable acceptance benchmark; not release-ready
 Project name: Provisional
 License: GNU GPL v3.0 or later (GPL-3.0-or-later)
 
@@ -45,6 +45,8 @@ Critical requirements:
 
 ## Documentation
 
+- docs/ENGINE-ACCEPTANCE.md: Current test-first milestone, runnable benchmark,
+  measured failures and the path to a usable engine before UI work
 - docs/RESEARCH.md: Observations from PluralEyes 4
 - docs/MILESTONES.md: Project roadmap and acceptance criteria
 - docs/ARCHITECTURE.md: Architecture and open decisions
@@ -61,4 +63,9 @@ Use the Human Execution Interface (HEI):
 
 ## Current scope
 
-Research first. No production architecture is finalized.
+Validate the headless engine before building the UI. Run
+`go run ./cmd/opensync benchmark --output experiments/acceptance-new --profile quick`
+for an HTML/JSON acceptance report. A nonzero result currently exposes measured
+failures and missing capabilities; passing unit tests alone is not sync accuracy.
+Use `--profile full` for two-hour local timing tests (approximately 1 GB of fixtures).
+See `docs/ENGINE-ACCEPTANCE.md` for the test contract and real-pair review workflow.

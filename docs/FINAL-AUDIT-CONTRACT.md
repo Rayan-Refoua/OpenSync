@@ -4,6 +4,10 @@ This checklist separates IMPLEMENTED, PARTIAL, and NOT IMPLEMENTED.
 No release or 87-file XML is called fully synchronized until every
 applicable acceptance condition is evidenced by artifacts and real media.
 
+Current priority: the executable acceptance benchmark in
+`docs/ENGINE-ACCEPTANCE.md`, followed by a usable headless engine, then UI.
+The initial acceptance run FAILS; component test success is not release signoff.
+
 ## Input and provenance
 - [x] Project source IDs, original paths, immutable source media and PCM cache identity checks
 - [x] Original PluralEyes full Premiere XML as fallback coverage baseline
@@ -24,6 +28,7 @@ applicable acceptance condition is evidenced by artifacts and real media.
 - [x] M23 deterministic synthetic PCM benchmark (clean, microphone, gate, drift, negative and three-way ground truth)
 - [x] M24 synthetic adversarial tests (repetition, missing events, short overlap), with 2ms+8ms-integrated A/B/C diagnostic mode (real-data comparison pending)
 - [x] M25 local acoustic per-peak support diagnostics (all alternatives, full-overlap windows and local lag residuals; NOT independent holdout evidence)
+- [x] M26 executable acceptance harness: 126 synthetic searches, fixed 4ms top-one/alternative checks, two-hour local timing tests, input hashes, explicit readiness blockers and unlabelled real-pair listening review
 - [ ] Independent discovery from previously unrelated portions and recovery of the 42 missing sequential pairs
 - [ ] Multiple frequency bands, gating/compression/EQ resilience, distinctive event corroboration and repeat ambiguity
 - [ ] Robust outlier handling and uncertainty calibration (avoid equating a good Pearson score with ground truth)

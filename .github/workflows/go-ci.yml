@@ -17,7 +17,10 @@ concurrency:
 jobs:
   verify:
     name: Go checks
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -31,7 +34,7 @@ jobs:
           files="$(gofmt -l cmd internal)"
           if [[ -n "$files" ]]; then
             printf 'Unformatted files:\n%s\n' "$files"
-            gofmt -d cmd/opensync/research_support.go cmd/opensync/research_support_compat_test.go
+            gofmt -d cmd internal
             exit 1
           fi
       - name: Unit and integration tests
@@ -39,4 +42,42 @@ jobs:
       - name: Static analysis
         run: go vet ./...
       - name: Build CLI
-        run: go build -o /tmp/opensync ./cmd/opensync
+        run: go build ./cmd/opensync
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - name: Review packet tests
+        run: python -m unittest discover -s tests -p test_prepare_review.py
+
+  acceptance:
+    name: Engine acceptance (advisory until engine gaps close)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Run fixed acceptance contract
+        run: go run ./cmd/opensync benchmark --output acceptance --profile quick
+      - name: Publish acceptance status
+        if: always()
+        shell: bash
+        run: |
+          if test -f acceptance/report.json; then
+            python3 - <<'PY'
+          import json, os
+          report = json.load(open('acceptance/report.json'))
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as out:
+              out.write(f"Engine acceptance: {report['status']}\n\nRegression: **{report['regression_status']}**\n\nReadiness: **{report['readiness_status']}**\n\nThis job is advisory while known engine gaps remain. Download the full report artifact.\n")
+          PY
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: engine-acceptance-report
+          path: |
+            acceptance/report.html
+            acceptance/report.json
