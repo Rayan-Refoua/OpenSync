@@ -32,6 +32,9 @@ func main() {
 	case len(os.Args) == 5 && os.Args[1] == "audit-premiere":
 		err = auditPremiere(os.Args[2], os.Args[3], os.Args[4])
 
+	case len(os.Args) == 7 && os.Args[1] == "export-full-preview":
+		err = exportFullPreview(os.Args[2], os.Args[3], os.Args[4], os.Args[5], os.Args[6])
+
 	case len(os.Args) == 5 && os.Args[1] == "import-discovery":
 		err = importDiscovery(os.Args[2], os.Args[3], os.Args[4])
 
