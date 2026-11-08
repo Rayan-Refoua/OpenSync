@@ -47,6 +47,9 @@ func main() {
 	case len(os.Args) == 6 && os.Args[1] == "probe":
 		err = probeHypothesisPreset(os.Args[2], os.Args[3], os.Args[4], os.Args[5])
 
+	case len(os.Args) == 7 && os.Args[1] == "recover":
+		err = recoverRecording(os.Args[2], os.Args[3], os.Args[4], os.Args[5], os.Args[6])
+
 	case len(os.Args) == 3 && os.Args[1] == "preset":
 		err = showPreset(os.Args[2])
 
