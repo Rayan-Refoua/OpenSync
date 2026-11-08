@@ -29,6 +29,9 @@ func main() {
 	case len(os.Args) == 4 && os.Args[1] == "review-sweep":
 		err = reviewSweepCommand(os.Args[2], os.Args[3])
 
+	case len(os.Args) == 7 && os.Args[1] == "verify-holdout":
+		err = verifyHoldout(os.Args[2], os.Args[3], os.Args[4], os.Args[5], os.Args[6])
+
 	case len(os.Args) == 6 && os.Args[1] == "baseline-compare":
 		err = baselineCompareCommand(os.Args[2], os.Args[3], os.Args[4], os.Args[5])
 
