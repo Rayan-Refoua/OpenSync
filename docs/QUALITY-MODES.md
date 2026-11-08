@@ -35,3 +35,20 @@ competition, constant/affine/nonlinear clock analysis, graph
 consistency checks and a decision based on evidence rather than a
 single arbitrary correlation threshold. All modes should reuse stored
 evidence rather than rerunning unnecessary expensive stages.
+
+## Chronological-first investigation
+
+Use `opensync sequence-plan <project.json> <new-output.json>` before
+broad candidate recovery to enumerate A → B → C filename-counter chains
+within a consistent source directory, filename prefix and extension.
+The output distinguishes available direct discovery hypotheses from
+adjacent recordings with no discovery match. In `recover`, direct numbered
+neighbors are investigated first, then the same numbered series, then
+other references, within the Draft/Normal/Rock Solid candidate budgets.
+
+This is **investigation priority only**. Numeric filename order is not
+trusted capture time, gapless continuity, or acoustic correspondence.
+A sequential pair with no acoustic overlap may still give useful
+chronological ordering but supplies no synchronization offset. No implicit
+A → C timing edge is synthesized from A → B → C without independently
+supported timing and clock continuity.
