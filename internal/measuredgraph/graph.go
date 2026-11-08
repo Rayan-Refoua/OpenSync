@@ -58,6 +58,7 @@ type Report struct {
  CandidateCount int `json:"candidate_count"`
  ConstantCandidates int `json:"constant_candidates"`
  DeferredNonConstant int `json:"deferred_nonconstant"`
+ DeferredCandidates []Candidate `json:"deferred_candidates"`
  MeasuredEdges []EdgeResult `json:"measured_edges"`
  AcousticCertification string `json:"acoustic_certification"`
  ExportAuthorization string `json:"export_authorization"`
@@ -146,7 +147,7 @@ func Analyze(p *projectstate.Project,candidates []Candidate)(Report,error){
  })
  result:=Report{
   Status:"MEASURED_GRAPH_DIAGNOSTIC_NOT_CERTIFIED",
-  CandidateCount:len(sorted),MeasuredEdges:[]EdgeResult{},
+  CandidateCount:len(sorted),MeasuredEdges:[]EdgeResult{},DeferredCandidates:[]Candidate{},
   AcousticCertification:"not_assessed",ExportAuthorization:"denied",
  }
  seen:=map[string]bool{}
@@ -156,6 +157,7 @@ func Analyze(p *projectstate.Project,candidates []Candidate)(Report,error){
   if err:=validateCandidate(p,c);err!=nil{return Report{},err}
   if c.Model!="constant"{
    result.DeferredNonConstant++
+   result.DeferredCandidates=append(result.DeferredCandidates,c)
    continue
   }
   edge,err:=asEdge(c);if err!=nil{return Report{},err}
