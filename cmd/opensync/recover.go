@@ -141,12 +141,16 @@ func recoveryCandidates(p *projectstate.Project, filename string) ([]projectstat
 	sort.Slice(candidates, func(i, j int) bool {
 		a, b := candidates[i], candidates[j]
 		other := func(h projectstate.Hypothesis) string {
-			if h.Reference == id { return h.Query }
+			if h.Reference == id {
+				return h.Query
+			}
 			return h.Reference
 		}
 		pa := sourcetracks.SequencePriority(p, id, other(a))
 		pb := sourcetracks.SequencePriority(p, id, other(b))
-		if pa != pb { return pa < pb }
+		if pa != pb {
+			return pa < pb
+		}
 		var aw, bw, av, bv int
 		if a.Discovery != nil {
 			aw = a.Discovery.SupportWindows
