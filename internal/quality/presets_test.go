@@ -31,8 +31,8 @@ func TestValidControlsUseBoundsAndFallback(t *testing.T) {
 	offsets := []int64{-15, 15, -5, 5, -30, 30}
 	got := ValidControls(30*16000, 0, 10_000_000_000,
 		8_000_000_000, 500_000_000, offsets)
-	if len(got) != 2 || got[0] != 25_000_000_000 ||
-		got[1] != 5_000_000_000 {
+	if len(got) != 2 || got[0] != 5_000_000_000 ||
+		got[1] != 15_000_000_000 {
 		t.Fatalf("wrong valid controls: %v", got)
 	}
 }
