@@ -27,6 +27,8 @@ type BaselineCoverage struct {
 	NewOverlapPairs          []BaselinePair `json:"new_overlap_pairs"`
 	InheritedVideoPlacements int            `json:"inherited_video_placements"`
 	ChangedVideoPlacements   int            `json:"changed_video_placements"`
+	ReassignedVideoTracks    int            `json:"reassigned_video_tracks"`
+	ReassignedAudioTracks    int            `json:"reassigned_audio_tracks"`
 	UnchangedAudioVideoLinks bool           `json:"unchanged_audio_video_links"`
 	AcousticCertification    string         `json:"acoustic_certification"`
 }
@@ -113,7 +115,7 @@ func CompareBaselineCoverage(baseline, candidate []byte, p *projectstate.Project
 	for id, a := range original {
 		b, ok := next[id]
 		if !ok || a.ID != b.ID || a.Name != b.Name || a.Media != b.Media ||
-			a.Track != b.Track || a.In != b.In || a.Out != b.Out ||
+			a.In != b.In || a.Out != b.Out ||
 			a.End-a.Start != b.End-b.Start {
 			return BaselineCoverage{}, fmt.Errorf("structural/media change in clip %q", id)
 		}
@@ -135,6 +137,13 @@ func CompareBaselineCoverage(baseline, candidate []byte, p *projectstate.Project
 	// A recording's originally linked audio must move by exactly the same
 	// frames as its video. Unmapped clips may not move.
 	changed, inherited := 0, 0
+	videoTrackChanges, audioTrackChanges := 0, 0
+	for id, a := range original {
+		b := next[id]
+		if a.Track != b.Track {
+			if a.Media == "video" { videoTrackChanges++ } else if a.Media == "audio" { audioTrackChanges++ }
+		}
+	}
 	videoShift := make(map[string]int64, len(baselineVideos))
 	for id, a := range baselineVideos {
 		b := candidateVideos[id]
@@ -200,6 +209,8 @@ func CompareBaselineCoverage(baseline, candidate []byte, p *projectstate.Project
 		NewOverlapPairs:          sortedBaselinePairs(newPairs),
 		InheritedVideoPlacements: inherited,
 		ChangedVideoPlacements:   changed,
+		ReassignedVideoTracks:    videoTrackChanges,
+		ReassignedAudioTracks:    audioTrackChanges,
 		UnchangedAudioVideoLinks: true,
 		AcousticCertification:    "not_assessed",
 	}
