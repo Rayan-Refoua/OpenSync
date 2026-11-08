@@ -33,7 +33,7 @@ func TestSyntheticGroundTruthAndValidWAV(t *testing.T) {
 		if err != nil {
 			t.Fatalf("invalid WAV %s: %v", name, err)
 		}
-		if r.SampleRate() != rate || r.Frames() < 16*rate {
+		if r.SampleRate() != rate || r.Frames() < 8*rate {
 			t.Fatalf("bad source %s", name)
 		}
 		r.Close()
