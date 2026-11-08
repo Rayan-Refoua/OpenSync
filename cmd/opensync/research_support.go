@@ -75,7 +75,9 @@ func researchSupportCommand(projectPath, indexPath, discoveryPath, output string
 	}
 	defer query.Close()
 	cfg, err := researchSupportConfig(discovery.Research)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	if len(discovery.Research.Peaks) > cfg.Peaks {
 		return fmt.Errorf("too many reported discovery peaks")
 	}
