@@ -26,6 +26,9 @@ func main() {
 	case len(os.Args) == 3 && os.Args[1] == "solve":
 		err = solveDiagnostic(os.Args[2])
 
+	case len(os.Args) == 5 && os.Args[1] == "audit-premiere":
+		err = auditPremiere(os.Args[2], os.Args[3], os.Args[4])
+
 	case len(os.Args) == 5 && os.Args[1] == "import-discovery":
 		err = importDiscovery(os.Args[2], os.Args[3], os.Args[4])
 
