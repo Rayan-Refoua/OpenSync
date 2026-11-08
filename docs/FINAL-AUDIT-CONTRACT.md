@@ -20,7 +20,8 @@ applicable acceptance condition is evidenced by artifacts and real media.
 - [x] M15 independent acoustic windows separate from prior probe windows, with provenance and control comparisons
 - [x] M15 training-only constant/affine model fitting with simple complexity penalty
 - [ ] Dynamic adaptive search budget with evidence-based stop/retry rather than fixed quotas
-- [x] M22 standalone research full-range 2 ms/8 ms three-band FFT cross-correlation (discovery only, real-data validation pending)
+- [x] M22 standalone research full-range 2 ms/8 ms three-band FFT cross-correlation (known real-data 8 ms match; 2 ms regression under study)
+- [x] M23 deterministic synthetic PCM benchmark (clean, microphone, gate, drift, negative and three-way ground truth)
 - [ ] Independent discovery from previously unrelated portions and recovery of the 42 missing sequential pairs
 - [ ] Multiple frequency bands, gating/compression/EQ resilience, distinctive event corroboration and repeat ambiguity
 - [ ] Robust outlier handling and uncertainty calibration (avoid equating a good Pearson score with ground truth)
