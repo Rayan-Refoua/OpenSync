@@ -35,14 +35,14 @@ type NextStep struct {
 }
 
 type AdaptivePlan struct {
-	Version            int        `json:"version"`
+	Version            int       `json:"version"`
 	Status             string     `json:"status"`
 	SeedRecordingID    string     `json:"seed_recording_id"`
 	VerifiedRecordings []string   `json:"verified_recordings"`
 	Next               *NextStep  `json:"next,omitempty"`
-	Pending            int        `json:"pending"`
+	Pending            int       `json:"pending"`
 	Deferred           []Attempt  `json:"deferred"`
-	RejectedExcluded   int        `json:"rejected_excluded"`
+	RejectedExcluded   int       `json:"rejected_excluded"`
 }
 
 // Replan chooses exactly one next diagnostic action after incorporating
