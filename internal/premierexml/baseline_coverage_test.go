@@ -71,3 +71,26 @@ func TestBaselineCoverageRejectsMediaLossAndBrokenAudio(t *testing.T) {
 		t.Fatal("accepted missing media")
 	}
 }
+
+
+func TestBaselineCoverageAllowsValidVideoTrackReassignment(t *testing.T) {
+	baseline := completePreviewFixture()
+	clip := []byte(`<clipitem id="target"><name>B</name><start>10</start><end>30</end><in>0</in><out>20</out></clipitem>`)
+	candidate := bytes.Replace(baseline, clip, nil, 1)
+	if bytes.Equal(candidate, baseline) {
+		t.Fatal("missing video clip fixture")
+	}
+	candidate = bytes.Replace(candidate,
+		[]byte(`</clipitem></track><track>`),
+		append([]byte(`</clipitem>`), append(clip, []byte(`</track><track>`)...)...), 1)
+	coverage, err := CompareBaselineCoverage(baseline, candidate, previewProject(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if coverage.ReassignedVideoTracks != 1 ||
+		coverage.ReassignedAudioTracks != 0 ||
+		coverage.ChangedVideoPlacements != 0 ||
+		coverage.CandidateRecordings != 3 {
+		t.Fatalf("valid lane move incorrectly rejected or counted: %+v", coverage)
+	}
+}
