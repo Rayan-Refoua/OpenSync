@@ -17,12 +17,43 @@ type CacheEntry struct {
 }
 
 func main() {
-	if len(os.Args) != 3 || os.Args[1] != "inspect" {
+	var err error
+
+	switch {
+	case len(os.Args) == 3 && os.Args[1] == "inspect":
+		err = inspect(os.Args[2])
+
+	case len(os.Args) == 3 && os.Args[1] == "solve":
+		err = solveDiagnostic(os.Args[2])
+
+	case len(os.Args) == 5 && os.Args[1] == "import-discovery":
+		err = importDiscovery(os.Args[2], os.Args[3], os.Args[4])
+
+	case len(os.Args) == 4 && os.Args[1] == "propose-tracks":
+		err = proposeTracks(os.Args[2], os.Args[3])
+
+	case len(os.Args) == 5 && os.Args[1] == "probe":
+		err = probeHypothesis(os.Args[2], os.Args[3], os.Args[4])
+
+	case len(os.Args) == 5 && os.Args[1] == "export-premiere":
+		err = exportPremiere(os.Args[2], os.Args[3], os.Args[4])
+
+	case len(os.Args) == 6 && os.Args[1] == "export-report":
+		err = exportReport(os.Args[2], os.Args[3], os.Args[4], os.Args[5])
+
+	case len(os.Args) == 7 && os.Args[1] == "export-measured":
+		err = exportMeasured(
+			os.Args[2], os.Args[3], os.Args[4],
+			os.Args[5], os.Args[6],
+		)
+
+	default:
 		fmt.Fprintln(os.Stderr,
-			"Usage: opensync inspect <audio-cache-index.json>")
+			"Usage: opensync inspect <cache-index.json> | solve <constraints.json> | import-discovery <inventory.json> <discovery.json> <project.json>")
 		os.Exit(2)
 	}
-	if err := inspect(os.Args[2]); err != nil {
+
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "ERROR:", err)
 		os.Exit(1)
 	}

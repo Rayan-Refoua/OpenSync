@@ -1,0 +1,11 @@
+{
+  "nodes": ["A", "B", "C", "D", "E", "F"],
+  "constraints": [
+    {"reference": "A", "query": "B", "offset_ns": 12003000000, "weight": 1},
+    {"reference": "B", "query": "C", "offset_ns": 17998000000, "weight": 1},
+    {"reference": "A", "query": "C", "offset_ns": 30007000000, "weight": 1},
+    {"reference": "C", "query": "D", "offset_ns": 15006000000, "weight": 1},
+    {"reference": "B", "query": "D", "offset_ns": 33001000000, "weight": 1},
+    {"reference": "E", "query": "F", "offset_ns": 4000000000, "weight": 1}
+  ]
+}

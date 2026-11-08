@@ -111,3 +111,35 @@ Revalidate after correction.
 
 Build reproducible M1 benchmark data and evaluation
 harness before choosing the production matching stack.
+
+## Mandatory precision refinement
+
+A successful draft match is NEVER the final timing result.
+
+Every proposed synchronization must pass:
+1. Candidate discovery or graph-supported prediction.
+2. Independent overlap verification.
+3. High-resolution offset refinement.
+4. Multi-anchor drift and residual analysis, where feasible.
+5. Global graph-consistency validation.
+
+Precision refinement is mandatory even when the draft
+match has high confidence.
+
+Use fractional-sample peak interpolation or other
+validated fine-timing estimators where justified.
+
+Do not confuse numerical resolution with measured accuracy.
+Report uncertainty when signal quality prevents a
+reliable subframe estimate.
+
+For a defined video frame rate, evaluate final residual
+errors as fractions of one frame.
+
+A provisional match may be shown early, but the UI must
+distinguish provisional, refined, verified and unresolved
+states. Never silently represent draft timing as final.
+
+The expensive matching stage may be skipped when a fast
+draft is independently verified, but fine timing refinement
+must not be skipped.

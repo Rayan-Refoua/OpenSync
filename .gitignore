@@ -29,3 +29,21 @@ Thumbs.db
 
 # Logs
 *.log
+
+# OpenSync local research assets
+/experiments/
+/t
+
+# Generated media and Premiere exports
+*.wav
+*.pcm
+*.mp4
+*.mov
+*.mxf
+*.xml
+
+# Local credentials
+.env
+.env.*
+*.key
+*.pem
