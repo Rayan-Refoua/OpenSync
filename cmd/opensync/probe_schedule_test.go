@@ -54,3 +54,37 @@ func TestPresetsPreserveTrainingAndHoldoutSeparation(t *testing.T) {
 		}
 	}
 }
+
+func TestAdaptiveWindowSelectsShorterForBriefOverlap(t *testing.T){
+ preset,err:=quality.Parse("rock-solid")
+ if err!=nil{t.Fatal(err)}
+ // Predicted overlap supports ~17 seconds of query audio. Eight second
+ // windows only give two slots, while 2s reserves training + 3 holdouts.
+ result,ok:=chooseAdaptiveSchedule(18*16000,18*16000,0,preset)
+ if !ok{t.Fatal("short overlap not investigable")}
+ if result.WindowNS!=2_000_000_000{t.Fatalf("expected 2s window, got %d",result.WindowNS)}
+ if len(result.Plan.Training)<2||len(result.Plan.Holdout)!=3{
+  t.Fatalf("failed to reserve short-overlap evidence: %+v",result.Plan)
+ }
+}
+func TestAdaptiveWindowRetainsEightSecondsWhenPossible(t *testing.T){
+ preset,_:=quality.Parse("rock-solid")
+ result,ok:=chooseAdaptiveSchedule(460*16000,460*16000,0,preset)
+ if !ok||result.WindowNS!=8_000_000_000||len(result.Plan.Holdout)!=3{
+  t.Fatalf("should preserve longest valid window: %+v",result)
+ }
+}
+func TestAdaptiveWindowInsufficientOverlapNeverCertifies(t *testing.T){
+ preset,_:=quality.Parse("rock-solid")
+ _,ok:=chooseAdaptiveSchedule(3*16000,3*16000,0,preset)
+ if ok{t.Fatal("accepted a recording without two disjoint training events")}
+}
+func TestAdaptiveQualityBudget(t *testing.T){
+ for _,mode:=range []string{"draft","normal","rock-solid"}{
+  preset,_:=quality.Parse(mode)
+  result,ok:=chooseAdaptiveSchedule(40*16000,40*16000,0,preset)
+  if !ok{t.Fatalf("%s failed to allocate",mode)}
+  if len(result.Plan.Holdout)>preset.HeldOutChecks{t.Fatalf("%s exceeded heldout budget",mode)}
+  if len(result.Plan.Training)<2{t.Fatalf("%s insufficient training",mode)}
+ }
+}
