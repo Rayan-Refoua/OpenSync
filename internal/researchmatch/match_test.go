@@ -72,6 +72,10 @@ func TestNoFalseCertificationOrInvalidConfig(t *testing.T) {
 		t.Fatal("invalid hop accepted")
 	}
 	c = Dream()
+	c.IntegrationFrames = 4
+	c.HopSamples = 128
+	if _, err := MatchFeatures([3][]float64{}, [3][]float64{}, c); err == nil { t.Fatal("unsupported integrated 8ms hop accepted") }
+	c = Dream()
 	c.MinOverlapSeconds = 8
 	var x [3][]float64
 	for b := range x {
