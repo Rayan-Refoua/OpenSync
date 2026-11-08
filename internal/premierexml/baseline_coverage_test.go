@@ -7,6 +7,11 @@ import (
 
 func TestBaselineCoverageDoesNotCountUnverifiedPairsAsCertified(t *testing.T) {
 	baseline := completePreviewFixture()
+	// Construct a genuine baseline overlap between A (100..200)
+	// and B (170..190), preserving both linked audio/video slots.
+	baseline = bytes.ReplaceAll(baseline,
+		[]byte("<start>10</start><end>30</end>"),
+		[]byte("<start>170</start><end>190</end>"))
 	p := previewProject(t)
 	same, err := CompareBaselineCoverage(baseline, baseline, p)
 	if err != nil {
@@ -18,10 +23,12 @@ func TestBaselineCoverageDoesNotCountUnverifiedPairsAsCertified(t *testing.T) {
 		same.ChangedVideoPlacements != 0 || same.AcousticCertification != "not_assessed" {
 		t.Fatalf("incorrect baseline: %+v", same)
 	}
-	plan, err := PairPlan(baseline, "A", "B", 600_000_000)
-	if err != nil {
-		t.Fatal(err)
-	}
+	plan := Plan{Placements: []Placement{
+		{ClipID:"target",Media:"video",Track:2,
+			ExpectedStart:170,ExpectedEnd:190,NewStart:10},
+		{ClipID:"target-a",Media:"audio",Track:1,
+			ExpectedStart:170,ExpectedEnd:190,NewStart:10},
+	}}
 	moved, err := Patch(baseline, plan)
 	if err != nil {
 		t.Fatal(err)
