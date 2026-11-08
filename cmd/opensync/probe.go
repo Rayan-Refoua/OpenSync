@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"strings"
@@ -18,6 +19,12 @@ type probeCacheEntry struct {
 }
 
 func probeHypothesis(projectPath, inventoryPath, hypothesisID string) error {
+	return probeHypothesisTo(projectPath, inventoryPath, hypothesisID, os.Stdout)
+}
+
+// probeHypothesisTo allows orchestration to capture a complete report
+// without redirecting global stdout or spawning another Go process.
+func probeHypothesisTo(projectPath, inventoryPath, hypothesisID string, out io.Writer) error {
 	project, err := projectstate.Load(projectPath)
 	if err != nil {
 		return err
@@ -161,5 +168,5 @@ func probeHypothesis(projectPath, inventoryPath, hypothesisID string) error {
 		result.Probes = append(result.Probes, entry)
 	}
 
-	return json.NewEncoder(os.Stdout).Encode(result)
+	return json.NewEncoder(out).Encode(result)
 }
