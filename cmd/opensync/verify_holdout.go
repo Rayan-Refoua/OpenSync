@@ -27,6 +27,8 @@ type TrainingReport struct {
 	Probes                      []TrainProbe `json:"probes"`
 	Schedule                    string       `json:"schedule"`
 	ReservedHoldoutQuerySeconds []float64    `json:"reserved_holdout_query_seconds"`
+	EffectiveWindowNS int64 `json:"effective_window_ns"`
+	AdaptiveSelection string `json:"adaptive_selection"`
 }
 
 type HoldoutWindow struct {
@@ -38,6 +40,8 @@ type HoldoutWindow struct {
 	ControlWins       int     `json:"control_wins"`
 	ValidControls     int     `json:"valid_controls"`
 	Error             string  `json:"error,omitempty"`
+	Spectral *acousticverify.SpectralEvidence `json:"spectral,omitempty"`
+	SpectralError string `json:"spectral_error,omitempty"`
 }
 type HoldoutReport struct {
 	Status                     string          `json:"status"`
@@ -61,6 +65,9 @@ type HoldoutReport struct {
 	Result                     string          `json:"result"`
 	GraphCertification         string          `json:"graph_certification"`
 	ValidationAllocation       string          `json:"validation_allocation"`
+	EffectiveWindowNS int64 `json:"effective_window_ns"`
+	SpectralSuccessful int `json:"spectral_successful"`
+	SpectralUnavailable int `json:"spectral_unavailable"`
 	Windows                    []HoldoutWindow `json:"windows"`
 }
 
@@ -219,6 +226,20 @@ func verifyHoldout(projectPath, indexPath, trainPath, mode, output string) error
 	if training.QualityMode != string(preset.Mode) {
 		return fmt.Errorf("training mode differs from requested mode")
 	}
+	if training.Schedule=="preallocated_disjoint_v1"{
+		switch training.EffectiveWindowNS{
+		case 0: // M17 reports had an implicit preset window.
+		case 2_000_000_000,4_000_000_000,8_000_000_000:
+			if training.EffectiveWindowNS>preset.WindowNS{return fmt.Errorf("adaptive window exceeds mode maximum")}
+			preset.WindowNS=training.EffectiveWindowNS
+		default:return fmt.Errorf("unsupported acoustic window duration")
+		}
+		if training.AdaptiveSelection!=""&&training.AdaptiveSelection!="duration_capacity_only_v1"{
+			return fmt.Errorf("unknown adaptive window selection provenance")
+		}
+	}else if training.EffectiveWindowNS!=0 {
+		return fmt.Errorf("window override is only supported for pre-reserved reports")
+	}
 	indexBytes, err := os.ReadFile(indexPath)
 	if err != nil {
 		return err
@@ -277,6 +298,7 @@ func verifyHoldout(projectPath, indexPath, trainPath, mode, output string) error
 		TrainingRMSMS:         model.rms / 1e6,
 		HoldoutsRequested:     preset.HeldOutChecks,
 		GraphCertification:    "not_checked", Windows: []HoldoutWindow{},
+		EffectiveWindowNS:preset.WindowNS,
 	}
 	// A candidate holdout must fit the predicted reference region and be
 	// temporally disjoint from training events. No model is refitted on holdout.
@@ -336,6 +358,14 @@ func verifyHoldout(projectPath, indexPath, trainPath, mode, output string) error
 			item.ResidualMS = float64(m.MeasuredNS-predicted) / 1e6
 			absResiduals = append(absResiduals, math.Abs(item.ResidualMS))
 			item.Correlation = m.Correlation
+			spectral,spectralErr:=acousticverify.Corroborate(ref,query,m)
+			if spectralErr!=nil {
+				item.SpectralError=spectralErr.Error()
+				report.SpectralUnavailable++
+			}else{
+				item.Spectral=&spectral
+				report.SpectralSuccessful++
+			}
 			for _, wrong := range quality.ValidControls(ref.Frames(), item.QueryStartNS, predicted, preset.WindowNS, preset.SearchRadiusNS, preset.ControlOffsetsSeconds) {
 				control, err := acousticverify.Measure(ref, query, acousticverify.Probe{
 					QueryStartNS: item.QueryStartNS, OffsetNS: wrong, WindowNS: preset.WindowNS, RadiusNS: preset.SearchRadiusNS,
