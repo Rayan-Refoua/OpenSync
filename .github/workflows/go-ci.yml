@@ -31,7 +31,7 @@ jobs:
           files="$(gofmt -l cmd internal)"
           if [[ -n "$files" ]]; then
             printf 'Unformatted files:\n%s\n' "$files"
-            gofmt -d internal/premierexml/baseline_coverage.go internal/premierexml/baseline_coverage_test.go cmd/opensync/baseline_compare.go
+            gofmt -d internal/premierexml/fallback_export.go internal/premierexml/fallback_export_test.go cmd/opensync/export_baseline_fallback.go
             exit 1
           fi
       - name: Unit and integration tests
