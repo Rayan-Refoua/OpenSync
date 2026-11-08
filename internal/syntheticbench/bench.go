@@ -30,11 +30,15 @@ type Scenario struct {
 	Reference        string `json:"reference"`
 	Query            string `json:"query"`
 	ExpectedOffsetNS *int64 `json:"expected_offset_ns"`
+	// Several valid alignments may exist when acoustic content repeats.
+	ValidOffsetsNS []int64 `json:"valid_offsets_ns,omitempty"`
 	Purpose          string `json:"purpose"`
 }
 type MatchRun struct {
 	Scenario         string               `json:"scenario"`
 	HopMS            int                  `json:"hop_ms"`
+	IntegrationMS    int                  `json:"integration_ms"`
+	Configuration    string               `json:"configuration"`
 	Status           string               `json:"status"`
 	Rank             int                  `json:"true_offset_rank"`
 	NearestErrorMS   float64              `json:"nearest_error_ms,omitempty"`
@@ -177,6 +181,26 @@ func Generate(dir string) ([]Scenario, error) {
 			return nil, err
 		}
 	}
+	// M24: controlled, competing true correspondences, missing events,
+	// and the minimum genuine overlap at a source boundary.
+	repeatSource := slice(master, 1, 24, 0)
+	repeatReference := append(append([]float64(nil), repeatSource...), repeatSource[:12*rate]...)
+	if err := writeWAV(filepath.Join(dir, "repeat-reference.wav"), transform(repeatReference, "clean", 40)); err != nil { return nil, err }
+	if err := writeWAV(filepath.Join(dir, "repeat-query.wav"), transform(repeatSource[:12*rate], "clean", 41)); err != nil { return nil, err }
+
+	missing := transform(slice(master, queryStart, querySeconds, 0), "mic", 42)
+	noise := rand.New(rand.NewSource(43))
+	for i := range missing {
+		// A deterministic 70% interval dropout, not merely a gain reduction.
+		phase := (float64(i)/rate)
+		phase -= 3 * math.Floor(phase/3)
+		if phase >= 0.9 { missing[i] = int16(math.Round(450 * noise.NormFloat64())) }
+	}
+	if err := writeWAV(filepath.Join(dir, "query-dropout.wav"), missing); err != nil { return nil, err }
+
+	if err := writeWAV(filepath.Join(dir, "short-reference.wav"), transform(slice(master, 0, 38, 0), "reference", 44)); err != nil { return nil, err }
+	if err := writeWAV(filepath.Join(dir, "short-query.wav"), transform(slice(master, 30, 18, 0), "mic", 45)); err != nil { return nil, err }
+
 	truth := targetOffset(refStart, queryStart)
 	aThird := targetOffset(refStart, thirdStart)
 	bThird := targetOffset(queryStart, thirdStart)
@@ -188,6 +212,9 @@ func Generate(dir string) ([]Scenario, error) {
 		{"unrelated-negative", "reference.wav", "query-unrelated.wav", nil, "independent noise must not be automatically certified"},
 		{"triangle-A-C", "reference.wav", "third.wav", aThird, "known time offset on third camera"},
 		{"triangle-B-C", "query-clean.wav", "third.wav", bThird, "known independent triangle leg"},
+		{Name:"repeated-content", Reference:"repeat-reference.wav", Query:"repeat-query.wav", ExpectedOffsetNS:targetOffset(0,0), ValidOffsetsNS:[]int64{0,24_000_000_000},Purpose:"two equally genuine placements at offsets 0s and +24s"},
+		{Name:"missing-70pct",Reference:"reference.wav",Query:"query-dropout.wav",ExpectedOffsetNS:truth,Purpose:"long missing-gated intervals replaced by independent noise"},
+		{Name:"short-overlap-8s",Reference:"short-reference.wav",Query:"short-query.wav",ExpectedOffsetNS:targetOffset(0,30),Purpose:"eight-second shared segment at end of 38-second reference"},
 	}
 	return cases, nil
 }
@@ -207,11 +234,12 @@ func Evaluate(dir string, cases []Scenario) (Report, error) {
 			ref.Close()
 			return report, err
 		}
-		for _, hop := range []int{8, 2} {
+		for _,mode := range []struct{name string;hop,integrate int}{{"8ms",8,1},{"2ms",2,1},{"2ms-integrated-8ms",2,4}} {
 			cfg := researchmatch.Dream()
-			cfg.HopSamples = hop * rate / 1000
+			cfg.HopSamples = mode.hop * rate / 1000
+			cfg.IntegrationFrames=mode.integrate
 			matched, err := researchmatch.Match(ref, query, cfg)
-			row := MatchRun{Scenario: scenario.Name, HopMS: hop, Status: "diagnostic", Peaks: []researchmatch.Peak{}, Rank: -1}
+			row := MatchRun{Scenario: scenario.Name, HopMS: mode.hop, IntegrationMS:mode.hop*mode.integrate, Configuration:mode.name,Status: "diagnostic", Peaks: []researchmatch.Peak{}, Rank: -1}
 			if err != nil {
 				row.Status = "measurement_failed"
 				row.Error = err.Error()
@@ -223,11 +251,12 @@ func Evaluate(dir string, cases []Scenario) (Report, error) {
 				}
 				if scenario.ExpectedOffsetNS != nil {
 					best := math.Inf(1)
+					truths := scenario.ValidOffsetsNS
+					if len(truths)==0 { truths=[]int64{*scenario.ExpectedOffsetNS} }
 					for i, peak := range matched.Peaks {
-						deviation := math.Abs(float64(peak.OffsetNS-*scenario.ExpectedOffsetNS)) / 1e6
-						if deviation < best {
-							best = deviation
-							row.Rank = i + 1
+						for _,expected := range truths {
+							deviation := math.Abs(float64(peak.OffsetNS-expected)) / 1e6
+							if deviation < best { best = deviation; row.Rank = i + 1 }
 						}
 					}
 					if math.IsInf(best, 1) {
@@ -235,7 +264,7 @@ func Evaluate(dir string, cases []Scenario) (Report, error) {
 					} else {
 						row.NearestErrorMS = best
 					}
-					if row.Rank < 0 || row.NearestErrorMS > float64(hop)*1.5 {
+					if row.Rank < 0 || row.NearestErrorMS > float64(mode.hop)*1.5 {
 						row.Status = "ground_truth_not_in_top_peaks"
 					} else {
 						row.Status = "ground_truth_recovered_not_certified"
