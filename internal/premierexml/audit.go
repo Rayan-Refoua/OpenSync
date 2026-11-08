@@ -12,19 +12,19 @@ import (
 // TimelineAudit describes how completely an imported Premiere sequence
 // represents the project's sources. It does not certify acoustic alignment.
 type TimelineAudit struct {
-	Version                 int      `json:"version"`
-	Status                  string   `json:"status"`
-	ProjectRecordings       int      `json:"project_recordings"`
-	MatchedRecordings       int      `json:"matched_recordings"`
-	MissingRecordingIDs     []string `json:"missing_recording_ids"`
-	UnmatchedVideoClipIDs   []string `json:"unmatched_video_clip_ids"`
-	AmbiguousRecordingIDs   []string `json:"ambiguous_recording_ids"`
-	VideoClipInstances      int      `json:"video_clip_instances"`
-	AudioClipInstances      int      `json:"audio_clip_instances"`
-	VideoTracks             int      `json:"video_tracks"`
-	AudioTracks             int      `json:"audio_tracks"`
-	OverlappingTrackPairs   []string `json:"overlapping_track_pairs"`
-	InvalidTimingClipIDs    []string `json:"invalid_timing_clip_ids"`
+	Version                  int      `json:"version"`
+	Status                   string   `json:"status"`
+	ProjectRecordings        int      `json:"project_recordings"`
+	MatchedRecordings        int      `json:"matched_recordings"`
+	MissingRecordingIDs      []string `json:"missing_recording_ids"`
+	UnmatchedVideoClipIDs    []string `json:"unmatched_video_clip_ids"`
+	AmbiguousRecordingIDs    []string `json:"ambiguous_recording_ids"`
+	VideoClipInstances       int      `json:"video_clip_instances"`
+	AudioClipInstances       int      `json:"audio_clip_instances"`
+	VideoTracks              int      `json:"video_tracks"`
+	AudioTracks              int      `json:"audio_tracks"`
+	OverlappingTrackPairs    []string `json:"overlapping_track_pairs"`
+	InvalidTimingClipIDs     []string `json:"invalid_timing_clip_ids"`
 	RecordingsWithMultiTakes []string `json:"recordings_with_multiple_timeline_instances"`
 }
 
