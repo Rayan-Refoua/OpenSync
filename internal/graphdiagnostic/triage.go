@@ -173,6 +173,7 @@ func Triage(p *projectstate.Project)(TriageReport,error){
    if err!=nil{return TriageReport{},err}
    predicted,err:=addInt(first,second)
    if err!=nil{return TriageReport{},err}
+   if predicted==math.MinInt64{return TriageReport{},fmt.Errorf("cycle residual overflow")}
    residual,err:=addInt(wanted,-predicted)
    if err!=nil{return TriageReport{},err}
    item.Paths=append(item.Paths,TriagePath{
