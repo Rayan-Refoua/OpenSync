@@ -99,7 +99,7 @@ func Build(p *projectstate.Project) (Plan, error) {
 		// hypotheses from dominating every scheduling decision.
 		duration := float64(r.DurationNS) / 1e9
 		degree := len(neighbors[id])
-		priority := math.Log1p(duration)*math.Log1p(float64(degree)+1)
+		priority := math.Log1p(duration) * math.Log1p(float64(degree)+1)
 		result.Anchors = append(result.Anchors, Anchor{
 			RecordingID: id, SourcePath: r.SourcePath,
 			DurationSeconds: duration, UniqueNeighbors: degree,
@@ -147,8 +147,8 @@ func Build(p *projectstate.Project) (Plan, error) {
 				support = h.Discovery.SupportWindows
 			}
 			score := math.Log1p(float64(support)) +
-				0.2*math.Log1p(float64(len(neighbors[next]))) +
-				0.1*math.Log1p(float64(p.Recordings[next].DurationNS)/1e9)
+				0.2 * math.Log1p(float64(len(neighbors[next]))) +
+				0.1 * math.Log1p(float64(p.Recordings[next].DurationNS)/1e9)
 			candidate := Investigation{
 				HypothesisID: id, Reference: h.Reference, Query: h.Query,
 				OffsetNS: h.OffsetNS, SupportWindows: support,
