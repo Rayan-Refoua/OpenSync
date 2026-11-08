@@ -41,7 +41,7 @@ func AuditTimeline(source []byte, p *projectstate.Project) (TimelineAudit, error
 	}
 	a := TimelineAudit{
 		Version: 1, Status: "STRUCTURAL_AUDIT_NOT_ACOUSTIC_CERTIFICATION",
-		ProjectRecordings: len(p.Recordings),
+		ProjectRecordings:   len(p.Recordings),
 		MissingRecordingIDs: []string{}, UnmatchedVideoClipIDs: []string{},
 		AmbiguousRecordingIDs: []string{}, OverlappingTrackPairs: []string{},
 		InvalidTimingClipIDs: []string{}, RecordingsWithMultiTakes: []string{},
