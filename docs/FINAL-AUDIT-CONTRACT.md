@@ -34,6 +34,7 @@ applicable acceptance condition is evidenced by artifacts and real media.
 - [x] Baseline-preserving XML exporter with externally reviewed placements and explicit loss-of-overlap authorization
 - [x] Detailed provenance on inherited versus externally reviewed positions; no false certification
 - [x] M19 diagnostic graph enumerates disconnected components and alternate candidate paths with raw cycle residuals (not acoustic certificates)
+- [x] M21 measured-offset graph diagnostics from pre-reserved acoustic reports; spectral bands share event identity, affine offsets are deferred
 - [ ] Certified global timing graph with calibrated cycle consistency, independently checked paths and uncertainty propagation
 - [ ] Native machine-produced independent verification certificates consumed by the exporter (currently external review only)
 - [ ] Output real dataset Premiere XML based on evidence-gated placements, not experimental graph guesses
