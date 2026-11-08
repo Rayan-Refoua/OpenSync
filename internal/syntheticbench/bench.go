@@ -35,24 +35,24 @@ type Scenario struct {
 	Purpose        string  `json:"purpose"`
 }
 type OffsetHit struct {
- ExpectedOffsetNS int64 `json:"expected_offset_ns"`
- FoundRank int `json:"found_rank"`
- NearestErrorMS float64 `json:"nearest_error_ms,omitempty"`
+	ExpectedOffsetNS int64   `json:"expected_offset_ns"`
+	FoundRank        int     `json:"found_rank"`
+	NearestErrorMS   float64 `json:"nearest_error_ms,omitempty"`
 }
 type MatchRun struct {
-	Scenario         string               `json:"scenario"`
-	HopMS            int                  `json:"hop_ms"`
-	IntegrationMS    int                  `json:"integration_ms"`
-	Configuration    string               `json:"configuration"`
-	Status           string               `json:"status"`
-	Rank             int                  `json:"true_offset_rank"`
-	NearestErrorMS   float64              `json:"nearest_error_ms,omitempty"`
-	TopOffsetSeconds float64              `json:"top_offset_seconds,omitempty"`
-	TopScore         float64              `json:"top_score,omitempty"`
-	TrueOffsetScore  float64              `json:"true_offset_score,omitempty"`
-	Error            string               `json:"error,omitempty"`
-	Peaks            []researchmatch.Peak `json:"peaks"`
-	GroundTruthAlternatives []OffsetHit `json:"ground_truth_alternatives,omitempty"`
+	Scenario                string               `json:"scenario"`
+	HopMS                   int                  `json:"hop_ms"`
+	IntegrationMS           int                  `json:"integration_ms"`
+	Configuration           string               `json:"configuration"`
+	Status                  string               `json:"status"`
+	Rank                    int                  `json:"true_offset_rank"`
+	NearestErrorMS          float64              `json:"nearest_error_ms,omitempty"`
+	TopOffsetSeconds        float64              `json:"top_offset_seconds,omitempty"`
+	TopScore                float64              `json:"top_score,omitempty"`
+	TrueOffsetScore         float64              `json:"true_offset_score,omitempty"`
+	Error                   string               `json:"error,omitempty"`
+	Peaks                   []researchmatch.Peak `json:"peaks"`
+	GroundTruthAlternatives []OffsetHit          `json:"ground_truth_alternatives,omitempty"`
 }
 type Report struct {
 	Status                   string     `json:"status"`
@@ -288,16 +288,16 @@ func Evaluate(dir string, cases []Scenario) (Report, error) {
 					// Assess *each* valid content alignment independently.
 					// The nearest-match rank alone can hide missing repeats.
 					for _, expected := range truths {
-						hit := OffsetHit{ExpectedOffsetNS:expected, FoundRank:-1}
-						for i,peak := range matched.Peaks{
-							delta := math.Abs(float64(peak.OffsetNS-expected))/1e6
-							if delta<=float64(mode.hop)*1.5{
-								hit.FoundRank=i+1
-								hit.NearestErrorMS=delta
+						hit := OffsetHit{ExpectedOffsetNS: expected, FoundRank: -1}
+						for i, peak := range matched.Peaks {
+							delta := math.Abs(float64(peak.OffsetNS-expected)) / 1e6
+							if delta <= float64(mode.hop)*1.5 {
+								hit.FoundRank = i + 1
+								hit.NearestErrorMS = delta
 								break
 							}
 						}
-						row.GroundTruthAlternatives=append(row.GroundTruthAlternatives,hit)
+						row.GroundTruthAlternatives = append(row.GroundTruthAlternatives, hit)
 					}
 					if math.IsInf(best, 1) {
 						row.Rank = -1
