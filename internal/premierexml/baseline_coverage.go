@@ -141,7 +141,11 @@ func CompareBaselineCoverage(baseline, candidate []byte, p *projectstate.Project
 	for id, a := range original {
 		b := next[id]
 		if a.Track != b.Track {
-			if a.Media == "video" { videoTrackChanges++ } else if a.Media == "audio" { audioTrackChanges++ }
+			if a.Media == "video" {
+				videoTrackChanges++
+			} else if a.Media == "audio" {
+				audioTrackChanges++
+			}
 		}
 	}
 	videoShift := make(map[string]int64, len(baselineVideos))
