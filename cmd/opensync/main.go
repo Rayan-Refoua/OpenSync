@@ -22,6 +22,19 @@ func main() {
 	var err error
 
 	switch {
+	case len(os.Args) == 1 || (len(os.Args) == 2 && (os.Args[1] == "--help" || os.Args[1] == "-h")):
+		fmt.Println("OpenSync — automatic synchronization and editable Premiere timelines\n\n" +
+			"Synchronize files and save both the precise project and Premiere XML:\n" +
+			"  opensync sync --file-list media-files.txt --output MyProject\n" +
+			"  opensync sync --files camera.mp4 recorder.wav --output MyProject\n\n" +
+			"Export a saved project without synchronizing again:\n" +
+			"  opensync export MyProject/OpenSync.opensync --output Export\n" +
+			"  opensync export MyProject/OpenSync.opensync --output Export --unsynced separate-sequence\n\n" +
+			"The default unresolved-clip policy is append. Use sync --help or export --help for options.\n" +
+			"Research commands and benchmark remain available for development.")
+		return
+	case len(os.Args) >= 2 && os.Args[1] == "export":
+		err = autosync.Run(context.Background(), os.Args[1:])
 	case len(os.Args) >= 2 && os.Args[1] == "sync":
 		err = autosync.Run(context.Background(), os.Args[2:])
 	case len(os.Args) >= 2 && os.Args[1] == "benchmark":
@@ -110,7 +123,7 @@ func main() {
 
 	default:
 		fmt.Fprintln(os.Stderr,
-			"Usage: opensync benchmark --output NEW_DIR [--profile quick|full] [--gate readiness|regression] | inspect <cache-index.json> | solve <constraints.json> | import-discovery <inventory.json> <discovery.json> <project.json>")
+			"Unknown command or arguments. Run opensync --help for sync/export usage.")
 		os.Exit(2)
 	}
 

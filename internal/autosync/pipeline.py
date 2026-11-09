@@ -24,6 +24,8 @@ os.environ.setdefault("OPENBLAS_NUM_THREADS","1")
 os.environ.setdefault("OMP_NUM_THREADS","1")
 import numpy as np
 from scipy import ndimage, signal, optimize
+sys.path.insert(0,str(Path(__file__).resolve().parent))
+from project_export import save_project, export_project, audit_xml
 
 VERSION = "opensync-autonomous-v1"
 SR = 16000
@@ -123,6 +125,7 @@ def prepare(args, out):
         cache = out/"cache"/(rid+".wav")
         local_source = path
         reused = False
+        info=None
         if prior and prior.get("source_bytes") == st.st_size and prior.get("source_mtime_ns") == st.st_mtime_ns and Path(prior["cache"]).is_file():
             cache = Path(prior["cache"])
             reused = True
@@ -138,14 +141,24 @@ def prepare(args, out):
             if path.stat().st_size != st.st_size or path.stat().st_mtime_ns != st.st_mtime_ns:
                 raise ValueError("source changed during caching: "+str(path))
             os.replace(temporary, local_source)
-            subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-n", "-i", str(local_source), "-map", "0:a:0", "-ac", "1", "-ar", str(SR), "-c:a", "pcm_s16le", str(cache)], check=True)
-        info = probe(local_source)
+            info=probe(local_source)
+            if any(x["codec_type"]=="audio" for x in info["streams"]):
+                subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-n", "-i", str(local_source), "-map", "0:a:0", "-ac", "1", "-ar", str(SR), "-c:a", "pcm_s16le", str(cache)], check=True)
+            else:
+                # Preserve silent video as unresolved instead of aborting the
+                # whole project. This cache is explicitly synthetic silence.
+                frames=round(float(info["format"]["duration"])*SR)
+                with wave.open(str(cache),"wb") as w:
+                    w.setparams((1,2,SR,0,"NONE","not compressed"))
+                    block=bytes(SR*2)
+                    while frames:
+                        n=min(frames,SR);w.writeframesraw(block[:n*2]);frames-=n
+        if info is None:info = probe(local_source)
         video = next((x for x in info["streams"] if x["codec_type"] == "video" and not x.get("disposition",{}).get("attached_pic")), None)
         audio = next((x for x in info["streams"] if x["codec_type"] == "audio"), None)
-        if audio is None:
-            raise ValueError("no audio stream: "+str(path))
+        if audio is None and video is None:raise ValueError("no usable audio or video stream: "+str(path))
         group=str(path.parent.relative_to(root)) if root else str(path.parent)
-        rec = dict(identity, id=rid, name=path.name, cache=str(cache.resolve()), local_source=str(local_source), duration=wav_info(cache), video=video, audio=audio, cache_sha256=sha(cache), cache_reused=reused, source_group=group)
+        rec = dict(identity, id=rid, name=path.name, cache=str(cache.resolve()), local_source=str(local_source), duration=wav_info(cache), video=video, audio=audio, cache_sha256=sha(cache), cache_reused=reused, source_group=group,analysis_audio="decoded_source_audio" if audio else "synthetic_silence_no_audio")
         save(state_path, rec)
         records.append(rec)
         print(f"CACHE {i+1}/{len(files)} ready {path.name} ({rec['duration']:.2f}s, reused={reused})", flush=True)
@@ -194,6 +207,10 @@ def fingerprints(rec, out):
         if str(data["digest"])!=rec["cache_sha256"] or str(data["version"])!=VERSION:raise ValueError("stale fingerprints")
         return data["hashes"]
     pieces=[]
+    if rec.get("audio") is None:
+        hashes=np.empty((0,2),dtype=np.int64)
+        np.savez_compressed(path,hashes=hashes,digest=rec["cache_sha256"],version=VERSION)
+        return hashes
     start=0.0
     while start < rec["duration"]:
         length=min(60,rec["duration"]-start)
@@ -539,11 +556,12 @@ def refine_failed_models(records, supported, validated, out):
     return validate_edges(records,combined,out)
 
 
-def graph_layout(records, edges):
+def graph_layout(records, edges, excluded=None):
     """Deterministic maximum-support forest, with conflicting cycle edges
     removed by their weakest support. This is consistency, not certification.
     """
-    active=list(range(len(edges)))
+    excluded=set(excluded or ())
+    active=[i for i in range(len(edges)) if i not in excluded]
     rejected=[]
 
     def forest(indices):
@@ -588,7 +606,7 @@ def graph_layout(records, edges):
             if k in selected_set:continue
             e=edges[k];rs,rr=transforms[e["reference"]];qs,qr=transforms[e["query"]]
             residual=max(abs(rs+rr*(o["query_time"]+o["offset"])-qs-qr*o["query_time"]) for o in e["selected"]["fit_observations"])
-            if residual>.075:conflicts.append((residual,k))
+            if residual>.04:conflicts.append((residual,k))
         if not conflicts:break
         residual,k=max(conflicts)
         e=edges[k];start,target=e["reference"],e["query"]
@@ -648,188 +666,60 @@ def graph_layout(records, edges):
             x=np.linalg.lstsq(aa,bb,rcond=None)[0]
         max_residual=float(np.max(np.abs(a@x-b)))
         fit_reports.append({"root":root,"nodes":group,"max_residual_seconds":max_residual,"observations":len(rows)})
-        if max_residual<=.075 and all(abs(x[j])<=.002 for (node,kind),j in variables.items() if kind=="drift"):
+        if max_residual<=.04 and all(abs(x[j])<=.002 for (node,kind),j in variables.items() if kind=="drift"):
             transforms[root]=(0,1)
             for node in group:
                 if node==root:continue
                 transforms[node]=(float(x[variables[(node,"start")]]),1+float(x[variables[(node,"drift")]]) if (node,"drift") in variables else 1.0)
+    # Test the solved graph against the frozen evidence. An incompatible
+    # relation is removed automatically; it cannot silently survive export.
+    residual_reports=[];node_error=defaultdict(float);bad=[]
+    for k in active:
+        e=edges[k];rs,rr=transforms[e["reference"]];qs,qr=transforms[e["query"]]
+        observations=e["selected"]["fit_observations"]+[o for o in e.get("validation",{}).get("observations",[]) if o.get("passes")]
+        residual=max(abs(rs+rr*(o["query_time"]+o["offset"])-qs-qr*o["query_time"]) for o in observations)
+        residual_reports.append({"edge":k,"maximum_residual_seconds":residual,"observations":len(observations)})
+        for node in (e["reference"],e["query"]):node_error[node]=max(node_error[node],residual)
+        if residual>.04 or any(abs(transforms[n][1]-1)>.002 for n in (e["reference"],e["query"])):bad.append((residual,k))
+    if bad:
+        residual,k=max(bad)
+        layout,report=graph_layout(records,edges,excluded|{k}|{r["edge"] for r in rejected})
+        report["rejected_edges"]+=rejected+[{"edge":k,"reason":"global_evidence_inconsistency","maximum_residual_seconds":residual}]
+        return layout,report
     groups.sort(key=lambda g:(-len(g),-sum(records[i]["duration"] for i in g),g[0]))
-    layout=[];cursor=0.0
+    layout=[]
     for number,group in enumerate(groups,1):
         lo=min(transforms[i][0] for i in group)
         span=0.0
         for i in group:
             start,rate=transforms[i]
-            start=start-lo+cursor
+            start=start-lo
             span=max(span,start+rate*records[i]["duration"])
             relevant=[edges[k]["selected"] for k in active if i in (edges[k]["reference"],edges[k]["query"])]
-            error=max([m["residual_seconds"] for m in relevant]+[.001])
-            layout.append({"recording":i,"component":number,"component_size":len(group),"start_seconds":start,"rate":rate,"fit_residual_seconds":error,"status":"acoustically_supported_not_certified" if len(group)>1 else "unresolved_no_supported_relation"})
-        cursor=span+10
-    return layout,{"components":groups,"active_edges":active,"rejected_edges":rejected,"component_fits":fit_reports,"independent_certification":"not_performed"}
+            error=max([m["residual_seconds"] for m in relevant]+[node_error[i],.001])
+            status="acoustically_supported_not_certified" if number==1 and len(group)>1 else "unresolved_disconnected_group" if len(group)>1 else "unresolved_no_supported_relation"
+            layout.append({"recording":i,"component":number,"component_size":len(group),"start_seconds":start,"rate":rate,"fit_residual_seconds":error,"status":status})
+    return layout,{"components":groups,"active_edges":active,"rejected_edges":rejected,"component_fits":fit_reports,"global_evidence_residuals":residual_reports,"maximum_global_residual_seconds":max((r['maximum_residual_seconds'] for r in residual_reports),default=0),"independent_certification":"not_performed"}
 
 
-def tag(parent,name,text=None,**attributes):
-    item=ET.SubElement(parent,name,attributes)
-    if text is not None:item.text=str(text)
-    return item
-
-
-def xml_rate(parent,fps=50):
-    rate=tag(parent,"rate");tag(rate,"timebase",fps);tag(rate,"ntsc","FALSE")
-
-
-def media_file(parent,rec,fps,source=None,duration=None):
-    file=tag(parent,"file",id="file-"+rec["id"]+("-corrected" if source else ""))
-    path=Path(source or rec["source"])
-    tag(file,"name",path.name);tag(file,"pathurl",path.as_uri())
-    xml_rate(file,fps)
-    tag(file,"duration",round((duration or rec["duration"])*fps))
-    media=tag(file,"media")
-    if rec["video"] is not None and not source:
-        video=tag(media,"video");sample=tag(video,"samplecharacteristics")
-        xml_rate(sample,fps)
-        tag(sample,"width",rec["video"].get("width",1920));tag(sample,"height",rec["video"].get("height",1080));tag(sample,"anamorphic","FALSE");tag(sample,"pixelaspectratio","square");tag(sample,"fielddominance","none")
-    audio=tag(media,"audio");sample=tag(audio,"samplecharacteristics")
-    tag(sample,"depth",24 if source else rec["audio"].get("bits_per_sample",16) or 16)
-    tag(sample,"samplerate",int(rec["audio"].get("sample_rate",48000)))
-    tag(audio,"channelcount",int(rec["audio"].get("channels",1)))
-    return file
-
-
-def finish(records,edges,out,tolerance):
+def finish(records,edges,out,tolerance,name="OpenSync",unsynced="append"):
     layout,graph=graph_layout(records,edges)
     save(out/"graph.json",graph)
-    fps=50
-    placements=[];derivatives=[]
-    for item in sorted(layout,key=lambda x:x["recording"]):
-        rec=records[item["recording"]]
-        rate=item["rate"];duration=rec["duration"]
-        predicted=abs(rate-1)*duration/2+item["fit_residual_seconds"]+.5/fps
-        item["predicted_constant_residual_seconds"]=predicted
-        source=None
-        if rec["video"] is None and predicted>tolerance and item["component_size"]>1:
-            (out/"derivatives").mkdir(exist_ok=True)
-            target=out/"derivatives"/(rec["id"]+"-timing.wav")
-            if not target.exists():
-                print("DERIVATIVE non-destructive audio timing: "+rec["name"],flush=True)
-                subprocess.run(["ffmpeg","-nostdin","-v","error","-n","-i",rec["local_source"],"-map","0:a:0","-af",f"atempo={1/rate:.12f}","-c:a","pcm_s24le",str(target)],check=True)
-            source=str(target)
-            actual=float(probe(target)["format"]["duration"])
-            if abs(actual-duration*rate)>.05:raise ValueError("audio derivative duration does not match timing model")
-            derivatives.append({"recording_id":rec["id"],"original":rec["source"],"derivative":source,"rate":rate,"actual_duration_seconds":actual,"sha256":sha(target)})
-        # Segment video only where a constant placement would exceed the
-        # delivery budget. Every source frame remains represented once.
-        count=1
-        if rec["video"] is not None and predicted>tolerance:
-            budget=tolerance-item["fit_residual_seconds"]-.5/fps
-            if budget<=0:item["status"]="unresolved_timing_uncertainty"
-            else:count=max(1,math.ceil(abs(rate-1)*duration/(2*budget)))
-        total=round(duration*fps)
-        for j in range(count):
-            first=round(total*j/count);last=round(total*(j+1)/count)
-            mid=(first+last)/(2*fps)
-            start=round((item["start_seconds"]+first/fps+(rate-1)*mid)*fps)
-            if source:start=round(item["start_seconds"]*fps)
-            end=start+(round(actual*fps) if source else last-first)
-            placements.append(dict(item,id=f"recording-{rec['id']}-part-{j+1}",source_in=0 if source else first,source_out=round(actual*fps) if source else last,start=start,end=end,segment=j+1,segments=count,derivative=source))
-    # Stable lane allocation preserves all clips; overlaps never silently
-    # overwrite another take. Group names indicate provenance, not device proof.
-    lanes=defaultdict(list)
-    for p in sorted(placements,key=lambda p:(p["start"],p["recording"],p["segment"])):
-        rec=records[p["recording"]]
-        top=Path(rec["source_group"]).parts[0]
-        group=re.sub(r"^(D\d+)-SD\d+$",r"\1",top)
-        kinds=([("video",0)] if rec["video"] is not None else [])+[("audio",c) for c in range(int(rec["audio"].get("channels",1)))]
-        p["instances"]=[]
-        for kind,channel in kinds:
-            key=(kind,group,channel)
-            choices=lanes[key]
-            lane=next((l for l in choices if not l or l[-1]["end"]<=p["start"]),None)
-            if lane is None:lane=[];choices.append(lane)
-            instance={"placement":p,"channel":channel,"kind":kind,"start":p["start"],"end":p["end"],"clip_id":p["id"]+f"-{kind}-{channel}"}
-            lane.append(instance);p["instances"].append(instance)
-    root=ET.Element("xmeml",version="5")
-    project=tag(root,"project");tag(project,"name","OpenSync - Aghaee - Engine Test")
-    children=tag(project,"children");sequence=tag(children,"sequence",id="opensync-sequence")
-    tag(sequence,"name","OpenSync Autonomous Sync - Review Required")
-    sequence_end=max(p["end"] for p in placements)
-    tag(sequence,"duration",sequence_end);xml_rate(sequence,fps);tag(sequence,"in",0);tag(sequence,"out",sequence_end)
-    media=tag(sequence,"media");video=tag(media,"video");audio=tag(media,"audio")
-    fmt=tag(video,"format");sample=tag(fmt,"samplecharacteristics");xml_rate(sample,fps)
-    for key,value in (("width",1920),("height",1080),("anamorphic","FALSE"),("pixelaspectratio","square"),("fielddominance","none")):tag(sample,key,value)
-    track_counts=Counter();tracks=[]
-    for (kind,group,channel),choices in sorted(lanes.items(),key=lambda x:(x[0][0],x[0][1],x[0][2])):
-        for index,lane in enumerate(choices):
-            track_counts[kind]+=1
-            track=tag(video if kind=="video" else audio,"track")
-            tag(track,"name",f"{group} / {kind} {channel+1} / lane {index+1}")
-            for n,instance in enumerate(lane,1):instance["track_index"]=track_counts[kind];instance["clip_index"]=n
-            tracks.append((track,lane))
-    for track,lane in tracks:
-        for instance in lane:
-            p=instance["placement"];rec=records[p["recording"]]
-            clip=tag(track,"clipitem",id=instance["clip_id"])
-            tag(clip,"name",rec["name"]+(f" [part {p['segment']}/{p['segments']}]" if p["segments"]>1 else ""))
-            tag(clip,"enabled","TRUE");tag(clip,"duration",round(rec["duration"]*fps));xml_rate(clip,fps)
-            for key,value in (("start",p["start"]),("end",p["end"]),("in",p["source_in"]),("out",p["source_out"])):tag(clip,key,value)
-            media_file(clip,rec,fps,p["derivative"],(p["source_out"]-p["source_in"])/fps if p["derivative"] else None)
-            sourcetrack=tag(clip,"sourcetrack");tag(sourcetrack,"mediatype",instance["kind"]);tag(sourcetrack,"trackindex",instance["channel"]+1)
-            label=tag(clip,"labels");tag(label,"label2","Rose" if p["status"].startswith("unresolved") else "Caribbean")
-            logging=tag(clip,"logginginfo");tag(logging,"description",f"OpenSync {p['status']}; component {p['component']}; rate {p['rate']:.9f}; predicted constant residual {p['predicted_constant_residual_seconds']*1000:.3f}ms. Review original evidence; no independent certification.")
-            for linked in p["instances"]:
-                link=tag(clip,"link");tag(link,"linkclipref",linked["clip_id"]);tag(link,"mediatype",linked["kind"]);tag(link,"trackindex",linked["track_index"]);tag(link,"clipindex",linked["clip_index"]);tag(link,"groupindex",1)
-    for component in sorted(set(p["component"] for p in placements)):
-        members=[p for p in placements if p["component"]==component]
-        marker=tag(sequence,"marker");tag(marker,"name",f"Component {component}: {len(set(p['recording'] for p in members))} recordings")
-        tag(marker,"comment","Relative timing to other components is unresolved. Placements are engine-generated and require accuracy review.")
-        tag(marker,"in",min(p["start"] for p in members));tag(marker,"out",-1)
-    ET.indent(root,space="  ")
-    xml_path=out/"OpenSync-Aghaee-Engine-Test.xml"
-    ET.ElementTree(root).write(xml_path,encoding="utf-8",xml_declaration=True)
-    # Remove internal cross-references before serializing the run manifest.
-    public=[{k:v for k,v in p.items() if k!="instances"} for p in placements]
-    manifest={"version":VERSION,"status":"AUTONOMOUS_ENGINE_TEST_NOT_INDEPENDENTLY_CERTIFIED","recordings":len(records),"placements":public,"derivatives":derivatives,"components":len(graph["components"]),"unresolved_recordings":[records[p["recording"]]["name"] for p in layout if p["status"].startswith("unresolved")],"xml":str(xml_path),"xml_sha256":sha(xml_path),"source_media_modified":False}
-    save(out/"timeline-manifest.json",manifest)
-    audit_xml(xml_path,records,public)
-    print(f"EXPORT {xml_path}\nRECORDINGS {len(records)}\nCOMPONENTS {len(graph['components'])}\nUNRESOLVED {len(manifest['unresolved_recordings'])}",flush=True)
-
-
-def audit_xml(path,records,placements):
-    tree=ET.parse(path);sequence=tree.find(".//sequence")
-    seen={};tracks=Counter();video=audio=0
-    for kind in ("video","audio"):
-        for track in sequence.findall(f"./media/{kind}/track"):
-            tracks[kind]+=1;last=0
-            for clip in track.findall("clipitem"):
-                ident=clip.get("id")
-                if ident in seen:raise ValueError("duplicate timeline clip identity")
-                start,end=int(clip.findtext("start")),int(clip.findtext("end"))
-                first,stop=int(clip.findtext("in")),int(clip.findtext("out"))
-                if start<last or end<=start or first<0 or stop-first!=end-start:raise ValueError("timeline collision or invalid duration")
-                last=end;seen[ident]=clip
-                if kind=="video":video+=1
-                else:audio+=1
-    for clip in seen.values():
-        for link in clip.findall("link"):
-            target=link.findtext("linkclipref")
-            if target not in seen:raise ValueError("broken audio/video link")
-            other=seen[target]
-            if any(clip.findtext(k)!=other.findtext(k) for k in ("start","end","in","out")):raise ValueError("linked timing mismatch")
-    if set(p["recording"] for p in placements)!=set(range(len(records))):raise ValueError("missing original recording")
-    for i,rec in enumerate(records):
-        parts=sorted([p for p in placements if p["recording"]==i],key=lambda p:p["segment"])
-        if not any(p["derivative"] for p in parts):
-            cursor=0
-            for p in parts:
-                if p["source_in"]!=cursor:raise ValueError("source frame gap or duplicate")
-                cursor=p["source_out"]
-            if cursor!=round(rec["duration"]*50):raise ValueError("source frames omitted")
-        if not Path(rec["source"]).exists():raise ValueError("missing original source path")
-    save(Path(path).parent/"structural-audit.json",{"status":"PASS_STRUCTURAL_ONLY","recordings":len(records),"video_clipitems":video,"audio_clipitems":audio,"tracks":tracks,"all_source_frames_accounted":True,"linked_timing_consistent":True,"no_within_track_collisions":True,"premiere_import_test":"not_performed","acoustic_accuracy":"requires_review"})
+    project_path=out/"OpenSync.opensync"
+    save_project(project_path,records,edges,layout,graph,VERSION,name)
+    return export_project(project_path,out,unsynced,tolerance*1000)
 
 
 def main():
+    if len(sys.argv)>1 and sys.argv[1]=="export":
+        parser=argparse.ArgumentParser(prog="opensync export",description="Export a saved OpenSync project without repeating synchronization")
+        parser.add_argument("project")
+        parser.add_argument("--output")
+        parser.add_argument("--unsynced",choices=("append","separate-sequence"),default="append")
+        parser.add_argument("--max-residual-ms",type=float,default=150)
+        args=parser.parse_args(sys.argv[2:])
+        export_project(args.project,args.output or Path(args.project).resolve().parent,args.unsynced,args.max_residual_ms)
+        return
     parser=argparse.ArgumentParser(prog="opensync sync",description=__doc__)
     parser.add_argument("--input")
     parser.add_argument("--source",action="append")
@@ -837,6 +727,8 @@ def main():
     parser.add_argument("--file-list",help="UTF-8 text (one path per line) or JSON array; relative paths resolve beside the list")
     parser.add_argument("--output",default="OpenSync-Output")
     parser.add_argument("--cache-index")
+    parser.add_argument("--name",default="OpenSync",help="saved project name")
+    parser.add_argument("--unsynced",choices=("append","separate-sequence"),default="append",help="Premiere export arrangement for unresolved recordings; does not change saved sync measurements")
     parser.add_argument("--max-residual-ms",type=float,default=150)
     parser.add_argument("--resume",action="store_true")
     parser.add_argument("--stage",choices=("cache","discover","verify","all"),default="all")
@@ -848,7 +740,15 @@ def main():
     out.mkdir(parents=True,exist_ok=True)
     config={"version":VERSION,"input":str(Path(args.input).resolve()),"sources":sorted(args.source),"max_residual_ms":args.max_residual_ms} if not explicit else {"version":VERSION,"files":[str(p) for p in explicit],"max_residual_ms":args.max_residual_ms}
     if (out/"run-config.json").exists():
-        if json.loads((out/"run-config.json").read_text(encoding="utf-8"))!=config:raise ValueError("cannot resume with changed settings")
+        previous=json.loads((out/"run-config.json").read_text(encoding="utf-8"))
+        if previous!=config:
+            # Changing from a folder selector to its exact file list changes
+            # the interface, not the immutable source selection or DSP data.
+            inventory=out/"inventory.json"
+            same_files=explicit and inventory.exists() and sorted(str(p).casefold() for p in explicit)==sorted(r["source"].casefold() for r in json.loads(inventory.read_text(encoding="utf-8"))["records"])
+            same_settings=all(previous.get(k)==config.get(k) for k in ("version","max_residual_ms"))
+            if not same_files or not same_settings:raise ValueError("cannot resume with changed input selection or DSP settings")
+            save(out/"run-config.json",config)
     else:save(out/"run-config.json",config)
     for folder in ("cache","features","evidence"):(out/folder).mkdir(exist_ok=True)
     records=prepare(args,out)
@@ -870,7 +770,7 @@ def main():
     validated=validate_edges(records,edges,out,"initial-")
     edges=refine_failed_models(records,edges,validated,out)
     if args.stage=="verify":return
-    finish(records,edges,out,args.max_residual_ms/1000)
+    finish(records,edges,out,args.max_residual_ms/1000,args.name,args.unsynced)
 
 
 if __name__=="__main__":

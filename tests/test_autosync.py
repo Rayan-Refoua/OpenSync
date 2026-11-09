@@ -1,6 +1,7 @@
 import importlib.util
 import argparse
 import json
+import os
 from pathlib import Path
 import tempfile
 import shutil
@@ -12,6 +13,7 @@ import wave
 import numpy as np
 from scipy import signal
 
+sys.path.insert(0,str(Path(__file__).resolve().parents[1]/"internal"/"autosync"))
 spec = importlib.util.spec_from_file_location("autosync", Path(__file__).resolve().parents[1]/"internal"/"autosync"/"pipeline.py")
 engine = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(engine)
@@ -33,21 +35,41 @@ class AutonomousEngineTest(unittest.TestCase):
             files=[]
             for name,samples in (("reference",base),("camera audio",base[round(7.375*16000):round(27.375*16000)]),("unrelated",rng.normal(0,.04,12*16000))):
                 path=root/(name+".wav");write(path,samples);files.append(str(path))
+            silent_video=root/"video without audio.mp4"
+            subprocess.run(["ffmpeg","-nostdin","-v","error","-f","lavfi","-i","color=c=blue:s=160x90:r=25","-t","2","-an","-c:v","mpeg4",str(silent_video)],check=True)
+            files.append(str(silent_video))
             listing=root/"files.json";listing.write_text(json.dumps(files),encoding="utf-8")
             output=root/"result"
-            command=[sys.executable,str(Path(engine.__file__)),"--file-list",str(listing),"--output",str(output)]
-            run=subprocess.run(command,capture_output=True,text=True)
+            packaged=os.environ.get("OPENSYNC_TEST_EXECUTABLE")
+            prefix=[packaged,"sync"] if packaged else [sys.executable,str(Path(engine.__file__))]
+            child_env=os.environ.copy()
+            if packaged:
+                child_env.update(PATH=str(Path(os.environ['SystemRoot'])/'System32'),PYTHONHOME=str(root/'no-python-installation'),PYTHONPATH=str(root/'no-python-packages'))
+            command=prefix+["--file-list",str(listing),"--output",str(output)]
+            run=subprocess.run(command,capture_output=True,text=True,env=child_env)
             self.assertEqual(run.returncode,0,run.stdout+run.stderr)
             manifest=json.loads((output/"timeline-manifest.json").read_text())
             inventory=json.loads((output/"inventory.json").read_text())["records"]
             by_name={inventory[p["recording"]]["name"]:p for p in manifest["placements"]}
-            self.assertLess(abs((by_name["camera audio.wav"]["start"]-by_name["reference.wav"]["start"])/50-7.375),.011)
+            self.assertEqual(manifest['sequence_fps'],'25')
+            self.assertLess(abs((by_name["camera audio.wav"]["start"]-by_name["reference.wav"]["start"])/25-7.375),.021)
             self.assertGreater(by_name["unrelated.wav"]["start"],max(by_name[n]["end"] for n in ("camera audio.wav","reference.wav")))
-            self.assertEqual(manifest["unresolved_recordings"],["unrelated.wav"])
+            self.assertEqual(set(manifest["unresolved_recordings"]),{"unrelated.wav","video without audio.mp4"})
+            self.assertTrue((output/"OpenSync.opensync").is_file())
             # Identical command resumes without an extra user decision.
-            resumed=subprocess.run(command,capture_output=True,text=True)
+            resumed=subprocess.run(command,capture_output=True,text=True,env=child_env)
             self.assertEqual(resumed.returncode,0,resumed.stdout+resumed.stderr)
             self.assertEqual(manifest,json.loads((output/"timeline-manifest.json").read_text()))
+            saved=(output/"OpenSync.opensync").read_bytes()
+            cache=output/"cache";hidden_cache=root/"held-cache"
+            self.assertTrue(cache.resolve().is_relative_to(root.resolve()))
+            self.assertTrue(hidden_cache.resolve().is_relative_to(root.resolve()))
+            cache.rename(hidden_cache)
+            export_prefix=[packaged] if packaged else [sys.executable,str(Path(engine.__file__))]
+            export_command=export_prefix+["export",str(output/"OpenSync.opensync"),"--output",str(root/"reexport"),"--unsynced","separate-sequence"]
+            exported=subprocess.run(export_command,capture_output=True,text=True,env=child_env)
+            self.assertEqual(exported.returncode,0,exported.stdout+exported.stderr)
+            self.assertEqual(saved,(output/"OpenSync.opensync").read_bytes())
 
     def test_public_file_list_resolves_relative_paths_and_rejects_duplicates(self):
         with tempfile.TemporaryDirectory() as temp:

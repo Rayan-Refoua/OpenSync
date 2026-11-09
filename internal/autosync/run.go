@@ -4,34 +4,51 @@ package autosync
 
 import (
 	"context"
-	_ "embed"
+	"embed"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 )
 
-//go:embed pipeline.py
-var pipeline []byte
+//go:embed pipeline.py project_export.py
+var runtimeFiles embed.FS
 
 func Run(ctx context.Context, args []string) error {
-	python, err := exec.LookPath("python")
+	python, runtimeBin := "", ""
+	if executable, err := os.Executable(); err == nil {
+		runtimeDir := filepath.Join(filepath.Dir(executable), "runtime")
+		localPython := filepath.Join(runtimeDir, "python", "python.exe")
+		if info, statErr := os.Stat(localPython); statErr == nil && !info.IsDir() {
+			python = localPython
+			runtimeBin = filepath.Join(runtimeDir, "bin")
+		}
+	}
+	if python == "" {
+		var err error
+		python, err = exec.LookPath("python")
+		if err != nil {
+			return fmt.Errorf("OpenSync runtime is missing; use the complete packaged distribution: %w", err)
+		}
+	}
+	dir, err := os.MkdirTemp("", "opensync-runtime-*")
 	if err != nil {
-		return fmt.Errorf("sync requires Python 3 with NumPy and SciPy: %w", err)
-	}
-	f, err := os.CreateTemp("", "opensync-pipeline-*.py")
-	if err != nil {
 		return err
 	}
-	name := f.Name()
-	defer os.Remove(name)
-	if _, err = f.Write(pipeline); err != nil {
-		f.Close()
-		return err
+	defer os.RemoveAll(dir)
+	for _, name := range []string{"pipeline.py", "project_export.py"} {
+		data, readErr := runtimeFiles.ReadFile(name)
+		if readErr != nil {
+			return readErr
+		}
+		if err = os.WriteFile(filepath.Join(dir, name), data, 0600); err != nil {
+			return err
+		}
 	}
-	if err = f.Close(); err != nil {
-		return err
+	cmd := exec.CommandContext(ctx, python, append([]string{"-X", "utf8", "-u", filepath.Join(dir, "pipeline.py")}, args...)...)
+	if runtimeBin != "" {
+		cmd.Env = append(os.Environ(), "PATH="+runtimeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	}
-	cmd := exec.CommandContext(ctx, python, append([]string{"-u", name}, args...)...)
 	cmd.Stdout, cmd.Stderr, cmd.Stdin = os.Stdout, os.Stderr, os.Stdin
 	return cmd.Run()
 }
