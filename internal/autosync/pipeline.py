@@ -19,6 +19,9 @@ import time
 import wave
 import xml.etree.ElementTree as ET
 
+# The pipeline uses a bounded outer worker pool; avoid nested BLAS pools.
+os.environ.setdefault("OPENBLAS_NUM_THREADS","1")
+os.environ.setdefault("OMP_NUM_THREADS","1")
 import numpy as np
 from scipy import ndimage, signal, optimize
 
@@ -63,13 +66,35 @@ def read(path, start, seconds):
         return np.frombuffer(w.readframes(n), "<i2").astype(np.float32)/32768
 
 
+def input_files(args):
+    """Resolve the public file-list interface without a project-specific script."""
+    explicit=list(args.files or [])
+    if args.file_list:
+        manifest=Path(args.file_list).resolve()
+        content=manifest.read_text(encoding="utf-8-sig")
+        listed=json.loads(content) if manifest.suffix.lower()==".json" else [line.strip() for line in content.splitlines() if line.strip()]
+        if not isinstance(listed,list) or not all(isinstance(p,str) for p in listed):raise ValueError("file list must contain path strings")
+        explicit.extend(str((manifest.parent/p).resolve()) if not Path(p).is_absolute() else p for p in listed)
+    if explicit:
+        if args.input or args.source:raise ValueError("choose explicit files or an input root with source folders")
+        files=sorted((Path(p).resolve() for p in explicit),key=lambda p:str(p).casefold())
+        if len(set(files))!=len(files):raise ValueError("duplicate input file")
+        for path in files:
+            if not path.is_file() or path.suffix.lower() not in MEDIA:raise ValueError("unsupported or missing media file: "+str(path))
+        return files
+    if not args.input or not args.source:raise ValueError("supply --files, --file-list, or --input with --source")
+    return None
+
+
 def prepare(args, out):
     old = {}
     if args.cache_index:
         old = {os.path.normcase(str(Path(v["source"]).resolve())): v for v in json.loads(Path(args.cache_index).read_text(encoding="utf-8")).values()}
     files, excluded = [], []
-    root = Path(args.input).resolve()
-    for folder in args.source:
+    explicit=input_files(args)
+    root = Path(args.input).resolve() if args.input else None
+    if explicit:files.extend(explicit)
+    for folder in args.source or []:
         selected = (root/folder).resolve()
         if not selected.is_relative_to(root) or not selected.is_dir():
             raise ValueError("source directories must exist inside input root")
@@ -119,7 +144,8 @@ def prepare(args, out):
         audio = next((x for x in info["streams"] if x["codec_type"] == "audio"), None)
         if audio is None:
             raise ValueError("no audio stream: "+str(path))
-        rec = dict(identity, id=rid, name=path.name, cache=str(cache.resolve()), local_source=str(local_source), duration=wav_info(cache), video=video, audio=audio, cache_sha256=sha(cache), cache_reused=reused, source_group=str(path.parent.relative_to(root)))
+        group=str(path.parent.relative_to(root)) if root else str(path.parent)
+        rec = dict(identity, id=rid, name=path.name, cache=str(cache.resolve()), local_source=str(local_source), duration=wav_info(cache), video=video, audio=audio, cache_sha256=sha(cache), cache_reused=reused, source_group=group)
         save(state_path, rec)
         records.append(rec)
         print(f"CACHE {i+1}/{len(files)} ready {path.name} ({rec['duration']:.2f}s, reused={reused})", flush=True)
@@ -238,21 +264,25 @@ def normcorr(reference, query):
     corr=np.divide(dots,np.sqrt(np.maximum(variance,1e-20)*qvar))
     corr[variance<1e-10]=0
     best=int(np.argmax(np.abs(corr)))
-    return best,float(np.clip(corr[best],-1,1))
+    # At the 2 kHz measurement rate, peaks farther than 4 ms represent
+    # competing local lags, not the same subframe peak.
+    competing=max(float(np.max(np.abs(corr[:max(0,best-8)]),initial=0)),float(np.max(np.abs(corr[best+9:]),initial=0)))
+    return best,float(np.clip(corr[best],-1,1)),min(1.0,competing)
 
 
 def waveform(ref,query,qtime,offset,length,radius=.35):
-    start=qtime+offset-radius
-    if start<0 or start+length+2*radius>ref["duration"] or qtime+length>query["duration"]:return None
+    start=max(0,qtime+offset-radius)
+    stop=min(ref["duration"],qtime+offset+length+radius)
+    if stop-start<length or qtime<0 or qtime+length>query["duration"]:return None
     q=read(query["cache"],qtime,length)
-    r=read(ref["cache"],start,length+2*radius)
+    r=read(ref["cache"],start,stop-start)
     def prep(x):
         n=len(x)//8
         return np.diff(x[:n*8].reshape(n,8).mean(axis=1))
     matched=normcorr(prep(r),prep(q))
     if matched is None:return None
-    lag,corr=matched
-    return {"query_time":qtime+length/2,"offset":offset-radius+lag*8/SR,"wave_correlation":abs(corr),"window":length}
+    lag,corr,competing=matched
+    return {"query_time":qtime+length/2,"offset":start-qtime+lag*8/SR,"wave_correlation":abs(corr),"window":length,"competing_local_correlation":competing,"local_peak_distinct":abs(corr)-competing>=.025 and abs(corr)>=1.1*competing}
 
 
 def flux_score(ref,query,qtime,offset,length):
@@ -276,17 +306,18 @@ def assess_candidate(ref,query,candidate):
     end=min(query["duration"],ref["duration"]-offset)-.6
     overlap=end-begin
     if overlap<.8:return dict(candidate,status="insufficient_overlap",observations=[])
-    length=min(4.0,overlap/3)
-    count=min(7,int(overlap/(length+.5)))
+    length=min(candidate.get("verification_window_seconds",4.0),overlap/(5 if candidate.get("verification_window_seconds") else 3))
+    count=min(candidate.get("verification_max_windows",7),int(overlap/(length+.5)))
     if count<2:return dict(candidate,status="insufficient_distinct_regions",observations=[])
     times=np.linspace(begin,end-length,count)
     observations=[]
     for qtime in times:
         qtime=float(qtime)
-        m=waveform(ref,query,qtime,offset,length)
+        radius=.35+abs(qtime+length/2-candidate["anchor_time"])*.001 if "anchor_time" in candidate else .35
+        m=waveform(ref,query,qtime,offset,length,radius)
         if m is None:continue
         m["flux_correlation"]=flux_score(ref,query,qtime,m["offset"],length)
-        controls=[x for shift in (-31,-15,15,31) if (x:=waveform(ref,query,qtime,offset+shift,length)) is not None]
+        controls=[x for shift in (-31,-15,15,31) if (x:=waveform(ref,query,qtime,offset+shift,length,radius)) is not None]
         strongest=max((x["wave_correlation"] for x in controls),default=1.0)
         m["controls"]=len(controls)
         m["strongest_control"]=strongest
@@ -311,24 +342,201 @@ def assess_candidate(ref,query,candidate):
     return result
 
 
-def verify(records,pairs,out):
-    edges=[]
-    for i,pair in enumerate(pairs):
+def verify(records,pairs,out,namespace="evidence-v2",workers=4):
+    (out/namespace).mkdir(exist_ok=True)
+    def assess_pair(pair):
         ref,query=records[pair["reference"]],records[pair["query"]]
-        filename=out/"evidence"/(ref["id"]+"_"+query["id"]+".json")
-        if filename.exists():result=json.loads(filename.read_text(encoding="utf-8"))
+        filename=out/namespace/(ref["id"]+"_"+query["id"]+".json")
+        identity=hashlib.sha256(json.dumps({"pair":pair,"reference":ref["cache_sha256"],"query":query["cache_sha256"],"verifier":"v2"},sort_keys=True).encode()).hexdigest()
+        if filename.exists():
+            result=json.loads(filename.read_text(encoding="utf-8"))
+            if result.get("input_digest")!=identity:raise ValueError("stale verification evidence")
         else:
             candidates=[assess_candidate(ref,query,c) for c in pair["candidates"]]
             supported=sorted([c for c in candidates if c["status"]=="acoustically_supported_not_certified"],key=lambda x:-x["confidence"])
             chosen=supported[0] if supported else None
             ambiguous=chosen is not None and len(supported)>1 and supported[1]["confidence"]>=.8*chosen["confidence"]
-            result={"reference":pair["reference"],"query":pair["query"],"candidates":candidates,"selected":None if ambiguous else chosen,"ambiguous":ambiguous,"provenance":"discovery_source_reused; no independent certification"}
+            result={"reference":pair["reference"],"query":pair["query"],"candidates":candidates,"selected":None if ambiguous else chosen,"ambiguous":ambiguous,"input_digest":identity,"provenance":"discovery_source_reused; no independent certification"}
             save(filename,result)
-        if result["selected"] is not None:edges.append(result)
-        if (i+1)%10==0 or result["selected"] is not None:
-            print(f"VERIFY {i+1}/{len(pairs)} supported_edges={len(edges)} {query['name']} / {ref['name']}",flush=True)
-    save(out/"supported-edges.json",{"version":VERSION,"edges":edges})
+        return result
+    edges=[]
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        for i,result in enumerate(pool.map(assess_pair,pairs)):
+            if result["selected"] is not None:edges.append(result)
+            if (i+1)%10==0 or result["selected"] is not None:
+                print(f"VERIFY {i+1}/{len(pairs)} supported_edges={len(edges)} {records[result['query']]['name']} / {records[result['reference']]['name']}",flush=True)
+    save(out/(namespace+"-edges.json"),{"version":VERSION,"edges":edges})
     return edges
+
+
+def envelope_features(rec, out):
+    """Low-rate multiband log-energy changes for microphone-robust recovery.
+
+    This is a candidate generator only. Every proposed offset still goes
+    through the same waveform, wrong-offset and consistency checks.
+    """
+    path=out/"features"/(rec["id"]+"-envelope-v1.npz")
+    if path.exists():
+        with np.load(path) as data:
+            if str(data["digest"])!=rec["cache_sha256"]:raise ValueError("stale envelope cache")
+            return data["features"]
+    pieces=[]
+    # Chunk boundaries fall on the 16 ms grid; overlap supplies the FFT tail.
+    for first in range(0,round(rec["duration"]*SR),256*3750):
+        count=min(256*3750+256,round(rec["duration"]*SR)-first)
+        if count<512:break
+        samples=read(rec["cache"],first/SR,count/SR)
+        _,_,z=signal.stft(samples,fs=SR,nperseg=512,noverlap=256,boundary=None,padded=False)
+        power=np.abs(z)**2
+        bands=np.asarray([np.log(1e-10+power[lo:hi].mean(axis=0)) for lo,hi in ((7,29),(29,77),(77,193))])
+        pieces.append(bands)
+    bands=np.concatenate(pieces,axis=1) if pieces else np.empty((3,0))
+    features=np.diff(ndimage.gaussian_filter1d(bands,1,axis=1),axis=1).astype(np.float32) if bands.shape[1]>1 else np.empty((3,0),np.float32)
+    temporary=path.with_suffix(".partial.npz")
+    np.savez_compressed(temporary,features=features,digest=rec["cache_sha256"])
+    os.replace(temporary,path)
+    return features
+
+
+def envelope_candidates(reference, query, max_candidates=8):
+    """Search the full reference, retaining separated competing peaks."""
+    width=min(query.shape[1],1250) # 20 seconds, 16 ms grid
+    if width<50 or reference.shape[1]<width:return []
+    starts=sorted(set(int(x) for x in np.linspace(0,query.shape[1]-width,3)))
+    candidates=[]
+    for first in starts:
+        q=query[:,first:first+width].astype(np.float64)
+        q-=q.mean(axis=1,keepdims=True)
+        qenergy=(q*q).sum(axis=1)
+        if np.count_nonzero(qenergy>1e-8)<2:continue
+        scores=[]
+        for band in range(3):
+            r=reference[band].astype(np.float64)
+            sums=np.r_[0,np.cumsum(r)];squares=np.r_[0,np.cumsum(r*r)]
+            variance=np.maximum(0,squares[width:]-squares[:-width]-(sums[width:]-sums[:-width])**2/width)
+            dots=signal.correlate(r,q[band],mode="valid",method="fft")
+            scores.append(np.divide(dots,np.sqrt(np.maximum(variance*qenergy[band],1e-20))))
+        score=np.median(scores,axis=0)
+        for _ in range(4):
+            best=int(np.argmax(score));strength=float(score[best])
+            if strength<.12:break
+            candidates.append({"offset":(best-first)*.016,"envelope_score":strength,"anchor_time":(first+width/2)*.016,"method":"multiband_envelope_full_range"})
+            score[max(0,best-47):best+48]=-1
+    picked=[]
+    for c in sorted(candidates,key=lambda c:(-c["envelope_score"],c["offset"])):
+        if all(abs(c["offset"]-p["offset"])>=.5 for p in picked):picked.append(c)
+        if len(picked)>=max_candidates:break
+    return picked
+
+
+def recover(records, edges, out):
+    """Search recordings outside the largest supported component, not a list
+    selected by an operator or by baseline timeline positions.
+    """
+    path=out/"recovery-discovery.json"
+    if path.exists():return json.loads(path.read_text(encoding="utf-8"))["pairs"]
+    adjacency=defaultdict(set)
+    for e in edges:
+        a,b=e["reference"],e["query"]
+        adjacency[a].add(b);adjacency[b].add(a)
+    groups=[];seen=set()
+    for i in range(len(records)):
+        if i in seen:continue
+        group={i};todo=[i];seen.add(i)
+        for node in todo:
+            for other in sorted(adjacency[node]):
+                if other not in seen:seen.add(other);group.add(other);todo.append(other)
+        groups.append(group)
+    largest=max(groups,key=lambda g:(len(g),sum(records[i]["duration"] for i in g)))
+    targets=set(range(len(records)))-largest
+    if not targets:
+        save(path,{"version":"envelope-recovery-v1","target_recordings":[],"pairs":[],"baseline_used":False})
+        return []
+    features=[envelope_features(rec,out) for rec in records]
+    pairs=[]
+    for q,query in enumerate(records):
+        searched=0
+        for r,ref in enumerate(records):
+            if q not in targets and r not in targets:continue
+            if (ref["duration"],r)<=(query["duration"],q):continue
+            candidates=envelope_candidates(features[r],features[q]);searched+=1
+            if candidates:pairs.append({"reference":r,"query":q,"candidates":candidates})
+        print(f"RECOVERY {q+1}/{len(records)} {query['name']}: {searched} full-range searches",flush=True)
+    save(path,{"version":"envelope-recovery-v1","target_recordings":sorted(targets),"pairs":pairs,"baseline_used":False})
+    return pairs
+
+
+def validate_edges(records, edges, out,namespace=""):
+    """Check the frozen pair model on disjoint audio windows.
+
+    These windows are held out of local fitting, not from full-recording
+    discovery. They do not supply a calibrated probability of correctness.
+    Contradictory strong observations reject the model instead of being
+    silently removed as fit outliers.
+    """
+    reports=[];accepted=[]
+    for e in edges:
+        ref,query=records[e["reference"]],records[e["query"]]
+        model=e["selected"];a=model["offset"];b=1+model["slope"]
+        begin=max(0,-a/b)+.1;end=min(query["duration"],(ref["duration"]-a)/b)-.1
+        occupied=sorted((max(begin,o["query_time"]-o["window"]/2-.1),min(end,o["query_time"]+o["window"]/2+.1)) for o in model["observations"])
+        gaps=[];cursor=begin
+        for lo,hi in occupied:
+            if lo-cursor>=.55:gaps.append((cursor,lo))
+            cursor=max(cursor,hi)
+        if end-cursor>=.55:gaps.append((cursor,end))
+        regions=[]
+        for lo,hi in gaps:
+            if hi-lo>=1.3:
+                middle=(lo+hi)/2
+                regions.extend(((lo,middle-.05),(middle+.05,hi)))
+            else:regions.append((lo,hi))
+        chosen=[regions[i] for i in sorted(set(int(i) for i in np.linspace(0,len(regions)-1,min(9,len(regions)))))] if regions else []
+        observations=[]
+        for lo,hi in chosen:
+            length=min(2,hi-lo-.1);t=(lo+hi-length)/2
+            expected=a+model["slope"]*(t+length/2)
+            measured=waveform(ref,query,t,expected,length,.08)
+            if measured is None:continue
+            controls=[m for shift in (-31,-15,15,31) if (m:=waveform(ref,query,t,expected+shift,length,.08)) is not None]
+            strongest=max((m["wave_correlation"] for m in controls),default=1)
+            flux=flux_score(ref,query,t,measured["offset"],length)
+            supported=measured["local_peak_distinct"] and len(controls)>=2 and measured["wave_correlation"]>=.10 and measured["wave_correlation"]>=strongest*1.5 and measured["wave_correlation"]-strongest>=.035 and (flux>=.25 or measured["wave_correlation"]>=.65)
+            residual=measured["offset"]-expected
+            observations.append(dict(measured,expected_offset=expected,residual_seconds=residual,strongest_control=strongest,controls=len(controls),flux_correlation=flux,acoustically_supported=supported,passes=supported and abs(residual)<=.025))
+        good=[o for o in observations if o["passes"]]
+        contradictory=[o for o in observations if o["acoustically_supported"] and not o["passes"]]
+        all_good=good+model["fit_observations"]
+        covered_span=max((o["query_time"]+o["window"]/2 for o in all_good),default=0)-min((o["query_time"]-o["window"]/2 for o in all_good),default=0)
+        coverage=covered_span/max(end-begin,1e-9)
+        passed=len(good)>=2 and not contradictory and (end-begin<30 or coverage>=.8)
+        report={"reference":e["reference"],"query":e["query"],"status":"pass_disjoint_windows" if passed else "insufficient_or_contradictory_holdout","observations":observations,"passed_windows":len(good),"contradictory_windows":len(contradictory),"supported_span_fraction":coverage,"overlap_seconds":end-begin,"max_supported_residual_seconds":max((abs(o["residual_seconds"]) for o in observations if o["acoustically_supported"]),default=None),"fit_windows_excluded":True,"independent_of_discovery":False}
+        reports.append(report)
+        if passed:accepted.append(dict(e,validation=report))
+    save(out/(namespace+"holdout-validation.json"),{"version":"disjoint-windows-v2-local-ambiguity","pairs":reports,"input_edges":len(edges),"accepted_edges":len(accepted)})
+    save(out/(namespace+"validated-edges.json"),{"version":VERSION,"edges":accepted})
+    print(f"VALIDATION {len(accepted)}/{len(edges)} pair models passed disjoint-window checks",flush=True)
+    return accepted
+
+
+def refine_failed_models(records, supported, validated, out):
+    """Longer-window remeasurement of failed models, with all alternatives
+    retained. This changes the measurements, never the acceptance limits.
+    """
+    accepted={(e["reference"],e["query"]) for e in validated}
+    pairs=[]
+    for e in supported:
+        if (e["reference"],e["query"]) in accepted:continue
+        candidates=[]
+        for c in e["candidates"]:
+            candidate={k:c[k] for k in ("offset","votes","anchor_time","method","envelope_score") if k in c}
+            candidate.update(verification_window_seconds=12.0,verification_max_windows=11)
+            candidates.append(candidate)
+        pairs.append({"reference":e["reference"],"query":e["query"],"candidates":candidates})
+    refined=verify(records,pairs,out,"evidence-refined-v1")
+    combined=validated+refined
+    save(out/"refined-supported-edges.json",{"version":VERSION,"edges":combined,"retry_pairs":len(pairs),"thresholds_relaxed":False})
+    return validate_edges(records,combined,out)
 
 
 def graph_layout(records, edges):
@@ -622,10 +830,12 @@ def audit_xml(path,records,placements):
 
 
 def main():
-    parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--input",required=True)
-    parser.add_argument("--source",action="append",required=True)
-    parser.add_argument("--output",required=True)
+    parser=argparse.ArgumentParser(prog="opensync sync",description=__doc__)
+    parser.add_argument("--input")
+    parser.add_argument("--source",action="append")
+    parser.add_argument("--files",nargs="+",help="media paths to synchronize automatically")
+    parser.add_argument("--file-list",help="UTF-8 text (one path per line) or JSON array; relative paths resolve beside the list")
+    parser.add_argument("--output",default="OpenSync-Output")
     parser.add_argument("--cache-index")
     parser.add_argument("--max-residual-ms",type=float,default=150)
     parser.add_argument("--resume",action="store_true")
@@ -633,9 +843,10 @@ def main():
     args=parser.parse_args()
     if not 1<=args.max_residual_ms<=150:parser.error("residual limit must be in [1,150] ms")
     out=Path(args.output).resolve()
-    if out.exists() and not args.resume:parser.error("output exists; use --resume for the same immutable run")
+    explicit=input_files(args)
+    if out.exists() and any(out.iterdir()) and not (out/"run-config.json").exists():parser.error("output directory contains unrelated files; choose an empty directory")
     out.mkdir(parents=True,exist_ok=True)
-    config={"version":VERSION,"input":str(Path(args.input).resolve()),"sources":sorted(args.source),"max_residual_ms":args.max_residual_ms}
+    config={"version":VERSION,"input":str(Path(args.input).resolve()),"sources":sorted(args.source),"max_residual_ms":args.max_residual_ms} if not explicit else {"version":VERSION,"files":[str(p) for p in explicit],"max_residual_ms":args.max_residual_ms}
     if (out/"run-config.json").exists():
         if json.loads((out/"run-config.json").read_text(encoding="utf-8"))!=config:raise ValueError("cannot resume with changed settings")
     else:save(out/"run-config.json",config)
@@ -645,6 +856,19 @@ def main():
     pairs=discover(records,out)
     if args.stage=="discover":return
     edges=verify(records,pairs,out)
+    recovery=recover(records,edges,out)
+    initial={(p["reference"],p["query"]):p for p in pairs}
+    for p in recovery:
+        prior=initial.get((p["reference"],p["query"]),{}).get("candidates",[])
+        # Evaluate old and new alternatives together so recovery cannot hide
+        # a competing match that the first pass already discovered.
+        p["candidates"]+= [c for c in prior if all(abs(c["offset"]-r["offset"])>=.2 for r in p["candidates"])]
+    recovered=verify(records,recovery,out,"evidence-recovery-v2")
+    replaced={(p["reference"],p["query"]) for p in recovery}
+    edges=[e for e in edges if (e["reference"],e["query"]) not in replaced]+recovered
+    save(out/"supported-edges.json",{"version":VERSION,"edges":edges,"recovery":"envelope-recovery-v1"})
+    validated=validate_edges(records,edges,out,"initial-")
+    edges=refine_failed_models(records,edges,validated,out)
     if args.stage=="verify":return
     finish(records,edges,out,args.max_residual_ms/1000)
 
