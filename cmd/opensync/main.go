@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"sort"
 
 	"opensync/internal/audio"
+	"opensync/internal/autosync"
 	"opensync/internal/syncgraph"
 )
 
@@ -20,6 +22,8 @@ func main() {
 	var err error
 
 	switch {
+	case len(os.Args) >= 2 && os.Args[1] == "sync":
+		err = autosync.Run(context.Background(), os.Args[2:])
 	case len(os.Args) >= 2 && os.Args[1] == "benchmark":
 		err = benchmarkCommand(os.Args[2:])
 
