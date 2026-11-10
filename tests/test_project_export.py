@@ -13,6 +13,24 @@ import project_export as export
 
 
 class ProjectExportTest(unittest.TestCase):
+    def test_comparison_export_is_opt_in_marked_and_preserves_native_truth(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);path,records=self.make_project(root)
+            native=export.load_project(path)['payload'];layout=[dict(m,start_seconds=m['analysis_component_offset_seconds']) for m in native['timing_models']]
+            native['graph']['provisional_placements']=[dict(recording=2,reference=0,start_seconds=5.,rate=1.,timing_knots=[[0,5],[12,17]],fit_residual_seconds=.07,status='provisional_acoustic_review_required')]
+            export.save_project(path,records,[],layout,native['graph'],'test');before=path.read_bytes()
+            strict=export.export_project(path,root/'strict')
+            comparison=export.export_project(path,root/'comparison',include_provisional=True)
+            self.assertEqual(len(strict['unresolved_recordings']),1)
+            self.assertEqual(comparison['unresolved_recordings'],[])
+            self.assertEqual(comparison['provisional_recordings'],[records[2]['name']])
+            self.assertEqual(path.read_bytes(),before)
+            self.assertFalse(export.load_project(path)['payload']['timing_models'][2]['globally_resolved'])
+            tree=ET.parse(root/'comparison'/'OpenSync.xml')
+            self.assertTrue(any('[REVIEW]' in c.findtext('name','') for c in tree.findall('.//sequence/media/audio/track/clipitem')))
+            self.assertTrue(any(m.findtext('name','').startswith('REVIEW:') for m in tree.findall('.//sequence/marker')))
+            self.assertEqual(comparison['derivatives'],[])
+
     def test_nonzero_source_timecode_survives_project_and_export(self):
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp);path,records=self.make_project(root)

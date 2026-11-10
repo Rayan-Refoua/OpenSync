@@ -74,3 +74,30 @@ keep clock drift, movement, and ambiguous measurements distinct.
 The immediate next algorithmic milestone is resolving or bounding competing
 acoustic paths using complementary measurements and reserved validation,
 without converting uncertainty into a permissive placement threshold.
+
+## Bounded comparison export
+
+`sync` and `export` now accept `--include-provisional`. The normal strict
+placements remain unchanged. This export option can place an unresolved clip
+against an already supported reference when full-reference spectral ranking
+has a clear competitor margin and repeated waveform/control support exists
+in training, selection and audit regions. A constant offset is learned only
+from training. Contradictory precise observations or competing event locations
+reject the proposal. Measured residual, reference uncertainty and search-grid
+allowance must fit under the existing 150ms export budget including rounding.
+
+Proposals cannot become graph anchors, change supported placements or authorize
+video speed changes. They are stored separately in the native project and
+marked `[REVIEW]` in clip names and sequence markers. The option does not turn
+them into independently certified matches.
+
+The Aghaee comparison export adds C0559, C0565 and C0595: 55 cameras plus five
+audio recordings are placed, with 47 recordings appended unresolved. All prior
+57 main-section placements retain their exact ranges. Full-source video frame
+coverage and the source-timecode fix remain intact. Post-run comparison with
+the actual 50fps PluralEyes XML gives C0559/2144 offset 262.100s versus OpenSync
+262.1145s, and C0595/2160 offset 2275.380s versus 2275.373s. The earlier 23.976fps
+interpretation in the research handoff does not describe this baseline XML.
+C0565 needs particular human review. Validation now comprises 41 Python tests,
+Go tests, Go vet and the structural export audit; Premiere review remains user
+work, with no UI automation.

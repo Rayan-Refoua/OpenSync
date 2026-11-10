@@ -259,7 +259,7 @@ def render_mapped_audio(rec,points,target):
         os.replace(partial,target)
 
 
-def export_project(project_path,out,unsynced="append",max_residual_ms=150):
+def export_project(project_path,out,unsynced="append",max_residual_ms=150,include_provisional=False):
     if unsynced not in ("append","separate-sequence"):raise ValueError("unknown unresolved export policy")
     if not 1<=max_residual_ms<=150:raise ValueError("maximum residual must be 1..150 ms")
     project=load_project(project_path);payload=project["payload"]
@@ -274,8 +274,15 @@ def export_project(project_path,out,unsynced="append",max_residual_ms=150):
     out=Path(out).resolve();out.mkdir(parents=True,exist_ok=True)
     rates=Counter(rate_value(r) for r in records if r.get("video"));fps=max(rates,key=lambda r:(rates[r],r)) if rates else Fraction(50)
     groups=source_groups(records);placements=[];derivatives=[];tolerance=max_residual_ms/1000
+    proposals={p['recording']:p for p in payload['graph'].get('provisional_placements',[])} if include_provisional else {}
     for model in payload["timing_models"]:
-        item=dict(model);i=item["recording"];rec=records[i];source_rate=rate_value(rec,fps);rate=item["rate"];duration=rec["duration"]
+        item=dict(model);i=item["recording"];rec=records[i]
+        if i in proposals and item['status'].startswith('unresolved'):
+            proposal=proposals[i];origin=item.get('analysis_audio_origin_seconds',0.)
+            item.update(proposal,component=1,globally_resolved=True,
+                        component_offset_seconds=proposal['start_seconds']-origin,
+                        timing_knots=[[t+origin,v] for t,v in proposal['timing_knots']])
+        source_rate=rate_value(rec,fps);rate=item["rate"];duration=rec["duration"]
         source_duration=source_frames(rec,source_rate)/float(source_rate)
         points=item.get('timing_knots') or [[0,item['component_offset_seconds']],[source_duration,item['component_offset_seconds']+rate*source_duration]]
         check_times=[0,source_duration]+[t for t,_ in points if 0<t<source_duration]
@@ -353,19 +360,23 @@ def export_project(project_path,out,unsynced="append",max_residual_ms=150):
             for instance in lane:
                 p=instance["placement"];rec=records[p["recording"]];source_rate=Fraction(p["source_fps"])
                 clip=tag(track,"clipitem",id=instance["id"],premiereChannelType=channel_type(channels(rec)))
-                tag(clip,"name",rec["name"]+(f" [part {p['segment']}/{p['segments']}]" if p["segments"]>1 else ""))
+                provisional=p['status'].startswith('provisional')
+                tag(clip,"name",rec["name"]+(" [REVIEW]" if provisional else "")+(f" [part {p['segment']}/{p['segments']}]" if p["segments"]>1 else ""))
                 tag(clip,"duration",source_frames(rec,source_rate) if not p["derivative"] else p["source_out"]);xml_rate(clip,source_rate)
                 for key,value in (("in",p["source_in"]),("out",p["source_out"]),("start",p["start"]),("end",p["end"])):tag(clip,key,value)
                 tag(clip,"masterclipid","master-"+rec["id"] if not p["derivative"] else "master-"+rec["id"]+"-corrected")
                 file_reference(clip,rec,source_rate,definitions,p["derivative"],p["source_out"]/float(source_rate) if p["derivative"] else None)
                 source=tag(clip,"sourcetrack");tag(source,"mediatype",instance["kind"]);tag(source,"trackindex",instance["channel"]+1)
                 link_items(clip,p["instances"])
-                tag(tag(clip,"labels"),"label2","Rose" if p["status"].startswith("unresolved") else "Caribbean")
-                tag(tag(clip,"logginginfo"),"description","Unresolved relative to the main sequence" if p["status"].startswith("unresolved") else "OpenSync acoustic and graph checks passed; production review pending")
+                tag(tag(clip,"labels"),"label2","Rose" if p["status"].startswith("unresolved") else "Mango" if provisional else "Caribbean")
+                tag(tag(clip,"logginginfo"),"description","Provisional acoustic placement for manual comparison; precise synchronization is not certified" if provisional else "Unresolved relative to the main sequence" if p["status"].startswith("unresolved") else "OpenSync acoustic and graph checks passed; production review pending")
             tag(track,"enabled","TRUE");tag(track,"locked","FALSE")
         unresolved=[p for p in parts if p["status"].startswith("unresolved")]
         if unresolved:
             marker=tag(sequence,"marker");tag(marker,"name","UNRESOLVED CLIPS — NOT SYNCHRONIZED");tag(marker,"comment","These recordings have no accepted position relative to the main synchronized group.");tag(marker,"in",min(p["start"] for p in unresolved));tag(marker,"out",-1)
+        for p in parts:
+            if p['status'].startswith('provisional'):
+                marker=tag(sequence,'marker');tag(marker,'name','REVIEW: '+records[p['recording']]['name']);tag(marker,'comment','Provisional acoustic match. Compare the complete clip; propagation delay and competing echoes remain uncertain.');tag(marker,'in',p['start']);tag(marker,'out',p['end'])
     ET.indent(root,space="  ");xml_path=out/"OpenSync.xml"
     temporary=out/"OpenSync.partial.xml"
     temporary.write_bytes(b'<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE xmeml>\n'+ET.tostring(root,encoding="utf-8"))
@@ -373,6 +384,8 @@ def export_project(project_path,out,unsynced="append",max_residual_ms=150):
     audit_xml(temporary,records,public,unsynced)
     os.replace(temporary,xml_path)
     manifest={"status":"EXPORTED_REQUIRES_PREMIERE_AND_ACCURACY_REVIEW","project":str(Path(project_path).resolve()),"project_content_sha256":project["content_sha256"],"xml":str(xml_path),"xml_sha256":digest(xml_path),"recordings":len(records),"sequence_fps":str(fps),"unsynced_policy":unsynced,"arrangement":arrangement,"placements":public,"derivatives":derivatives,"unresolved_recordings":[records[i]['name'] for i in sorted({p['recording'] for p in placements if p['status'].startswith('unresolved')})],"source_media_modified":False}
+    manifest['include_provisional']=include_provisional
+    manifest['provisional_recordings']=[records[i]['name'] for i in sorted({p['recording'] for p in placements if p['status'].startswith('provisional')})]
     save_json(out/"timeline-manifest.json",manifest)
     print(f"PROJECT {project_path}\nEXPORT {xml_path}\nRECORDINGS {len(records)}\nUNRESOLVED {len(manifest['unresolved_recordings'])}",flush=True)
     return manifest

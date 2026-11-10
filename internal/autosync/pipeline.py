@@ -704,7 +704,7 @@ def graph_layout(records, edges, excluded=None):
     return layout,{"components":groups,"active_edges":active,"rejected_edges":rejected,"component_fits":fit_reports,"global_evidence_residuals":residual_reports,"maximum_global_residual_seconds":max((r['maximum_residual_seconds'] for r in residual_reports),default=0),"independent_certification":"not_performed"}
 
 
-def finish(records,edges,out,tolerance,name="OpenSync",unsynced="append",profiles=None):
+def finish(records,edges,out,tolerance,name="OpenSync",unsynced="append",profiles=None,include_provisional=False):
     if profiles is not None:
         # A namespace object also works when this module is loaded by a test
         # without registration in sys.modules.
@@ -719,6 +719,7 @@ def finish(records,edges,out,tolerance,name="OpenSync",unsynced="append",profile
         discovery_path=out/'distributed-discovery.json'
         if discovery_path.exists():
             discovery=json.loads(discovery_path.read_text(encoding='utf-8'))
+            graph['provisional_placements']=relation_graph.comparison_placements(records,layout,profiles,discovery)
             graph['candidate_discovery']={k:v for k,v in discovery.items() if k!='pairs'}
             graph['candidate_discovery']['pairs']=[{'reference':p['reference'],'query':p['query'],'candidates':p['candidates'],'status':'DISCOVERY_ONLY'} for p in discovery['pairs']]
         graph['unresolved_timing_hypotheses']=[dict(reference=p['reference'],query=p['query'],hypotheses=[dict(prior=h['prior'],status=h['status'],audit_result=h.get('audit_result')) for h in p['profiles'] if h['status']!='validated_relation']) for p in profiles if any(h['status']!='validated_relation' for h in p['profiles'])]
@@ -726,7 +727,7 @@ def finish(records,edges,out,tolerance,name="OpenSync",unsynced="append",profile
     save(out/"graph.json",graph)
     project_path=out/"OpenSync.opensync"
     save_project(project_path,records,edges,layout,graph,VERSION,name)
-    return export_project(project_path,out,unsynced,tolerance*1000)
+    return export_project(project_path,out,unsynced,tolerance*1000,include_provisional)
 
 
 def main():
@@ -743,8 +744,9 @@ def main():
         parser.add_argument("--output")
         parser.add_argument("--unsynced",choices=("append","separate-sequence"),default="append")
         parser.add_argument("--max-residual-ms",type=float,default=150)
+        parser.add_argument("--include-provisional",action="store_true",help="include bounded acoustic candidates marked REVIEW for comparison")
         args=parser.parse_args(sys.argv[2:])
-        export_project(args.project,args.output or Path(args.project).resolve().parent,args.unsynced,args.max_residual_ms)
+        export_project(args.project,args.output or Path(args.project).resolve().parent,args.unsynced,args.max_residual_ms,args.include_provisional)
         return
     parser=argparse.ArgumentParser(prog="opensync sync",description=__doc__)
     parser.add_argument("--input")
@@ -757,6 +759,7 @@ def main():
     parser.add_argument("--unsynced",choices=("append","separate-sequence"),default="append",help="Premiere export arrangement for unresolved recordings; does not change saved sync measurements")
     parser.add_argument("--max-residual-ms",type=float,default=150)
     parser.add_argument("--resume",action="store_true")
+    parser.add_argument("--include-provisional",action="store_true",help="include bounded acoustic candidates marked REVIEW in the exported timeline")
     parser.add_argument("--stage",choices=("cache","discover","verify","all"),default="all")
     args=parser.parse_args()
     if not 1<=args.max_residual_ms<=150:parser.error("residual limit must be in [1,150] ms")
@@ -804,7 +807,7 @@ def main():
     if distributed_recovery(api,records,preliminary_layout,recovery,out) is not None:
         profiles=refinement.run_profiles(api,records,out)
     if args.stage=="verify":return
-    finish(records,edges,out,args.max_residual_ms/1000,args.name,args.unsynced,profiles)
+    finish(records,edges,out,args.max_residual_ms/1000,args.name,args.unsynced,profiles,args.include_provisional)
 
 
 if __name__=="__main__":

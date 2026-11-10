@@ -200,3 +200,63 @@ def solve(records,edges):
     return layout,dict(components=groups,active_edges=sorted(active),rejected_edges=rejected,reference_recordings=roots,
                        global_evidence_residuals=checks,maximum_global_residual_seconds=max((c['maximum_residual_seconds'] for c in checks),default=0),
                        independent_certification='not_performed',clock_policy='prefer_video_reference',timing_model='monotonic_piecewise')
+
+
+def comparison_placements(records,layout,profiles,discovery):
+    """Bounded review proposals, never anchors or certified graph edges.
+
+    Require full-reference spectral competition plus repeated waveform/control
+    support in all three temporal roles. The relaxed part is local peak
+    precision, not permission to accept a single coincidental excerpt.
+    """
+    models={m['recording']:m for m in layout}
+    searches={(p['reference'],p['query']):p for p in discovery.get('pairs',[])}
+    choices=defaultdict(list)
+    for pair in profiles:
+        r,q=pair['reference'],pair['query'];ref=models[r];query=models[q]
+        if not query['status'].startswith('unresolved') or ref['status'].startswith('unresolved'):continue
+        peaks=searches.get((r,q),{}).get('candidates',[])
+        if not peaks:continue
+        top=peaks[0]
+        if top['background_z']<5 or (len(peaks)>1 and top['score']<1.15*peaks[1]['score']):continue
+        for h in pair['profiles']:
+            if abs(h['prior']['offset']-top['offset'])>.1:continue
+            def usable(o):
+                return (not o.get('at_search_boundary') and o['wave_correlation']>=.1
+                        and o['wave_correlation']>=1.5*o['strongest_control']
+                        and o['wave_correlation']-o['strongest_control']>=.035)
+            train=[o for o in h.get('training',[]) if usable(o)]
+            if len(train)<3:continue
+            offset=float(np.median([o['offset'] for o in train]))
+            if abs(offset-top['offset'])>.12:continue
+            matched=[];counts={};failed=False
+            for role in ('training','selection','audit'):
+                observations=h.get(role,[]);good=[o for o in observations if usable(o)]
+                inside=[o for o in good if abs(o['offset']-offset)<=.12]
+                if len(inside)<(3 if role=='training' else 2) or len(inside)<math.ceil(.6*len(good)):failed=True
+                if any(o.get('precise') and abs(o['offset']-offset)>.12 for o in observations):failed=True
+                matched+=inside;counts[role]=len(inside)
+            if failed:continue
+            span=max(o['query_time']+o['window']/2 for o in matched)-min(o['query_time']-o['window']/2 for o in matched)
+            if span<.6*records[q]['duration']:continue
+            duration=records[q]['duration'];mid=duration/2;points=ref['timing_knots']
+            start=value(points,offset+mid)-mid
+            residual=max(abs(o['offset']-offset) for o in matched)
+            reference_variation=max(abs(value(points,offset+t)-(start+t)) for t in (0,mid,duration))
+            uncertainty=residual+ref['fit_residual_seconds']+reference_variation+.01
+            # Leave frame rounding room under the existing 150ms policy.
+            if uncertainty>.14:continue
+            choices[q].append(dict(recording=q,reference=r,start_seconds=start,rate=1.,
+                                   timing_knots=[[0.,start],[duration,start+duration]],
+                                   fit_residual_seconds=uncertainty,status='provisional_acoustic_review_required',
+                                   matched_windows=counts,measured_window_residual_seconds=residual,
+                                   proposed_pair_offset_seconds=offset,discovery_offset_seconds=top['offset'],
+                                   excluded_waveform_windows=sum(len(h.get(role,[]))-counts[role] for role in counts),
+                                   physical_capture_alignment='not_independently_established'))
+    result=[]
+    for q,options in sorted(choices.items()):
+        # Competing event locations remain unresolved. Proposals cannot prove
+        # one another, or become references for a second propagation pass.
+        if max(o['start_seconds'] for o in options)-min(o['start_seconds'] for o in options)>.15:continue
+        result.append(min(options,key=lambda o:(o['fit_residual_seconds'],o['reference'])))
+    return result

@@ -26,6 +26,24 @@ def profile(offset,status='validated_relation'):
 
 
 class TimingGraphTest(unittest.TestCase):
+    def test_bounded_comparison_requires_reserved_support_and_rejects_competitors(self):
+        records=[dict(id='ref',duration=200),dict(id='query',duration=8)]
+        layout=[dict(recording=0,status='supported',timing_knots=[[0,0],[200,200]],fit_residual_seconds=.001),dict(recording=1,status='unresolved')]
+        def obs(t,offset):return dict(query_time=t,offset=offset,window=.4,wave_correlation=.3,strongest_control=.08,precise=False)
+        h=dict(prior=dict(offset=40),training=[obs(t,40+d) for t,d in ((.5,-.03),(3.5,.01),(6.5,.04))],
+               selection=[obs(2,40),obs(5,40.04)],audit=[obs(2.8,39.98),obs(7.2,40.03)])
+        profiles=[dict(reference=0,query=1,profiles=[h])]
+        discovery=dict(pairs=[dict(reference=0,query=1,candidates=[dict(offset=40,score=.3,background_z=6),dict(offset=100,score=.2)])])
+        proposals=relation_graph.comparison_placements(records,layout,profiles,discovery)
+        self.assertEqual(len(proposals),1);self.assertEqual(proposals[0]['rate'],1)
+        self.assertEqual(proposals[0]['status'],'provisional_acoustic_review_required')
+        self.assertLess(proposals[0]['fit_residual_seconds'],.15)
+        discovery['pairs'][0]['candidates'][1]['score']=.29
+        self.assertFalse(relation_graph.comparison_placements(records,layout,profiles,discovery))
+        discovery['pairs'][0]['candidates'][1]['score']=.2
+        h['audit'][1].update(offset=40.5,precise=True)
+        self.assertFalse(relation_graph.comparison_placements(records,layout,profiles,discovery))
+
     def test_shared_excerpt_cannot_join_otherwise_unrelated_long_recordings(self):
         records=[dict(duration=180.),dict(duration=240.),dict(duration=8.)]
         excerpt=edge(0,1,100)
