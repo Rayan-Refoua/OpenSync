@@ -26,6 +26,8 @@ import numpy as np
 from scipy import ndimage, signal, optimize
 sys.path.insert(0,str(Path(__file__).resolve().parent))
 from project_export import save_project, export_project, audit_xml
+import refinement
+import relation_graph
 
 VERSION = "opensync-autonomous-v1"
 SR = 16000
@@ -702,8 +704,16 @@ def graph_layout(records, edges, excluded=None):
     return layout,{"components":groups,"active_edges":active,"rejected_edges":rejected,"component_fits":fit_reports,"global_evidence_residuals":residual_reports,"maximum_global_residual_seconds":max((r['maximum_residual_seconds'] for r in residual_reports),default=0),"independent_certification":"not_performed"}
 
 
-def finish(records,edges,out,tolerance,name="OpenSync",unsynced="append"):
-    layout,graph=graph_layout(records,edges)
+def finish(records,edges,out,tolerance,name="OpenSync",unsynced="append",profiles=None):
+    if profiles is not None:
+        # A namespace object also works when this module is loaded by a test
+        # without registration in sys.modules.
+        from types import SimpleNamespace
+        edges,decisions=relation_graph.select_edges(SimpleNamespace(graph_layout=graph_layout),records,edges,profiles)
+        save(out/'event-decisions.json',{'decisions':decisions,'baseline_positions_used':False})
+        layout,graph=relation_graph.solve(records,edges)
+        graph['event_decisions']=decisions
+    else:layout,graph=graph_layout(records,edges)
     save(out/"graph.json",graph)
     project_path=out/"OpenSync.opensync"
     save_project(project_path,records,edges,layout,graph,VERSION,name)
@@ -711,6 +721,13 @@ def finish(records,edges,out,tolerance,name="OpenSync",unsynced="append"):
 
 
 def main():
+    if len(sys.argv)>1 and sys.argv[1]=='audit-import':
+        from project_export import audit_roundtrip
+        parser=argparse.ArgumentParser(prog='opensync audit-import',description='Compare an exported timeline with Premiere XML exported after import')
+        parser.add_argument('original_xml');parser.add_argument('premiere_xml');parser.add_argument('--output',default='import-audit.json')
+        args=parser.parse_args(sys.argv[2:]);report=audit_roundtrip(args.original_xml,args.premiere_xml,args.output)
+        if report['errors']:raise SystemExit(1)
+        return
     if len(sys.argv)>1 and sys.argv[1]=="export":
         parser=argparse.ArgumentParser(prog="opensync export",description="Export a saved OpenSync project without repeating synchronization")
         parser.add_argument("project")
@@ -769,8 +786,11 @@ def main():
     save(out/"supported-edges.json",{"version":VERSION,"edges":edges,"recovery":"envelope-recovery-v1"})
     validated=validate_edges(records,edges,out,"initial-")
     edges=refine_failed_models(records,edges,validated,out)
+    from types import SimpleNamespace
+    api=SimpleNamespace(waveform=waveform,flux_score=flux_score,read=read,save=save)
+    profiles=refinement.run_profiles(api,records,out)
     if args.stage=="verify":return
-    finish(records,edges,out,args.max_residual_ms/1000,args.name,args.unsynced)
+    finish(records,edges,out,args.max_residual_ms/1000,args.name,args.unsynced,profiles)
 
 
 if __name__=="__main__":

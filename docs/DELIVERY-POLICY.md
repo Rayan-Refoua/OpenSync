@@ -7,8 +7,10 @@
 - Audio-only time-corrected derivatives: Allowed
 - Logical video segmentation: Allowed
 
-These values are selected delivery preferences, not implemented
-application settings or acoustic verification thresholds.
+The file-list CLI implements these export preferences, including
+`--max-residual-ms`, video segmentation and optional audio derivatives.
+They are delivery bounds, not acoustic acceptance thresholds or a claim
+that the evidence establishes that accuracy for every recording.
 
 ## Architectural invariants
 

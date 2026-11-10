@@ -54,6 +54,14 @@ jobs:
         run: python -m unittest discover -s tests -p test_autosync.py
       - name: Precise project and XML export tests
         run: python -m unittest discover -s tests -p test_project_export.py
+      - name: Multilevel acoustic verification tests
+        run: python -m unittest discover -s tests -p test_refinement.py
+      - name: Timing graph and corrected audio tests
+        run: python -m unittest discover -s tests -p test_timing_graph.py
+      - name: Short recording CLI regression
+        run: python -m unittest discover -s tests -p test_short_recordings.py
+      - name: Source timecode regression
+        run: python -m unittest discover -s tests -p test_source_metadata.py
 
   acceptance:
     name: Engine acceptance (advisory until engine gaps close)

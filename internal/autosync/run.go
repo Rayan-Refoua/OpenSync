@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 )
 
-//go:embed pipeline.py project_export.py
+//go:embed pipeline.py project_export.py refinement.py relation_graph.py time_mapping.py source_metadata.py
 var runtimeFiles embed.FS
 
 func Run(ctx context.Context, args []string) error {
@@ -36,7 +36,7 @@ func Run(ctx context.Context, args []string) error {
 		return err
 	}
 	defer os.RemoveAll(dir)
-	for _, name := range []string{"pipeline.py", "project_export.py"} {
+	for _, name := range []string{"pipeline.py", "project_export.py", "refinement.py", "relation_graph.py", "time_mapping.py", "source_metadata.py"} {
 		data, readErr := runtimeFiles.ReadFile(name)
 		if readErr != nil {
 			return readErr

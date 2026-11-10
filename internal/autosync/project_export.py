@@ -11,9 +11,13 @@ import math
 import os
 from pathlib import Path
 import subprocess
+import tempfile
+import numpy as np
 from urllib.parse import unquote, urlparse
 import uuid
 import xml.etree.ElementTree as ET
+from time_mapping import validate as validate_mapping, value as mapped_time, inverse as inverse_mapping, video_segments
+from source_metadata import source_timecode
 
 
 def canonical(value):
@@ -34,6 +38,7 @@ def save_json(path,value):
 
 
 def save_project(path,records,edges,layout,graph,engine_version,name="OpenSync"):
+    records=[dict(r,source_timecode=source_timecode(r)) if 'source_timecode' not in r else dict(r) for r in records]
     models=[]
     for item in layout:
         model=dict(item)
@@ -42,21 +47,25 @@ def save_project(path,records,edges,layout,graph,engine_version,name="OpenSync")
         model["analysis_component_offset_seconds"]=model.pop("start_seconds")
         model["analysis_audio_origin_seconds"]=origin
         model["component_offset_seconds"]=model["analysis_component_offset_seconds"]-model["rate"]*origin
+        if model.get('timing_knots'):
+            model['analysis_timing_knots']=model['timing_knots']
+            model['timing_knots']=[[t+origin,v] for t,v in model['timing_knots']]
+            model['component_offset_seconds']=mapped_time(model['timing_knots'],0)
         model["time_domain"]=f"component-{item['component']}"
         model["globally_resolved"]=not item["status"].startswith("unresolved")
         models.append(model)
     payload={"name":name,"engine_version":engine_version,"recordings":records,"timing_models":models,"validated_relations":edges,"graph":graph,
-             "timing_precision":"IEEE-754 binary64 seconds and affine rates; no timeline frame quantization",
+             "timing_precision":"IEEE-754 binary64 seconds, affine rates and monotonic timing knots; no timeline frame quantization",
              "verification_status":"acoustic_and_graph_evidence_supported; production_import_review_pending",
              "source_media_modified":False}
-    project={"format":"opensync.project","schema_version":1,"payload":payload,"content_sha256":hashlib.sha256(canonical(payload)).hexdigest()}
+    project={"format":"opensync.project","schema_version":2 if any(m.get('timing_knots') for m in models) else 1,"payload":payload,"content_sha256":hashlib.sha256(canonical(payload)).hexdigest()}
     save_json(path,project)
     return project
 
 
 def load_project(path):
     project=json.loads(Path(path).read_text(encoding="utf-8"))
-    if project.get("format")!="opensync.project" or project.get("schema_version")!=1:raise ValueError("unsupported OpenSync project format")
+    if project.get("format")!="opensync.project" or project.get("schema_version") not in (1,2):raise ValueError("unsupported OpenSync project format")
     payload=project["payload"]
     if hashlib.sha256(canonical(payload)).hexdigest()!=project["content_sha256"]:raise ValueError("OpenSync project integrity check failed")
     records=payload["recordings"];models=payload["timing_models"]
@@ -64,6 +73,7 @@ def load_project(path):
     if sorted(m["recording"] for m in models)!=list(range(len(records))):raise ValueError("project timing models do not account for every recording")
     for m in models:
         if not math.isfinite(m["component_offset_seconds"]) or not math.isfinite(m["rate"]) or m["rate"]<=0:raise ValueError("invalid precise timing model")
+        if m.get('timing_knots'):validate_mapping(m['timing_knots'])
         components=payload["graph"]["components"]
         if not 1<=m["component"]<=len(components) or m["recording"] not in components[m["component"]-1] or m["component_size"]!=len(components[m["component"]-1]):raise ValueError("project component identity mismatch")
     return project
@@ -121,7 +131,13 @@ def file_reference(parent,rec,fps,definitions,source=None,duration=None):
     definitions.add(fid);path=Path(source or rec["source"])
     tag(node,"name",path.name);xml_rate(node,fps)
     total=round(duration*float(fps)) if duration is not None else source_frames(rec,fps)
-    tag(node,"duration",total);media=tag(node,"media")
+    tag(node,"duration",total)
+    tc=None if source else rec.get('source_timecode')
+    timecode=tag(node,'timecode');xml_rate(timecode,tc['rate'] if tc else fps)
+    tag(timecode,'string',tc['string'] if tc else '00:00:00:00')
+    tag(timecode,'frame',tc['frame'] if tc else 0)
+    tag(timecode,'displayformat',tc['displayformat'] if tc else 'NDF')
+    media=tag(node,'media')
     if rec.get("video") and not source:
         video=tag(media,"video");sample=tag(video,"samplecharacteristics")
         for key,value in (("width",rec["video"].get("width",1920)),("height",rec["video"].get("height",1080)),("anamorphic","FALSE"),("pixelaspectratio","square"),("fielddominance","none")):tag(sample,key,value)
@@ -189,10 +205,59 @@ def arrange(placements,fps,policy):
     return {"synchronized_end_frame":main_end,"unresolved_start_frame":first_unresolved,"unresolved_sequence":sequence if unresolved else None}
 
 
+def render_mapped_audio(rec,points,target):
+    """Render sequential audio-only pieces with short overlapping joins.
+
+    Input remains untouched. Exact output sample counts prevent errors from
+    accumulating at joins. Video never enters this rendering path.
+    """
+    if rec.get('video'):raise ValueError('audio correction cannot retime video')
+    duration=rec['duration'];origin=mapped_time(points,0)
+    sr=int((rec.get('audio') or {}).get('sample_rate') or 48000)
+    channel_count=channels(rec);inv=inverse_mapping(points)
+    boundaries=sorted({0,round((mapped_time(points,duration)-origin)*sr)}|{round((v-origin)*sr) for t,v in points if 0<t<duration})
+    if any(b<=a for a,b in zip(boundaries,boundaries[1:])):raise ValueError('invalid audio render intervals')
+    fade=min(round(.005*sr),min(b-a for a,b in zip(boundaries,boundaries[1:]))//4)
+    local=rec.get('local_source',rec['source'])
+    if not Path(local).is_file():local=rec['source']
+    with tempfile.TemporaryDirectory(prefix='opensync-audio-',dir=target.parent) as temporary:
+        root=Path(temporary);assembled=root/'assembled.s32';tail=b'';frame_bytes=channel_count*4
+        with assembled.open('wb') as output:
+            for i,(first,last) in enumerate(zip(boundaries,boundaries[1:])):
+                left=first-(fade if i else 0);right=last+(fade if i<len(boundaries)-2 else 0)
+                source_first=max(0,mapped_time(inv,origin+left/sr));source_last=min(duration,mapped_time(inv,origin+right/sr))
+                count=right-left;tempo=(source_last-source_first)/(count/sr)
+                if not .5<=tempo<=2:raise ValueError('unsupported audio timing rate')
+                part=root/'part.s32'
+                filters=f'atempo={tempo:.14f},apad,atrim=end_sample={count}'
+                subprocess.run(['ffmpeg','-nostdin','-v','error','-y','-ss',f'{source_first:.12f}','-t',f'{source_last-source_first:.12f}','-i',local,'-map','0:a:0','-af',filters,'-ar',str(sr),'-ac',str(channel_count),'-c:a','pcm_s32le','-f','s32le',str(part)],check=True)
+                with part.open('rb') as source:
+                    if part.stat().st_size!=count*frame_bytes:raise ValueError('audio segment duration mismatch')
+                    overlap=2*fade if i else 0
+                    if overlap:
+                        head=source.read(overlap*frame_bytes)
+                        a=np.frombuffer(tail,dtype='<i4').reshape(-1,channel_count).astype(np.float64)
+                        b=np.frombuffer(head,dtype='<i4').reshape(-1,channel_count).astype(np.float64)
+                        weights=np.linspace(0,1,overlap)[:,None]
+                        output.write(np.clip(np.rint(a*(1-weights)+b*weights),-2147483648,2147483647).astype('<i4').tobytes())
+                    keep=2*fade if i<len(boundaries)-2 else 0
+                    remaining=count-overlap-keep
+                    while remaining:
+                        n=min(65536,remaining);output.write(source.read(n*frame_bytes));remaining-=n
+                    tail=source.read(keep*frame_bytes) if keep else b''
+        if assembled.stat().st_size!=boundaries[-1]*frame_bytes:raise ValueError('audio join changed total duration')
+        partial=target.with_suffix('.partial.wav')
+        subprocess.run(['ffmpeg','-nostdin','-v','error','-y','-f','s32le','-ar',str(sr),'-ac',str(channel_count),'-i',str(assembled),'-c:a','pcm_s24le','-rf64','auto',str(partial)],check=True)
+        os.replace(partial,target)
+
+
 def export_project(project_path,out,unsynced="append",max_residual_ms=150):
     if unsynced not in ("append","separate-sequence"):raise ValueError("unknown unresolved export policy")
     if not 1<=max_residual_ms<=150:raise ValueError("maximum residual must be 1..150 ms")
-    project=load_project(project_path);payload=project["payload"];records=payload["recordings"]
+    project=load_project(project_path);payload=project["payload"]
+    # Older native projects did not retain source timecode. Read only the
+    # missing source-address metadata; never alter their measured alignment.
+    records=[dict(r,source_timecode=source_timecode(r)) if 'source_timecode' not in r else r for r in payload['recordings']]
     for rec in records:
         path=Path(rec["source"])
         if not path.is_file():raise ValueError("source unavailable: "+str(path))
@@ -204,7 +269,10 @@ def export_project(project_path,out,unsynced="append",max_residual_ms=150):
     for model in payload["timing_models"]:
         item=dict(model);i=item["recording"];rec=records[i];source_rate=rate_value(rec,fps);rate=item["rate"];duration=rec["duration"]
         source_duration=source_frames(rec,source_rate)/float(source_rate)
-        predicted=abs(rate-1)*source_duration/2+item["fit_residual_seconds"]+.5/float(fps)
+        points=item.get('timing_knots') or [[0,item['component_offset_seconds']],[source_duration,item['component_offset_seconds']+rate*source_duration]]
+        check_times=[0,source_duration]+[t for t,_ in points if 0<t<source_duration]
+        offsets=[mapped_time(points,t)-t for t in check_times]
+        predicted=(max(offsets)-min(offsets))/2+item["fit_residual_seconds"]+.5/float(fps)
         item["predicted_constant_residual_seconds"]=predicted
         source=None;actual=duration;count=1
         if item["status"].startswith("unresolved"):
@@ -212,27 +280,28 @@ def export_project(project_path,out,unsynced="append",max_residual_ms=150):
             rate=1 if item["component_size"]==1 else rate
         elif predicted>tolerance:
             budget=tolerance-item["fit_residual_seconds"]-.5/float(fps)
-            if budget<=0:item["status"]="unresolved_timing_uncertainty"
-            elif rec.get("video"):count=max(1,math.ceil(abs(rate-1)*source_duration/(2*budget)))
+            if budget<=0 or (not rec.get('video') and budget<.03):item["status"]="unresolved_timing_uncertainty"
+            elif rec.get("video"):pass  # Partition against every timing knot below.
             else:
                 folder=out/"Audio Derivatives";folder.mkdir(exist_ok=True)
-                key=hashlib.sha256(canonical({"id":rec["id"],"rate":rate,"source":rec.get("cache_sha256")})).hexdigest()[:16]
+                key=hashlib.sha256(canonical({"id":rec["id"],"mapping":points,"source":rec.get("cache_sha256"),"renderer":"mapped-audio-v1"})).hexdigest()[:16]
                 target=folder/(key+".wav")
                 if not target.exists():
-                    local=rec.get("local_source",rec["source"])
-                    if not Path(local).is_file():local=rec["source"]
-                    subprocess.run(["ffmpeg","-nostdin","-v","error","-n","-i",local,"-map","0:a:0","-af",f"atempo={1/rate:.12f}","-c:a","pcm_s24le",str(target)],check=True)
+                    render_mapped_audio(rec,points,target)
                 metadata=json.loads(subprocess.check_output(["ffprobe","-v","error","-show_format","-of","json",str(target)]))
                 actual=float(metadata["format"]["duration"])
-                if abs(actual-duration*rate)>.05:raise ValueError("timing derivative failed duration validation")
+                if abs(actual-(mapped_time(points,duration)-mapped_time(points,0)))>.001:raise ValueError("timing derivative failed duration validation")
                 source=str(target);derivatives.append({"recording_id":rec["id"],"original":rec["source"],"derivative":source,"rate":rate,"sha256":digest(target),"actual_duration_seconds":actual})
         total=source_frames(rec,source_rate)
-        for segment in range(count):
-            first=round(total*segment/count);last=round(total*(segment+1)/count);mid=(first+last)/(2*float(source_rate))
-            start_seconds=item["component_offset_seconds"]+first/float(source_rate)+(rate-1)*mid
+        if not item['status'].startswith('unresolved') and rec.get('video'):
+            parts=video_segments(points,total,float(source_rate),tolerance-item['fit_residual_seconds']-.5/float(fps))
+        else:parts=[(0,total,(min(offsets)+max(offsets))/2,(max(offsets)-min(offsets))/2)]
+        count=len(parts)
+        for segment,(first,last,offset,approximation_error) in enumerate(parts):
+            start_seconds=first/float(source_rate)+offset
             start=round((item["component_offset_seconds"] if source else start_seconds)*float(fps))
             end=start+round((actual if source else (last-first)/float(source_rate))*float(fps))
-            placements.append(dict(item,id=f"recording-{rec['id']}-part-{segment+1}",source_in=0 if source else first,source_out=round(actual*float(source_rate)) if source else last,source_fps=str(source_rate),start=start,end=end,segment=segment+1,segments=count,derivative=source,has_video=bool(rec.get("video"))))
+            placements.append(dict(item,id=f"recording-{rec['id']}-part-{segment+1}",source_in=0 if source else first,source_out=round(actual*float(source_rate)) if source else last,source_fps=str(source_rate),start=start,end=end,segment=segment+1,segments=count,derivative=source,has_video=bool(rec.get("video")),presentation_error_seconds=(.03 if source else approximation_error)+item['fit_residual_seconds']+.5/float(fps)))
     arrangement=arrange(placements,fps,unsynced)
     root=ET.Element("xmeml",version="4");project_node=tag(root,"project");tag(project_node,"name",payload["name"]);children=tag(project_node,"children");definitions=set()
     add_source_bins(children,records,groups,fps,definitions)
@@ -295,7 +364,7 @@ def export_project(project_path,out,unsynced="append",max_residual_ms=150):
     public=[{k:v for k,v in p.items() if k!="instances"} for p in placements]
     audit_xml(temporary,records,public,unsynced)
     os.replace(temporary,xml_path)
-    manifest={"status":"EXPORTED_REQUIRES_PREMIERE_AND_ACCURACY_REVIEW","project":str(Path(project_path).resolve()),"project_content_sha256":project["content_sha256"],"xml":str(xml_path),"xml_sha256":digest(xml_path),"recordings":len(records),"sequence_fps":str(fps),"unsynced_policy":unsynced,"arrangement":arrangement,"placements":public,"derivatives":derivatives,"unresolved_recordings":[records[p["recording"]]["name"] for p in payload["timing_models"] if p["status"].startswith("unresolved")],"source_media_modified":False}
+    manifest={"status":"EXPORTED_REQUIRES_PREMIERE_AND_ACCURACY_REVIEW","project":str(Path(project_path).resolve()),"project_content_sha256":project["content_sha256"],"xml":str(xml_path),"xml_sha256":digest(xml_path),"recordings":len(records),"sequence_fps":str(fps),"unsynced_policy":unsynced,"arrangement":arrangement,"placements":public,"derivatives":derivatives,"unresolved_recordings":[records[i]['name'] for i in sorted({p['recording'] for p in placements if p['status'].startswith('unresolved')})],"source_media_modified":False}
     save_json(out/"timeline-manifest.json",manifest)
     print(f"PROJECT {project_path}\nEXPORT {xml_path}\nRECORDINGS {len(records)}\nUNRESOLVED {len(manifest['unresolved_recordings'])}",flush=True)
     return manifest
@@ -327,6 +396,8 @@ def audit_xml(path,records,placements,policy="append"):
                     definition=files[clip.find("file").get("id")]
                     expected=Path(p["derivative"] or rec["source"]).as_uri()
                     if definition.findtext("pathurl")!=expected:raise ValueError("XML source path identity mismatch")
+                    tc=rec.get('source_timecode') if not p['derivative'] else None
+                    if int(definition.findtext('timecode/frame','-1'))!=(tc['frame'] if tc else 0):raise ValueError('source timecode origin mismatch')
                     if clip.findtext("masterclipid") not in masters:raise ValueError("missing source master clip")
                     source=clip.find("sourcetrack");channel=int(source.findtext("trackindex"))
                     if source.findtext("mediatype")!=kind or not 1<=channel<=(1 if kind=="video" else channels(rec)):raise ValueError("source channel identity mismatch")
@@ -355,3 +426,48 @@ def audit_xml(path,records,placements,policy="append"):
     result={"status":"PASS_STRUCTURAL_ONLY","recordings":len(records),"source_master_clips":len(masters),"video_clipitems":counts["video"],"audio_clipitems":counts["audio"],"tracks":dict(tracks),"all_source_frames_accounted":True,"source_path_identity_verified":True,"linked_timing_consistent":True,"link_track_and_channel_indices_verified":True,"no_within_track_collisions":True,"unresolved_policy_verified":policy,"premiere_import_test":"not_performed","acoustic_accuracy":"requires_final_comparison"}
     save_json(Path(path).parent/"structural-audit.json",result)
     return result
+
+
+def audit_roundtrip(original_path,imported_path,output_path):
+    """Check what the editor actually imported, including source addresses."""
+    def snapshot(path):
+        root=ET.parse(path).getroot()
+        definitions={f.get('id'):f for f in root.findall('.//file') if f.find('pathurl') is not None}
+        sequences={}
+        for seq in root.findall('.//sequence'):
+            items=[];seq_rate=float(read_rate(seq))
+            for kind in ('video','audio'):
+                for clip in seq.findall(f'./media/{kind}/track/clipitem'):
+                    file=clip.find('file')
+                    if file is None:continue
+                    definition=definitions.get(file.get('id'),file)
+                    identity=unquote(urlparse(definition.findtext('pathurl','')).path).replace('\\','/').casefold()
+                    rate=float(read_rate(clip)) if clip.find('rate') is not None else float(read_rate(definition))
+                    items.append(dict(name=clip.findtext('name'),kind=kind,source=identity,rate=rate,
+                                      start=int(clip.findtext('start'))/seq_rate,end=int(clip.findtext('end'))/seq_rate,
+                                      source_in=int(clip.findtext('in'))/rate,source_out=int(clip.findtext('out'))/rate))
+            sequences[seq.findtext('name')]=items
+        return sequences
+    expected=snapshot(original_path);actual=snapshot(imported_path);errors=[];differences=[];checked=0
+    for name,items in actual.items():
+        if name not in expected:errors.append(dict(sequence=name,reason='unexpected_sequence'));continue
+        remaining=list(expected[name])
+        for item in items:
+            candidates=[(index,other) for index,other in enumerate(remaining) if item['kind']==other['kind'] and item['source']==other['source']]
+            if not candidates:
+                errors.append(dict(clip=item['name'],reason='unexpected_or_relinked_source'));continue
+            index,other=min(candidates,key=lambda p:abs(item['start']-p[1]['start'])+abs(item['end']-p[1]['end']))
+            remaining.pop(index);checked+=1
+            delta={key:item[key]-other[key] for key in ('start','end','source_in','source_out')}
+            if any(abs(v)>1e-8 for v in delta.values()):differences.append(dict(clip=item['name'],kind=item['kind'],delta_seconds=delta))
+            tolerance=1/min(item['rate'],other['rate'])+1e-6
+            if item['source_in']<0 or any(abs(v)>tolerance for v in delta.values()):
+                errors.append(dict(clip=item['name'],kind=item['kind'],reason='source_or_timeline_range_changed',expected=other,imported=item,delta_seconds=delta))
+        errors.extend(dict(clip=item['name'],kind=item['kind'],reason='missing_timeline_item') for item in remaining)
+    if not actual:errors.append(dict(reason='no_imported_sequences'))
+    report=dict(status='FAIL_IMPORT_ROUNDTRIP' if errors else 'PASS_CHECKED_SEQUENCES',checked_clipitems=checked,
+                checked_sequences=list(actual),unchecked_sequences=[s for s in expected if s not in actual],
+                errors=errors,frame_rounding_differences=differences,acoustic_accuracy='not_assessed_by_this_import_check')
+    save_json(output_path,report)
+    print(f"IMPORT AUDIT {report['status']} — {checked} items, {len(errors)} errors",flush=True)
+    return report

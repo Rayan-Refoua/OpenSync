@@ -30,10 +30,12 @@ func main() {
 			"Export a saved project without synchronizing again:\n" +
 			"  opensync export MyProject/OpenSync.opensync --output Export\n" +
 			"  opensync export MyProject/OpenSync.opensync --output Export --unsynced separate-sequence\n\n" +
+			"Check a Premiere import round trip:\n" +
+			"  opensync audit-import Export/OpenSync.xml Premiere-roundtrip.xml --output import-audit.json\n\n" +
 			"The default unresolved-clip policy is append. Use sync --help or export --help for options.\n" +
 			"Research commands and benchmark remain available for development.")
 		return
-	case len(os.Args) >= 2 && os.Args[1] == "export":
+	case len(os.Args) >= 2 && (os.Args[1] == "export" || os.Args[1] == "audit-import"):
 		err = autosync.Run(context.Background(), os.Args[1:])
 	case len(os.Args) >= 2 && os.Args[1] == "sync":
 		err = autosync.Run(context.Background(), os.Args[2:])

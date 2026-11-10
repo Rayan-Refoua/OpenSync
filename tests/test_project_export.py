@@ -13,6 +13,39 @@ import project_export as export
 
 
 class ProjectExportTest(unittest.TestCase):
+    def test_nonzero_source_timecode_survives_project_and_export(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);path,records=self.make_project(root)
+            records[0]['source_timecode']={'frame':8319,'string':'00:05:32:19','rate':'25','displayformat':'NDF'}
+            original=export.load_project(path)['payload']
+            layout=[dict(m,start_seconds=m['analysis_component_offset_seconds']) for m in original['timing_models']]
+            export.save_project(path,records,[],layout,original['graph'],'test')
+            before=path.read_bytes();export.export_project(path,root/'export')
+            self.assertEqual(path.read_bytes(),before)
+            tree=ET.parse(root/'export'/'OpenSync.xml')
+            file=tree.find(".//file[@id='file-0'][timecode]")
+            self.assertEqual(file.findtext('./timecode/frame'),'8319')
+            self.assertEqual(file.findtext('./timecode/string'),'00:05:32:19')
+            clip=tree.find('./project/children/sequence/media/video/track/clipitem')
+            self.assertEqual(clip.findtext('in'),'0')
+            self.assertEqual(clip.findtext('out'),'1250')
+
+    def test_import_audit_detects_negative_source_address_and_missing_items(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);path,_=self.make_project(root)
+            export.export_project(path,root/'export')
+            original=root/'export'/'OpenSync.xml';imported=root/'roundtrip.xml';report=root/'audit.json'
+            result=export.audit_roundtrip(original,original,report)
+            self.assertFalse(result['errors']);self.assertGreater(result['checked_clipitems'],0)
+            tree=ET.parse(original);track=tree.find('./project/children/sequence/media/video/track')
+            clip=track.find('clipitem');clip.find('in').text='-8319';clip.find('out').text=str(1250-8319)
+            tree.write(imported)
+            result=export.audit_roundtrip(original,imported,report)
+            self.assertEqual(result['errors'][0]['reason'],'source_or_timeline_range_changed')
+            track.remove(clip);tree.write(imported)
+            result=export.audit_roundtrip(original,imported,report)
+            self.assertTrue(any(e['reason']=='missing_timeline_item' for e in result['errors']))
+
     @unittest.skipUnless(shutil.which('ffmpeg') and shutil.which('ffprobe'),'FFmpeg required for audio timing derivatives')
     def test_audio_derivative_keeps_original_master_and_valid_links(self):
         with tempfile.TemporaryDirectory() as temp:
