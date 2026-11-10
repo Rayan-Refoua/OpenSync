@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 )
 
-//go:embed pipeline.py project_export.py refinement.py relation_graph.py time_mapping.py source_metadata.py
+//go:embed pipeline.py project_export.py refinement.py relation_graph.py time_mapping.py source_metadata.py distributed_recovery.py acoustic_context.py
 var runtimeFiles embed.FS
 
 func Run(ctx context.Context, args []string) error {
@@ -36,7 +36,7 @@ func Run(ctx context.Context, args []string) error {
 		return err
 	}
 	defer os.RemoveAll(dir)
-	for _, name := range []string{"pipeline.py", "project_export.py", "refinement.py", "relation_graph.py", "time_mapping.py", "source_metadata.py"} {
+	for _, name := range []string{"pipeline.py", "project_export.py", "refinement.py", "relation_graph.py", "time_mapping.py", "source_metadata.py", "distributed_recovery.py", "acoustic_context.py"} {
 		data, readErr := runtimeFiles.ReadFile(name)
 		if readErr != nil {
 			return readErr
@@ -46,8 +46,12 @@ func Run(ctx context.Context, args []string) error {
 		}
 	}
 	cmd := exec.CommandContext(ctx, python, append([]string{"-X", "utf8", "-u", filepath.Join(dir, "pipeline.py")}, args...)...)
+	cmd.Env = os.Environ()
+	if executable, err := os.Executable(); err == nil {
+		cmd.Env = append(cmd.Env, "OPENSYNC_NATIVE_EXECUTABLE="+executable)
+	}
 	if runtimeBin != "" {
-		cmd.Env = append(os.Environ(), "PATH="+runtimeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+		cmd.Env = append(cmd.Env, "PATH="+runtimeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	}
 	cmd.Stdout, cmd.Stderr, cmd.Stdin = os.Stdout, os.Stderr, os.Stdin
 	return cmd.Run()

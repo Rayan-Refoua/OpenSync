@@ -713,6 +713,15 @@ def finish(records,edges,out,tolerance,name="OpenSync",unsynced="append",profile
         save(out/'event-decisions.json',{'decisions':decisions,'baseline_positions_used':False})
         layout,graph=relation_graph.solve(records,edges)
         graph['event_decisions']=decisions
+        from acoustic_context import relationship_map
+        graph['acoustic_relationships']=relationship_map(records,profiles,graph)
+        save(out/'acoustic-relationships.json',graph['acoustic_relationships'])
+        discovery_path=out/'distributed-discovery.json'
+        if discovery_path.exists():
+            discovery=json.loads(discovery_path.read_text(encoding='utf-8'))
+            graph['candidate_discovery']={k:v for k,v in discovery.items() if k!='pairs'}
+            graph['candidate_discovery']['pairs']=[{'reference':p['reference'],'query':p['query'],'candidates':p['candidates'],'status':'DISCOVERY_ONLY'} for p in discovery['pairs']]
+        graph['unresolved_timing_hypotheses']=[dict(reference=p['reference'],query=p['query'],hypotheses=[dict(prior=h['prior'],status=h['status'],audit_result=h.get('audit_result')) for h in p['profiles'] if h['status']!='validated_relation']) for p in profiles if any(h['status']!='validated_relation' for h in p['profiles'])]
     else:layout,graph=graph_layout(records,edges)
     save(out/"graph.json",graph)
     project_path=out/"OpenSync.opensync"
@@ -789,6 +798,11 @@ def main():
     from types import SimpleNamespace
     api=SimpleNamespace(waveform=waveform,flux_score=flux_score,read=read,save=save)
     profiles=refinement.run_profiles(api,records,out)
+    from distributed_recovery import run as distributed_recovery
+    preliminary,_=relation_graph.select_edges(SimpleNamespace(graph_layout=graph_layout),records,edges,profiles)
+    preliminary_layout,_=relation_graph.solve(records,preliminary)
+    if distributed_recovery(api,records,preliminary_layout,recovery,out) is not None:
+        profiles=refinement.run_profiles(api,records,out)
     if args.stage=="verify":return
     finish(records,edges,out,args.max_residual_ms/1000,args.name,args.unsynced,profiles)
 

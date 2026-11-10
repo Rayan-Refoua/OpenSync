@@ -41,6 +41,8 @@ func main() {
 		err = autosync.Run(context.Background(), os.Args[2:])
 	case len(os.Args) >= 2 && os.Args[1] == "benchmark":
 		err = benchmarkCommand(os.Args[2:])
+	case len(os.Args) >= 2 && os.Args[1] == "distributed":
+		err = distributedCommand(os.Args[2:])
 
 	case len(os.Args) == 3 && os.Args[1] == "inspect":
 		err = inspect(os.Args[2])

@@ -1,0 +1,148 @@
+package researchmatch
+
+import (
+	"bytes"
+	"encoding/binary"
+	"math"
+	"math/rand"
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func featureFixture(t *testing.T, path string, channels int, values [][]float64) *DistributedFile {
+	t.Helper()
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.WriteString(featureMagic)
+	binary.Write(f, binary.LittleEndian, uint32(channels))
+	for i := range values[0] {
+		for c := range values {
+			binary.Write(f, binary.LittleEndian, float32(values[c][i]))
+		}
+	}
+	f.Close()
+	r, err := OpenDistributed(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { r.Close() })
+	return r
+}
+
+func TestDistributedPearsonMatchesDirectCenteredCalculation(t *testing.T) {
+	r := []float64{3, 1, 4, 1, 5, 9, 2, 6, 5}
+	q := []float64{7, 2, 8, 1}
+	actual, err := distributedCorrelation(r, q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for k, v := range actual {
+		a, b := 0., 0.
+		for i := range q {
+			a += r[k+i]
+			b += q[i]
+		}
+		a /= float64(len(q))
+		b /= float64(len(q))
+		dot, aa, bb := 0., 0., 0.
+		for i := range q {
+			x, y := r[k+i]-a, q[i]-b
+			dot += x * y
+			aa += x * x
+			bb += y * y
+		}
+		want := dot / math.Sqrt(aa*bb)
+		if math.Abs(v-want) > 1e-10 {
+			t.Fatalf("lag %d: %g != %g", k, v, want)
+		}
+	}
+}
+
+func TestDistributedPreservesIndependentEventsAndPartialOverlap(t *testing.T) {
+	dir := t.TempDir()
+	rng := rand.New(rand.NewSource(72))
+	ref := make([][]float64, 5)
+	query := make([][]float64, 5)
+	for b := range ref {
+		ref[b] = make([]float64, 15000)
+		for i := range ref[b] {
+			ref[b][i] = rng.NormFloat64()
+		}
+		query[b] = append([]float64(nil), ref[b][375:975]...)
+		copy(ref[b][12375:], query[b])
+	}
+	r := featureFixture(t, filepath.Join(dir, "ref"), 1, ref)
+	q := featureFixture(t, filepath.Join(dir, "query"), 1, query)
+	result, err := SearchDistributed(r, q, -1, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Peaks) < 2 || math.Abs(result.Peaks[0].Offset-3.75) > .011 || math.Abs(result.Peaks[1].Offset-123.75) > .011 {
+		t.Fatalf("lost competing event or tile offset: %+v", result.Peaks[:min(2, len(result.Peaks))])
+	}
+	if result.Certification != "not_assessed" {
+		t.Fatal("discovery cannot certify")
+	}
+	// Query starts before the reference. Two complete later sections overlap.
+	for b := range ref {
+		ref[b] = append([]float64(nil), query[b][200:]...)
+	}
+	r = featureFixture(t, filepath.Join(dir, "partial"), 1, ref)
+	result, err = SearchDistributed(r, q, -1, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Peaks) == 0 || math.Abs(result.Peaks[0].Offset+2) > .011 {
+		t.Fatalf("negative partial offset lost: %+v", result.Peaks)
+	}
+}
+
+func TestDistributedStereoPolarityDoesNotCancelAndSilenceHasNoPeaks(t *testing.T) {
+	var pcm, output bytes.Buffer
+	for i := 0; i < 16000; i++ {
+		x := float32(math.Sin(float64(i)*.21) * (.2 + .1*math.Sin(float64(i)*.001)))
+		binary.Write(&pcm, binary.LittleEndian, x)
+		binary.Write(&pcm, binary.LittleEndian, -x)
+	}
+	if err := WriteDistributed(&pcm, &output, 2); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "stereo")
+	os.WriteFile(path, output.Bytes(), 0600)
+	f, err := OpenDistributed(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	values, err := f.Read(0, f.Frames)
+	if err != nil {
+		t.Fatal(err)
+	}
+	energy := 0.
+	for b := 0; b < 5; b++ {
+		for i, x := range values[b] {
+			energy += x * x
+			if math.Abs(x-values[b+5][i]) > 1e-10 {
+				t.Fatal("polarity changed spectral features")
+			}
+		}
+	}
+	if energy == 0 {
+		t.Fatal("cancelled channel energy")
+	}
+	zero := make([][]float64, 5)
+	for b := range zero {
+		zero[b] = make([]float64, 600)
+	}
+	z := featureFixture(t, filepath.Join(t.TempDir(), "silence"), 1, zero)
+	result, err := SearchDistributed(z, z, -1, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Peaks) != 0 {
+		t.Fatal("silence invented a candidate")
+	}
+}

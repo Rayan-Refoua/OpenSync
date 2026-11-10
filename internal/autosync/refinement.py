@@ -201,6 +201,13 @@ def candidate_reservoir(records,out):
                 close=next((i for i,p in enumerate(existing) if abs(p['offset']-candidate['offset'])<.5),None)
                 if close is None:existing.append(candidate)
                 elif existing[close]['prior_strength']<strength:existing[close]=candidate
+    discovery=out/'distributed-discovery.json'
+    if discovery.exists():
+        for pair in json.loads(discovery.read_text(encoding='utf-8'))['pairs']:
+            existing=pairs.setdefault((pair['reference'],pair['query']),[])
+            for c in pair['candidates'][:3]:
+                if all(abs(c['offset']-p['offset'])>=.5 for p in existing):
+                    existing.append(dict(offset=c['offset'],slope=0.,prior_strength=0.,discovery_method='distributed_spectral',discovery_score=c['score']))
     return [{'reference':r,'query':q,'candidates':sorted(c,key=lambda p:(-p['prior_strength'],p['offset']))} for (r,q),c in sorted(pairs.items())]
 
 
@@ -210,14 +217,18 @@ def run_profiles(api,records,out,workers=4):
     def work(pair):
         ref,query=records[pair['reference']],records[pair['query']]
         identity=hashlib.sha256(json.dumps({'version':PROFILE_VERSION,'pair':pair,'sources':[ref['cache_sha256'],query['cache_sha256']]},sort_keys=True).encode()).hexdigest()
-        path=folder/(ref['id']+'_'+query['id']+'.json')
+        legacy_path=folder/(ref['id']+'_'+query['id']+'.json')
+        path=folder/(ref['id']+'_'+query['id']+'_'+identity[:16]+'.json')
+        if legacy_path.exists():
+            saved=json.loads(legacy_path.read_text(encoding='utf-8'))
+            if saved.get('input_digest')==identity:return saved
         if path.exists():
             saved=json.loads(path.read_text(encoding='utf-8'))
             if saved.get('input_digest')!=identity:raise ValueError('stale multilevel profile')
             return saved
         # The long-recording sampling and controls are unchanged from v3.
         # Reuse those exact PCM measurements only when inputs also match.
-        prior_path=out/'multilevel-profile-v3'/path.name
+        prior_path=out/'multilevel-profile-v3'/legacy_path.name
         previous=json.loads(prior_path.read_text(encoding='utf-8')) if prior_path.exists() else {}
         prior_identity=hashlib.sha256(json.dumps({'version':'multilevel-profile-v3','pair':pair,'sources':[ref['cache_sha256'],query['cache_sha256']]},sort_keys=True).encode()).hexdigest()
         profiles=[evaluate_profile(p) for p in previous['profiles']] if ref['duration']>=70 and query['duration']>=30 and previous.get('input_digest')==prior_identity else [profile_candidate(api,ref,query,p) for p in pair['candidates']]

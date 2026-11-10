@@ -53,10 +53,18 @@ def save_project(path,records,edges,layout,graph,engine_version,name="OpenSync")
             model['component_offset_seconds']=mapped_time(model['timing_knots'],0)
         model["time_domain"]=f"component-{item['component']}"
         model["globally_resolved"]=not item["status"].startswith("unresolved")
+        # Acoustic arrival includes propagation and recording-path latency.
+        # With no independently measured path delay, clock/start offset and
+        # travel time are not separately identifiable. Never invent a video
+        # correction from venue size, filenames, or the strongest echo.
+        model["timing_basis"]="acoustic_arrival"
+        model["physical_capture_alignment"]="not_independently_established"
+        model["propagation_delay_seconds"]=None
         models.append(model)
     payload={"name":name,"engine_version":engine_version,"recordings":records,"timing_models":models,"validated_relations":edges,"graph":graph,
              "timing_precision":"IEEE-754 binary64 seconds, affine rates and monotonic timing knots; no timeline frame quantization",
              "verification_status":"acoustic_and_graph_evidence_supported; production_import_review_pending",
+             "acoustic_environment_policy":{"constant_path_delay":"absorbed_in_measured_offset_not_clock_drift","changing_path_or_echo":"requires_timing_evidence_not_blanket_tolerance","physical_event_time":"not_identifiable_from_unreferenced_audio_alone"},
              "source_media_modified":False}
     project={"format":"opensync.project","schema_version":2 if any(m.get('timing_knots') for m in models) else 1,"payload":payload,"content_sha256":hashlib.sha256(canonical(payload)).hexdigest()}
     save_json(path,project)
