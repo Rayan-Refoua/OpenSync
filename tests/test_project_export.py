@@ -13,6 +13,14 @@ import project_export as export
 
 
 class ProjectExportTest(unittest.TestCase):
+    def test_premiere_local_drive_urls_match_working_fcp7_convention(self):
+        self.assertEqual(export.premiere_media_url(r'I:\Aroma\Aghaee Record And Edit\C0559.MP4'),
+                         'file://localhost/I:/Aroma/Aghaee%20Record%20And%20Edit/C0559.MP4')
+        self.assertEqual(export.premiere_media_url('C:/Audio/100% #1?.wav'),
+                         'file://localhost/C:/Audio/100%25%20%231%3F.wav')
+        self.assertEqual(export.premiere_media_url(r'\\server\share\Camera One\clip.mp4'),
+                         'file://server/share/Camera%20One/clip.mp4')
+
     def test_comparison_export_is_opt_in_marked_and_preserves_native_truth(self):
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp);path,records=self.make_project(root)

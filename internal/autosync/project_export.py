@@ -9,7 +9,7 @@ import hashlib
 import json
 import math
 import os
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import subprocess
 import tempfile
 import numpy as np
@@ -123,6 +123,18 @@ def channels(rec):return int((rec.get("audio") or {}).get("channels",0))
 def channel_type(count):return "stereo" if count==2 else "mono" if count<=1 else "multichannel"
 
 
+def premiere_media_url(path):
+    """Use the explicit local host form used by Premiere/PluralEyes FCP7 XML.
+
+    Empty-authority file:/// drive URLs can be interpreted as UNC addresses
+    by Premiere's importer. Preserve real UNC hosts and percent-encoding.
+    PureWindowsPath also makes Windows address tests portable to Linux CI.
+    """
+    windows=PureWindowsPath(str(path))
+    uri=windows.as_uri() if windows.is_absolute() else Path(path).resolve().as_uri()
+    return 'file://localhost/'+uri[len('file:///'):] if uri.startswith('file:///') else uri
+
+
 def source_groups(records):
     """Directories are provenance groups, not inferred physical devices."""
     keys=sorted({("Camera" if r.get("video") else "Audio",str(Path(r["source"]).parent)) for r in records})
@@ -155,7 +167,7 @@ def file_reference(parent,rec,fps,definitions,source=None,duration=None):
         tag(sample,"depth",24 if source else rec["audio"].get("bits_per_sample",16) or 16);tag(sample,"samplerate",rec["audio"].get("sample_rate",48000))
         tag(audio,"layout",channel_type(channels(rec)))
         for c in range(channels(rec)):tag(tag(audio,"audiochannel"),"sourcechannel",c+1)
-    tag(node,"pathurl",path.as_uri())
+    tag(node,"pathurl",premiere_media_url(path))
     return node
 
 
@@ -415,7 +427,7 @@ def audit_xml(path,records,placements,policy="append"):
                     base=ident.rsplit("-"+kind+"-",1)[0];p=by_id[base];rec=records[p["recording"]]
                     if (start,end,first,stop)!=(p["start"],p["end"],p["source_in"],p["source_out"]) or p["sequence"]!=sequence_id:raise ValueError("XML/placement timing mismatch")
                     definition=files[clip.find("file").get("id")]
-                    expected=Path(p["derivative"] or rec["source"]).as_uri()
+                    expected=premiere_media_url(p["derivative"] or rec["source"])
                     if definition.findtext("pathurl")!=expected:raise ValueError("XML source path identity mismatch")
                     tc=rec.get('source_timecode') if not p['derivative'] else None
                     if int(definition.findtext('timecode/frame','-1'))!=(tc['frame'] if tc else 0):raise ValueError('source timecode origin mismatch')
