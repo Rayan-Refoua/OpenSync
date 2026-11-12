@@ -66,15 +66,15 @@ func syntheticRecordings(t *testing.T) map[string]*audio.Reader {
 		// transients keep windows identifiable across the three recordings.
 		phase := float64(i) / syntheticRate
 		envelope := 0.35 + 0.55*math.Pow(math.Sin(phase*1.37), 2)
-		sound[i] = envelope*(7200*nextNoise(&seed)+
-			2800*math.Sin(2*math.Pi*117*phase)+
+		sound[i] = envelope * (7200*nextNoise(&seed) +
+			2800*math.Sin(2*math.Pi*117*phase) +
 			1900*math.Sin(2*math.Pi*317*phase))
 	}
 	type camera struct {
-		name   string
-		start  int
-		gain   float64
-		noise  uint32
+		name  string
+		start int
+		gain  float64
+		noise uint32
 	}
 	cameras := []camera{
 		{"A", 0, 1, 17},
@@ -124,8 +124,8 @@ func TestSyntheticAcousticTriangleEndToEnd(t *testing.T) {
 			m, err := acousticverify.Measure(readers[pair.ref], readers[pair.query],
 				acousticverify.Probe{
 					QueryStartNS: qtime,
-					OffsetNS: pair.truthNS + 5_000_000, // deliberately biased seed
-					WindowNS: windowNS, RadiusNS: radiusNS,
+					OffsetNS:     pair.truthNS + 5_000_000, // deliberately biased seed
+					WindowNS:     windowNS, RadiusNS: radiusNS,
 				})
 			if err != nil {
 				t.Fatalf("%s-%s at %d: %v", pair.ref, pair.query, qtime, err)
@@ -144,7 +144,7 @@ func TestSyntheticAcousticTriangleEndToEnd(t *testing.T) {
 		holdout, err := acousticverify.Measure(readers[pair.ref], readers[pair.query],
 			acousticverify.Probe{
 				QueryStartNS: 3_400_000_000,
-				OffsetNS: offsets[0], WindowNS: windowNS, RadiusNS: radiusNS,
+				OffsetNS:     offsets[0], WindowNS: windowNS, RadiusNS: radiusNS,
 			})
 		if err != nil || math.Abs(float64(holdout.MeasuredNS-pair.truthNS)) > float64(toleranceNS) {
 			t.Fatalf("%s-%s holdout mismatch: %+v %v", pair.ref, pair.query, holdout, err)
