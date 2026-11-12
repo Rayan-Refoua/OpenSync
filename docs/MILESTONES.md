@@ -2,6 +2,15 @@
 
 All milestones are provisional until research concludes.
 
+## Current execution priority (2026-11-08)
+
+User direction: establish a proper repeatable engine test, then finish a
+usable headless tool, then build the UI. M26 implements the acceptance
+harness and real-pair review workflow; the engine acceptance result is
+currently FAIL. See `docs/ENGINE-ACCEPTANCE.md` for commands, evidence and
+next actions. The foundational checklist below is historical and is not
+an up-to-date inventory of the implemented Go packages.
+
 ## M0 — Research foundation [IN PROGRESS]
 
 - [x] Identify packaged dependencies

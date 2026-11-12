@@ -17,7 +17,10 @@ concurrency:
 jobs:
   verify:
     name: Go checks
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -31,12 +34,85 @@ jobs:
           files="$(gofmt -l cmd internal)"
           if [[ -n "$files" ]]; then
             printf 'Unformatted files:\n%s\n' "$files"
-            gofmt -d cmd/opensync/research_support.go cmd/opensync/research_support_compat_test.go
+            gofmt -d cmd internal
             exit 1
           fi
-      - name: Unit and integration tests
+      - name: Install FFmpeg (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install --yes ffmpeg
+      - name: Install FFmpeg (Windows)
+        if: runner.os == 'Windows'
+        run: choco install ffmpeg --yes --no-progress
+      - name: Native Go and FFmpeg integration tests
+        env:
+          OPENSYNC_INTEGRATION: '1'
         run: go test ./...
       - name: Static analysis
         run: go vet ./...
       - name: Build CLI
-        run: go build -o /tmp/opensync ./cmd/opensync
+        env:
+          CGO_ENABLED: '0'
+        run: go build ./cmd/opensync
+
+  legacy-reference:
+    name: Historical Python reference tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - name: Review packet tests
+        run: python -m unittest discover -s tests -p test_prepare_review.py
+      - name: Autonomous DSP test dependencies
+        run: python -m pip install -r internal/autosync/requirements.txt
+      - name: Historical pipeline tests
+        run: python -m unittest discover -s tests -p test_autosync.py
+      - name: Precise project and XML export tests
+        run: python -m unittest discover -s tests -p test_project_export.py
+      - name: Multilevel acoustic verification tests
+        run: python -m unittest discover -s tests -p test_refinement.py
+      - name: Timing graph and corrected audio tests
+        run: python -m unittest discover -s tests -p test_timing_graph.py
+      - name: Short recording CLI regression
+        run: python -m unittest discover -s tests -p test_short_recordings.py
+      - name: Source timecode regression
+        run: python -m unittest discover -s tests -p test_source_metadata.py
+      - name: Distributed recovery scheduling and evidence tests
+        run: python -m unittest discover -s tests -p test_distributed_recovery.py
+      - name: Acoustic arrival and motion ambiguity tests
+        run: python -m unittest discover -s tests -p test_acoustic_context.py
+
+  acceptance:
+    name: Engine acceptance (advisory until engine gaps close)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Run fixed acceptance contract
+        run: go run ./cmd/opensync benchmark --output acceptance --profile quick
+      - name: Publish acceptance status
+        if: always()
+        shell: bash
+        run: |
+          if test -f acceptance/report.json; then
+            python3 - <<'PY'
+          import json, os
+          report = json.load(open('acceptance/report.json'))
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as out:
+              out.write(f"Engine acceptance: {report['status']}\n\nRegression: **{report['regression_status']}**\n\nReadiness: **{report['readiness_status']}**\n\nThis job is advisory while known engine gaps remain. Download the full report artifact.\n")
+          PY
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: engine-acceptance-report
+          path: |
+            acceptance/report.html
+            acceptance/report.json

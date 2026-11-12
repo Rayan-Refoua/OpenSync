@@ -64,8 +64,8 @@ type Report struct {
 	Certification            string     `json:"certification"`
 }
 
-func synthMaster() []float64 {
-	rng := rand.New(rand.NewSource(22026))
+func synthMaster(seed int64) []float64 {
+	rng := rand.New(rand.NewSource(seed))
 	count := masterSeconds * rate
 	out := make([]float64, count)
 	// Irregular transient envelopes; no repeated periodic event template.
@@ -161,10 +161,16 @@ func targetOffset(a, b float64) *int64 {
 // Generate writes new self-contained 16 kHz PCM fixtures and ground truth.
 // It refuses to reuse a directory; no user audio is accessed or overwritten.
 func Generate(dir string) ([]Scenario, error) {
+	return GenerateSeed(dir, 22026)
+}
+
+// GenerateSeed varies the underlying acoustic realization, not its labels.
+// Keep development and evaluation seeds separate when tuning an engine.
+func GenerateSeed(dir string, seed int64) ([]Scenario, error) {
 	if err := os.Mkdir(dir, 0700); err != nil {
 		return nil, fmt.Errorf("benchmark directory must not exist: %w", err)
 	}
-	master := synthMaster()
+	master := synthMaster(seed)
 	files := []struct {
 		name    string
 		start   float64
