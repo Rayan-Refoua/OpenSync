@@ -7,8 +7,44 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"reflect"
+	"sync"
 	"testing"
 )
+
+func TestDistributedBucketsPreserveStatisticsAndPeaks(t *testing.T) {
+	root := t.TempDir()
+	ref, query := make([][]float64, 5), make([][]float64, 5)
+	for b := range ref {
+		ref[b] = make([]float64, 38000)
+		random := rand.New(rand.NewSource(int64(13 + b)))
+		for i := range ref[b] {
+			ref[b][i] = random.NormFloat64()
+		}
+		query[b] = append([]float64(nil), ref[b][24567:24967]...)
+	}
+	r, q := featureFixture(t, filepath.Join(root, "r.features"), 1, ref), featureFixture(t, filepath.Join(root, "q.features"), 1, query)
+	want, err := SearchDistributed(r, q, -1, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	schedule := func(n int, work func(int)) {
+		var wg sync.WaitGroup
+		slots := make(chan struct{}, 8)
+		for i := 0; i < n; i++ {
+			wg.Add(1)
+			go func(j int) { defer wg.Done(); slots <- struct{}{}; work(j); <-slots }(i)
+		}
+		wg.Wait()
+	}
+	got, err := SearchDistributedScheduled(r, q, -1, -1, schedule)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(want, got) {
+		t.Fatal("parallel buckets changed statistics or peaks")
+	}
+}
 
 func featureFixture(t *testing.T, path string, channels int, values [][]float64) *DistributedFile {
 	t.Helper()

@@ -187,6 +187,12 @@ func crossDots(ref, query []float64) ([]float64, error) {
 	}
 	return out, nil
 }
+
+// CorrelationDots exposes the shared FFT convolution primitive to the native
+// verification pipeline; callers apply their own local normalization.
+func CorrelationDots(reference, query []float64) ([]float64, error) {
+	return crossDots(reference, query)
+}
 func prefix(a []float64) ([]float64, []float64) {
 	sums := make([]float64, len(a)+1)
 	squares := make([]float64, len(a)+1)

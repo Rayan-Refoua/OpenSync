@@ -97,7 +97,8 @@ func WriteDistributed(pcm io.Reader, output io.Writer, channels int) error {
 }
 
 type DistributedFile struct {
-	file             *os.File
+	file             io.ReaderAt
+	closer           io.Closer
 	Channels, Frames int
 }
 
@@ -124,9 +125,32 @@ func OpenDistributed(path string) (*DistributedFile, error) {
 	if n <= 0 || n%stride != 0 {
 		return fail(fmt.Errorf("invalid distributed feature length"))
 	}
-	return &DistributedFile{f, c, int(n / stride)}, nil
+	return &DistributedFile{file: f, closer: f, Channels: c, Frames: int(n / stride)}, nil
 }
-func (f *DistributedFile) Close() error { return f.file.Close() }
+
+// OpenDistributedReader allows the same search to operate on run-local memory.
+func OpenDistributedReader(r io.ReaderAt, size int64) (*DistributedFile, error) {
+	var header [12]byte
+	if _, err := r.ReadAt(header[:], 0); err != nil {
+		return nil, err
+	}
+	c := int(binary.LittleEndian.Uint32(header[8:]))
+	if string(header[:8]) != featureMagic || c < 1 || c > 8 {
+		return nil, fmt.Errorf("invalid distributed feature header")
+	}
+	stride := int64(4 * c * len(distributedBands))
+	n := size - 12
+	if n <= 0 || n%stride != 0 {
+		return nil, fmt.Errorf("invalid distributed feature length")
+	}
+	return &DistributedFile{file: r, Channels: c, Frames: int(n / stride)}, nil
+}
+func (f *DistributedFile) Close() error {
+	if f.closer != nil {
+		return f.closer.Close()
+	}
+	return nil
+}
 func (f *DistributedFile) Read(first, count int) ([][]float64, error) {
 	if first < 0 || count < 1 || first+count > f.Frames || count > 30000 {
 		return nil, fmt.Errorf("feature window outside bounded range")
@@ -237,6 +261,17 @@ func distributedCorrelation(r, q []float64) ([]float64, error) {
 // preserves alternatives and partial overlaps. Scores are ranking evidence,
 // never p-values: views and adjacent offsets remain correlated.
 func SearchDistributed(ref, query *DistributedFile, omitBand, omitSection int) (DistributedResult, error) {
+	return SearchDistributedScheduled(ref, query, omitBand, omitSection, func(n int, work func(int)) {
+		for i := 0; i < n; i++ {
+			work(i)
+		}
+	})
+}
+
+// SearchDistributedScheduled splits the reference into independent buckets while
+// retaining the original tile order for statistics and peak suppression.
+// schedule must complete its leaf tasks before returning.
+func SearchDistributedScheduled(ref, query *DistributedFile, omitBand, omitSection int, schedule func(int, func(int))) (DistributedResult, error) {
 	result := DistributedResult{Version: DistributedVersion, Status: "DISCOVERY_ONLY", GridSeconds: .01, Certification: "not_assessed", Peaks: []DistributedPeak{}}
 	if query.Frames > 6000 {
 		return result, fmt.Errorf("distributed short-query stage is bounded to 60 seconds")
@@ -253,117 +288,143 @@ func SearchDistributed(ref, query *DistributedFile, omitBand, omitSection int) (
 	const tile = 12000
 	var candidates []DistributedPeak
 	backgroundCount, backgroundMean, backgroundM2 := 0, 0., 0.
-	for base := -query.Frames; base < ref.Frames; base += tile {
-		last := min(base+tile, ref.Frames)
-		rstart := max(0, base)
-		rend := min(ref.Frames, last+query.Frames)
-		if rend-rstart < 20 {
-			continue
-		}
-		r, err := ref.Read(rstart, rend-rstart)
-		if err != nil {
-			return result, err
-		}
-		curves := make([][]float64, len(sections))
-		available := make([][]bool, len(sections))
-		for si, section := range sections {
-			curves[si] = make([]float64, last-base)
-			available[si] = make([]bool, last-base)
-			if si == omitSection {
-				continue
+	type tileResult struct {
+		peaks      []DistributedPeak
+		background []float64
+		examined   int
+	}
+	tileCount := (ref.Frames + query.Frames + tile - 1) / tile
+	for batch := 0; batch < tileCount; batch += 32 {
+		count := min(32, tileCount-batch)
+		outputs := make([]tileResult, count)
+		errors := make([]error, count)
+		compute := func(index int) error {
+			base := (batch+index)*tile - query.Frames
+			output := &outputs[index]
+			last := min(base+tile, ref.Frames)
+			rstart := max(0, base)
+			rend := min(ref.Frames, last+query.Frames)
+			if rend-rstart < 20 {
+				return nil
 			}
-			bands := make([][]float64, 0, len(distributedBands))
-			for b := range distributedBands {
-				if b == omitBand || rend-rstart < section.Count {
+			r, err := ref.Read(rstart, rend-rstart)
+			if err != nil {
+				return err
+			}
+			curves := make([][]float64, len(sections))
+			available := make([][]bool, len(sections))
+			for si, section := range sections {
+				curves[si] = make([]float64, last-base)
+				available[si] = make([]bool, last-base)
+				if si == omitSection {
 					continue
 				}
-				pooled := make([]float64, rend-rstart-section.Count+1)
-				// Cross-channel pooling also tolerates channel swaps; no channel is
-				// permitted to contribute a separate corroboration vote.
-				for rc := 0; rc < ref.Channels; rc++ {
-					for qc := 0; qc < query.Channels; qc++ {
-						corr, err := distributedCorrelation(r[rc*5+b], q[qc*5+b][section.First:section.First+section.Count])
-						if err != nil {
-							return result, err
-						}
-						for i, v := range corr {
-							pooled[i] = math.Max(pooled[i], v)
+				bands := make([][]float64, 0, len(distributedBands))
+				for b := range distributedBands {
+					if b == omitBand || rend-rstart < section.Count {
+						continue
+					}
+					pooled := make([]float64, rend-rstart-section.Count+1)
+					// Cross-channel pooling also tolerates channel swaps; no channel is
+					// permitted to contribute a separate corroboration vote.
+					for rc := 0; rc < ref.Channels; rc++ {
+						for qc := 0; qc < query.Channels; qc++ {
+							corr, err := distributedCorrelation(r[rc*5+b], q[qc*5+b][section.First:section.First+section.Count])
+							if err != nil {
+								return err
+							}
+							for i, v := range corr {
+								pooled[i] = math.Max(pooled[i], v)
+							}
 						}
 					}
+					bands = append(bands, pooled)
 				}
-				bands = append(bands, pooled)
-			}
-			if len(bands) < 2 {
-				continue
-			}
-			values := make([]float64, len(bands))
-			for i := range curves[si] {
-				index := base + i + section.First - rstart
-				if index < 0 || index >= len(bands[0]) {
+				if len(bands) < 2 {
 					continue
 				}
-				available[si][i] = true
-				for b := range bands {
-					values[b] = bands[b][index]
+				values := make([]float64, len(bands))
+				for i := range curves[si] {
+					index := base + i + section.First - rstart
+					if index < 0 || index >= len(bands[0]) {
+						continue
+					}
+					available[si][i] = true
+					for b := range bands {
+						values[b] = bands[b][index]
+					}
+					sort.Float64s(values)
+					// Fixed 50th percentile rather than changing the selected order
+					// statistic when ablation or unavailable bands changes the count.
+					n := len(values)
+					curves[si][i] = (values[(n-1)/2] + values[n/2]) / 2
+				}
+			}
+			values := make([]float64, 0, len(sections))
+			all := make([]float64, last-base)
+			for i := range all {
+				values = values[:0]
+				for si := range sections {
+					if available[si][i] {
+						values = append(values, curves[si][i])
+					}
+				}
+				if len(values) < max(2, (len(sections)+1)/2) {
+					continue
 				}
 				sort.Float64s(values)
-				// Fixed 50th percentile rather than changing the selected order
-				// statistic when ablation or unavailable bands changes the count.
-				n := len(values)
-				curves[si][i] = (values[(n-1)/2] + values[n/2]) / 2
-			}
-		}
-		values := make([]float64, 0, len(sections))
-		all := make([]float64, last-base)
-		for i := range all {
-			values = values[:0]
-			for si := range sections {
-				if available[si][i] {
-					values = append(values, curves[si][i])
+				keep := max(2, (3*len(values)+3)/4)
+				score := 0.
+				for _, v := range values[len(values)-keep:] {
+					score += v
+				}
+				score /= float64(keep)
+				expected := len(sections)
+				if omitSection >= 0 {
+					expected--
+				}
+				score *= math.Sqrt(float64(len(values)) / float64(expected))
+				all[i] = score
+				output.examined++
+				if i%10 == 0 {
+					output.background = append(output.background, score)
 				}
 			}
-			if len(values) < max(2, (len(sections)+1)/2) {
-				continue
+			// Keep enough local maxima for global nonmaximum suppression, including
+			// tile boundaries; there is no search-region hint from a graph or label.
+			for i, score := range all {
+				if score <= 0 || (i > 0 && all[i-1] >= score) || (i+1 < len(all) && all[i+1] > score) {
+					continue
+				}
+				scores := make([]float64, len(sections))
+				count := 0
+				for si := range sections {
+					scores[si] = curves[si][i]
+					if available[si][i] {
+						count++
+					}
+				}
+				output.peaks = append(output.peaks, DistributedPeak{Offset: float64(base+i) * .01, Score: score, Sections: scores, Available: count})
 			}
-			sort.Float64s(values)
-			keep := max(2, (3*len(values)+3)/4)
-			score := 0.
-			for _, v := range values[len(values)-keep:] {
-				score += v
+			// Bound candidate memory even for multi-hour references.
+
+			return nil
+		}
+		schedule(count, func(i int) { errors[i] = compute(i) })
+		for i, output := range outputs {
+			if errors[i] != nil {
+				return result, errors[i]
 			}
-			score /= float64(keep)
-			expected := len(sections)
-			if omitSection >= 0 {
-				expected--
-			}
-			score *= math.Sqrt(float64(len(values)) / float64(expected))
-			all[i] = score
-			result.OffsetsExamined++
-			if i%10 == 0 {
+			result.OffsetsExamined += output.examined
+			for _, score := range output.background {
 				backgroundCount++
 				delta := score - backgroundMean
 				backgroundMean += delta / float64(backgroundCount)
 				backgroundM2 += delta * (score - backgroundMean)
 			}
+			candidates = append(candidates, output.peaks...)
+			candidates = distributedTop(candidates, 32)
 		}
-		// Keep enough local maxima for global nonmaximum suppression, including
-		// tile boundaries; there is no search-region hint from a graph or label.
-		for i, score := range all {
-			if score <= 0 || (i > 0 && all[i-1] >= score) || (i+1 < len(all) && all[i+1] > score) {
-				continue
-			}
-			scores := make([]float64, len(sections))
-			count := 0
-			for si := range sections {
-				scores[si] = curves[si][i]
-				if available[si][i] {
-					count++
-				}
-			}
-			candidates = append(candidates, DistributedPeak{Offset: float64(base+i) * .01, Score: score, Sections: scores, Available: count})
-		}
-		// Bound candidate memory even for multi-hour references.
-		candidates = distributedTop(candidates, 32)
 	}
 	sd := math.Sqrt(backgroundM2 / math.Max(1, float64(backgroundCount)))
 	result.Peaks = distributedTop(candidates, 12)

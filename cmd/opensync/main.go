@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/signal"
 	"sort"
 
 	"opensync/internal/audio"
@@ -20,29 +21,43 @@ type CacheEntry struct {
 
 func main() {
 	var err error
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
 
 	switch {
+	case len(os.Args) == 2 && os.Args[1] == "--version":
+		fmt.Println("OpenSync " + autosync.BuildVersion)
+		return
 	case len(os.Args) == 1 || (len(os.Args) == 2 && (os.Args[1] == "--help" || os.Args[1] == "-h")):
 		fmt.Println("OpenSync — automatic synchronization and editable Premiere timelines\n\n" +
 			"Synchronize files and save both the precise project and Premiere XML:\n" +
 			"  opensync sync --file-list media-files.txt --output MyProject\n" +
-			"  opensync sync --files camera.mp4 recorder.wav --output MyProject\n\n" +
+			"  opensync sync --files camera.mp4 recorder.wav --output MyProject\n" +
+			"  opensync sync --folders CameraFolder AudioFolder --output MyProject\n\n" +
 			"Export a saved project without synchronizing again:\n" +
 			"  opensync export MyProject/OpenSync.opensync --output Export\n" +
 			"  opensync export MyProject/OpenSync.opensync --output Export --unsynced separate-sequence\n\n" +
 			"Check a Premiere import round trip:\n" +
 			"  opensync audit-import Export/OpenSync.xml Premiere-roundtrip.xml --output import-audit.json\n\n" +
-			"The default unresolved-clip policy is append. Use sync --help or export --help for options.\n" +
+			"Caching is OFF by default. --cache explicitly retains analysis; --resume explicitly reuses it.\n" +
+			"Folders are scanned recursively. Originals are never copied. Unresolved clips are appended.\n" +
+			"Use sync --help or export --help for options.\n" +
 			"Research commands and benchmark remain available for development.")
 		return
-	case len(os.Args) >= 2 && (os.Args[1] == "export" || os.Args[1] == "audit-import"):
-		err = autosync.Run(context.Background(), os.Args[1:])
+	case len(os.Args) >= 2 && os.Args[1] == "export":
+		err = autosync.NativeExportCommand(os.Args[2:])
+	case len(os.Args) >= 2 && os.Args[1] == "audit-import":
+		err = autosync.Run(ctx, os.Args[1:])
 	case len(os.Args) >= 2 && os.Args[1] == "sync":
-		err = autosync.Run(context.Background(), os.Args[2:])
+		err = autosync.Run(ctx, os.Args[2:])
+	case len(os.Args) >= 2 && os.Args[1] == "native-sync":
+		err = autosync.NativeSyncCommand(ctx, os.Args[2:])
 	case len(os.Args) >= 2 && os.Args[1] == "benchmark":
 		err = benchmarkCommand(os.Args[2:])
 	case len(os.Args) >= 2 && os.Args[1] == "distributed":
 		err = distributedCommand(os.Args[2:])
+	case len(os.Args) == 4 && os.Args[1] == "native-discover":
+		err = autosync.NativeDiscoveryBenchmark(context.Background(), os.Args[2], os.Args[3], true)
 
 	case len(os.Args) == 3 && os.Args[1] == "inspect":
 		err = inspect(os.Args[2])

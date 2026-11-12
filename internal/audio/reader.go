@@ -132,6 +132,12 @@ func (r *Reader) SampleRate() int {
 	return r.sampleRate
 }
 
+// PCMStream exposes only the validated PCM payload, without the WAV header.
+// Independent streams and ReadFrames calls use ReadAt and can run concurrently.
+func (r *Reader) PCMStream() io.Reader {
+	return io.NewSectionReader(r.file, r.dataOffset, r.frames*2)
+}
+
 // ReadFrames returns exactly count PCM16 mono samples.
 // start and count are sample coordinates, never floating-point seconds.
 // Memory allocation is proportional only to the requested window.

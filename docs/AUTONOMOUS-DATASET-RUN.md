@@ -1,3 +1,15 @@
+# Runtime update — 2026-11-11
+
+Normal sync now reads originals directly, with caching OFF by default. Use
+explicit --cache to retain analysis or --resume to reuse it. Folder inputs are
+recursive. The copying, automatic reuse and approval checkpoints below are
+historical research procedures, not the current product workflow.
+
+The runtime dependency discussion below describes the historical reference
+pipeline. Public synchronization, export, and import-audit commands now run
+in native Go. See [NATIVE-GO-MIGRATION.md](NATIVE-GO-MIGRATION.md) for current
+packaging, measured performance, compatibility, and validation.
+
 # Autonomous dataset run and stage boundaries
 
 User direction, 2026-11-09: finish the engine-produced Premiere test XML,
