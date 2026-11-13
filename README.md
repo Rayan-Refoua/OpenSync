@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.svg" alt="OpenSync logo" width="260">
+</p>
+
 # OpenSync
 
 **Synchronize audio and video recordings—openly, accurately, and without locking your work into one editor.**
