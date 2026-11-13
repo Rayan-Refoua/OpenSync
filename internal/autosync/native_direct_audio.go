@@ -6,7 +6,7 @@ import (
 	"io"
 	"opensync/internal/audio"
 	"os"
-	"os/exec"
+
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -131,7 +131,7 @@ func decodedStream(ctx context.Context, r MediaRecord, first, count int64, consu
 		args = append(args, "-af", fmt.Sprintf("aresample=16000,aformat=sample_fmts=s16:channel_layouts=mono,atrim=start_sample=%d:end_sample=%d", first, first+count))
 	}
 	args = append(args, "-f", "s16le", "-")
-	cmd := exec.CommandContext(ctx, tool, args...)
+	cmd := mediaCommandContext(ctx, tool, args...)
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	pipe, err := cmd.StdoutPipe()

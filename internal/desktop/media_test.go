@@ -1,6 +1,7 @@
 package desktop
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"math"
@@ -10,6 +11,44 @@ import (
 	"path/filepath"
 	"testing"
 )
+
+func TestDelayedAudioUsesVideoTimeGrid(t *testing.T) {
+	if os.Getenv("OPENSYNC_INTEGRATION") != "1" {
+		t.Skip("FFmpeg integration")
+	}
+	path := filepath.Join(t.TempDir(), "delayed.mkv")
+	cmd, err := command(context.Background(), "-v", "error", "-f", "lavfi", "-i", "color=black:s=32x32:r=25:d=2", "-itsoffset", "0.5", "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=16000:duration=1", "-c:v", "ffv1", "-c:a", "pcm_s16le", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out, e := cmd.CombinedOutput(); e != nil {
+		t.Fatal(e, string(out))
+	}
+	for _, start := range []float64{0, .3, .7} {
+		var pcm []float32
+		err = decode(context.Background(), path, start, .6, 16000, func(b []byte) error {
+			for i := 0; i+7 < len(b); i += 8 {
+				pcm = append(pcm, sample(b[i:]))
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		first := -1
+		for i, v := range pcm {
+			if math.Abs(float64(v)) > .001 {
+				first = i
+				break
+			}
+		}
+		want := math.Max(0, .5-start)
+		got := float64(first) / 16000
+		if first < 0 || math.Abs(got-want) > .002 {
+			t.Fatalf("seek %.3f onset %.6f expected %.6f", start, got, want)
+		}
+	}
+}
 
 func testWAV(t *testing.T) string {
 	t.Helper()
@@ -80,5 +119,42 @@ func TestMediaRequestsAndAntiphaseWaveform(t *testing.T) {
 	}
 	if get(fmt.Sprintf("/media/wave?g=%d&clip=-1&level=0&tile=0", p.Generation)).Code != 400 {
 		t.Fatal("arbitrary input accepted")
+	}
+}
+
+func TestAuditionPreservesFractionalPlacementAndGaps(t *testing.T) {
+	if os.Getenv("OPENSYNC_INTEGRATION") != "1" {
+		t.Skip("FFmpeg integration")
+	}
+	path := testWAV(t)
+	s := NewService()
+	defer s.Close()
+	const offset = .123456789
+	r := autosync.MediaRecord{ID: "a", Name: "a", Duration: 1, Source: path, Audio: map[string]any{"channels": 2}}
+	r2 := r
+	r2.ID = "b"
+	p := s.SetProject(BuildProject(autosync.NativePayload{Records: []autosync.MediaRecord{r, r2}, Models: []autosync.TimeModel{{Recording: 0, Component: 1, Rate: 1, Resolved: true, Status: "supported"}, {Recording: 1, Component: 1, Offset: offset, Rate: 1, Resolved: true, Status: "supported"}}}))
+	if p.Clips[0].Track == p.Clips[1].Track {
+		t.Fatal("missing separate overlapping lanes")
+	}
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, httptest.NewRequest("GET", fmt.Sprintf("/media/audio?g=%d&start=0&duration=0.3&tracks=[1]", p.Generation), nil))
+	if w.Code != 200 {
+		t.Fatal(w.Body.String())
+	}
+	pcm := w.Body.Bytes()
+	for i := 0; i < int(math.Floor(offset*48000)); i++ {
+		if sample(pcm[i*8:]) != 0 {
+			t.Fatal("audio shifted into timeline gap", i)
+		}
+	}
+	// Compare measured samples to the known source sine, after the exact
+	// fractional placement. Tolerance allows PCM quantization/resampling.
+	for _, i := range []int{6500, 7000, 10000} {
+		want := math.Sin((float64(i)/48000-offset)*2*math.Pi*440) * 12000 / 32768
+		got := float64(sample(pcm[i*8:]))
+		if math.Abs(got-want) > .003 {
+			t.Fatalf("sample %d got %.6f want %.6f", i, got, want)
+		}
 	}
 }

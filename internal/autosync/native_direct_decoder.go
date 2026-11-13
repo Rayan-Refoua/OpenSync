@@ -75,7 +75,7 @@ func (s *directDecoder) read(ctx context.Context, r MediaRecord, first, count in
 		child, cancel := context.WithCancel(ctx)
 		s.ctx = child
 		s.cancel = cancel
-		s.command = exec.CommandContext(child, tool, "-nostdin", "-v", "error", "-threads", "1", "-i", r.Source, "-map", "0:a:0", "-vn", "-ac", "1", "-ar", "16000", "-f", "s16le", "-")
+		s.command = mediaCommandContext(child, tool, "-nostdin", "-v", "error", "-threads", "1", "-i", r.Source, "-map", "0:a:0", "-vn", "-ac", "1", "-ar", "16000", "-f", "s16le", "-")
 		s.command.Stderr = &s.stderr
 		s.output, err = s.command.StdoutPipe()
 		if err != nil {

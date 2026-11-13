@@ -7,7 +7,7 @@ import (
 	"io"
 	"opensync/internal/researchmatch"
 	"os"
-	"os/exec"
+
 	"path/filepath"
 	"sort"
 	"strings"
@@ -39,7 +39,7 @@ func distributedFeatures(ctx context.Context, source, path string) error {
 	if err != nil {
 		return err
 	}
-	command := exec.CommandContext(ctx, tool, "-nostdin", "-v", "error", "-threads", "1", "-i", source, "-map", "0:a:0", "-vn", "-ar", "8000", "-ac", "1", "-f", "f32le", "-")
+	command := mediaCommandContext(ctx, tool, "-nostdin", "-v", "error", "-threads", "1", "-i", source, "-map", "0:a:0", "-vn", "-ar", "8000", "-ac", "1", "-f", "f32le", "-")
 	var stderr strings.Builder
 	command.Stderr = &stderr
 	pipe, err := command.StdoutPipe()

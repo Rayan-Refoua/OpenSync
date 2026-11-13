@@ -1,12 +1,175 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>OpenSync</title><link rel="stylesheet" href="style.css"></head>
-<body>
-<header><div class="brand"><b>OPEN<span>SYNC</span></b><small>SYNCHRONIZATION WORKSTATION</small></div><div class="tools"><button id="open" title="Open a precise .opensync project · Ctrl+O">Open project</button><button id="add" title="Select source recordings for a new sync">Add files</button><button id="folder" title="Recursively include readable recordings in a folder">Add folder</button><button id="clear" title="Clear the input selection">Clear inputs</button><button id="sync" class="primary" title="Run the native Go engine; media caching is disabled">Synchronize</button><button id="cancel" disabled title="Cancel the current synchronization">Cancel</button></div><div id="build">NATIVE GO</div></header>
-<section class="projectbar"><strong id="projectName">No project open</strong><span id="counts">Open a project to inspect its synchronization</span><span class="legend"><i class="supported"></i>Supported <i class="validated"></i>Validated <i class="provisional"></i>Provisional <i class="unresolved"></i>Unresolved</span><button id="locate" title="Find missing originals by filename and byte size; session only">Locate media</button></section>
-<main><section id="workspace"><div class="transport"><button id="play" title="Audition selected lanes · Space">▶</button><button id="stop" title="Stop playback · Esc">■</button><output id="time" title="Timeline time; milliseconds shown without quantizing the saved timing">00:00:00.000</output><span id="playState">STOPPED</span><span class="divider"></span><button id="fit" title="Fit the entire project · F">Fit</button><button id="zoomOut" title="Zoom out · −">−</button><input id="zoom" type="range" min="-3" max="12" step="0.02" value="3" aria-label="Timeline zoom"><button id="zoomIn" title="Zoom in · +">+</button><span id="scale">—</span><label title="Display representative video frames"><input id="thumbs" type="checkbox" checked> Frames</label><label title="Follow the playhead during audition"><input id="follow" type="checkbox" checked> Follow</label><select id="fps" title="Frame-step grid only; project timing remains precise"><option value="50">50 fps</option><option value="25">25 fps</option><option value="24">24 fps</option><option value="23.976023976">23.976 fps</option><option value="29.97002997">29.97 fps</option><option value="30">30 fps</option><option value="60">60 fps</option></select></div>
-<div id="timeline"><div id="trackCorner">TRACK / AUDITION <small>up to 2 lanes</small></div><canvas id="ruler"></canvas><div id="scroller"><div id="spacer"></div></div><canvas id="canvas" tabindex="0" aria-label="Multitrack timeline; Ctrl+wheel zooms, wheel scrolls tracks, Shift+wheel pans"></canvas><div id="headers"></div><div id="playhead"><span></span></div><div id="empty"><strong>Inspect the synchronization.</strong><p>Open an existing <b>.opensync</b> project, or add recordings and synchronize.</p><p>Source waveforms and frames load only where you look.</p><small>Ctrl+O Open · Ctrl+wheel Zoom · Shift+wheel Pan · Space Play</small></div></div>
-<div class="scrollbar"><span id="visibleRange">—</span><div id="hscroll"><div></div></div></div>
-<section id="activity"><div class="paneltitle"><strong>ENGINE / MEDIA ACTIVITY</strong><span id="engineStage">Ready</span><span id="activityDetail"></span></div><div id="log" role="log" aria-live="polite"></div></section>
-</section><aside><div class="paneltitle">RECORDING INSPECTOR</div><div id="inspector"><p class="muted">Select a clip to inspect exact timing, source metadata, and synchronization evidence.</p></div><div class="paneltitle">NAVIGATION</div><dl class="shortcuts"><dt>Ctrl + wheel</dt><dd>Zoom at pointer</dd><dt>Shift + wheel</dt><dd>Pan timeline</dd><dt>Middle / Alt + drag</dt><dd>Pan freely</dd><dt>Space / Esc</dt><dd>Play / stop</dd><dt>← / →</dt><dd>Step one frame</dd><dt>Shift + ← / →</dt><dd>Step one second</dd><dt>F / + / −</dt><dd>Fit / zoom</dd><dt>Home / End</dt><dd>Timeline bounds</dd><dt>Double-click clip</dt><dd>Focus recording</dd></dl></aside></main>
-<footer><span class="statusdot"></span><span id="status">Ready</span><span id="performance">Canvas 2D</span><span id="memory">Visualization cache: 0 MB · disk cache OFF</span></footer><div id="tooltip" hidden></div><div id="toast" hidden role="alert"></div>
-<script type="module" src="app.js"></script></body></html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OpenSync</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header>
+      <div class="brand">
+        <b>OPEN<span>SYNC</span></b
+        ><small>SYNCHRONIZATION WORKSTATION</small>
+      </div>
+      <div class="tools">
+        <button id="open" title="Open a precise .opensync project · Ctrl+O">
+          Open project</button
+        ><button id="add" title="Select source recordings for a new sync">
+          Add files</button
+        ><button
+          id="folder"
+          title="Recursively include readable recordings in a folder"
+        >
+          Add folder</button
+        ><button id="clear" title="Clear the input selection">
+          Clear inputs</button
+        ><button
+          id="sync"
+          class="primary"
+          title="Run the native Go engine; media caching is disabled"
+        >
+          Synchronize</button
+        ><button
+          id="cancel"
+          disabled
+          title="Cancel the current synchronization"
+        >
+          Cancel
+        </button>
+      </div>
+      <div id="build">NATIVE GO</div>
+    </header>
+    <section class="projectbar">
+      <strong id="projectName">No project open</strong
+      ><span id="counts">Open a project to inspect its synchronization</span
+      ><span class="legend"
+        ><i class="supported"></i>Supported <i class="validated"></i>Validated
+        <i class="provisional"></i>Provisional
+        <i class="unresolved"></i>Unresolved</span
+      ><button
+        id="locate"
+        title="Find missing originals by filename and byte size; session only"
+      >
+        Locate media
+      </button>
+    </section>
+    <main>
+      <section id="workspace">
+        <div class="transport">
+          <button id="play" title="Audition selected lanes · Space">▶</button
+          ><button id="stop" title="Stop playback · Esc">■</button
+          ><output
+            id="time"
+            title="Timeline time; milliseconds shown without quantizing the saved timing"
+            >00:00:00.000</output
+          ><span id="playState">STOPPED</span><span class="divider"></span
+          ><button id="fit" title="Fit the entire project · F">Fit</button
+          ><button id="zoomOut" title="Zoom out · −">−</button
+          ><input
+            id="zoom"
+            type="range"
+            min="-3"
+            max="12"
+            step="0.02"
+            value="3"
+            aria-label="Timeline zoom"
+          /><button id="zoomIn" title="Zoom in · +">+</button
+          ><span id="scale">—</span
+          ><label title="Display representative video frames"
+            ><input id="thumbs" type="checkbox" checked /> Frames</label
+          ><label title="Follow the playhead during audition"
+            ><input id="follow" type="checkbox" checked /> Follow</label
+          ><select
+            id="fps"
+            title="Frame-step grid only; project timing remains precise"
+          >
+            <option value="50">50 fps</option>
+            <option value="25">25 fps</option>
+            <option value="24">24 fps</option>
+            <option value="23.976023976">23.976 fps</option>
+            <option value="29.97002997">29.97 fps</option>
+            <option value="30">30 fps</option>
+            <option value="60">60 fps</option>
+          </select>
+        </div>
+        <div id="timeline">
+          <div id="trackCorner">
+            TRACK / AUDITION <small>up to 2 lanes</small>
+          </div>
+          <canvas id="ruler"></canvas>
+          <div id="scroller"><div id="spacer"></div></div>
+          <canvas
+            id="canvas"
+            tabindex="0"
+            aria-label="Multitrack timeline; Ctrl+wheel zooms, wheel scrolls tracks, Shift+wheel pans"
+          ></canvas>
+          <div id="headers"></div>
+          <div id="playhead"><span></span></div>
+          <div id="empty">
+            <strong>Inspect the synchronization.</strong>
+            <p>
+              Open an existing <b>.opensync</b> project, or add recordings and
+              synchronize.
+            </p>
+            <p>Source waveforms and frames load only where you look.</p>
+            <small
+              >Ctrl+O Open · Ctrl+wheel Zoom · Shift+wheel Pan · Space
+              Play</small
+            >
+          </div>
+        </div>
+        <div class="scrollbar">
+          <span id="visibleRange">—</span>
+          <div id="hscroll"><div></div></div>
+        </div>
+        <section id="activity">
+          <div class="paneltitle">
+            <strong>ENGINE / MEDIA ACTIVITY</strong
+            ><span id="engineStage">Ready</span
+            ><span id="activityDetail"></span>
+          </div>
+          <div id="log" role="log" aria-live="polite"></div>
+        </section>
+      </section>
+      <aside>
+        <div class="paneltitle">RECORDING INSPECTOR</div>
+        <div id="inspector">
+          <p class="muted">
+            Select a clip to inspect exact timing, source metadata, and
+            synchronization evidence.
+          </p>
+        </div>
+        <div class="paneltitle">NAVIGATION</div>
+        <dl class="shortcuts">
+          <dt>Ctrl + wheel</dt>
+          <dd>Zoom at pointer</dd>
+          <dt>Shift + wheel</dt>
+          <dd>Pan timeline</dd>
+          <dt>Middle / Alt + drag</dt>
+          <dd>Pan freely</dd>
+          <dt>Space / Esc</dt>
+          <dd>Play / stop</dd>
+          <dt>← / →</dt>
+          <dd>Step one frame</dd>
+          <dt>Shift + ← / →</dt>
+          <dd>Step one second</dd>
+          <dt>F / + / −</dt>
+          <dd>Fit / zoom</dd>
+          <dt>Home / End</dt>
+          <dd>Timeline bounds</dd>
+          <dt>Double-click clip</dt>
+          <dd>Focus recording</dd>
+        </dl>
+      </aside>
+    </main>
+    <footer>
+      <span class="statusdot"></span><span id="status">Ready</span
+      ><span id="performance">Canvas 2D</span
+      ><span id="memory">Visualization cache: 0 MB · disk cache OFF</span>
+    </footer>
+    <div id="tooltip" hidden></div>
+    <div id="toast" hidden role="alert"></div>
+    <script type="module" src="app.js"></script>
+  </body>
+</html>

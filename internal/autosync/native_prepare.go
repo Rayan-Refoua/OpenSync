@@ -52,7 +52,7 @@ func runMediaTool(ctx context.Context, name string, args ...string) error {
 	if err != nil {
 		return err
 	}
-	cmd := exec.CommandContext(ctx, tool, args...)
+	cmd := mediaCommandContext(ctx, tool, args...)
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	if err = cmd.Run(); err != nil {
@@ -67,7 +67,7 @@ func probeNative(ctx context.Context, path string) (map[string]any, error) {
 	}
 	limited, cancel := context.WithTimeout(ctx, 120*time.Second)
 	defer cancel()
-	data, err := exec.CommandContext(limited, tool, "-v", "error", "-show_format", "-show_streams", "-of", "json", path).Output()
+	data, err := mediaCommandContext(limited, tool, "-v", "error", "-show_format", "-show_streams", "-of", "json", path).Output()
 	if err != nil {
 		return nil, err
 	}

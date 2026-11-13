@@ -167,7 +167,9 @@ func decode(ctx context.Context, path string, start, duration float64, rate int,
 	if duration <= 0 {
 		return nil
 	}
-	cmd, err := command(ctx, "-hide_banner", "-loglevel", "error", "-nostdin", "-threads", "1", "-ss", strconv.FormatFloat(start, 'f', 9, 64), "-i", path, "-t", strconv.FormatFloat(duration, 'f', 9, 64), "-map", "0:a:0", "-vn", "-ac", "2", "-ar", strconv.Itoa(rate), "-f", "f32le", "pipe:1")
+	// first_pts=0 retains an audio stream's delayed start as silence on the
+	// requested source-time grid instead of sliding it to the first sample.
+	cmd, err := command(ctx, "-hide_banner", "-loglevel", "error", "-nostdin", "-threads", "1", "-ss", strconv.FormatFloat(start, 'f', 9, 64), "-i", path, "-t", strconv.FormatFloat(duration, 'f', 9, 64), "-map", "0:a:0", "-vn", "-ac", "2", "-af", fmt.Sprintf("aresample=%d:async=0:first_pts=0", rate), "-ar", strconv.Itoa(rate), "-f", "f32le", "pipe:1")
 	if err != nil {
 		return err
 	}
@@ -292,17 +294,21 @@ func (s *Service) wave(ctx context.Context, r *http.Request, c Clip) ([]byte, er
 		return nil, fmt.Errorf("invalid waveform tile")
 	}
 	bin := int64(128) << level
-	start := float64(int64(tile)*bin*512) / 16000
-	if start >= c.Duration || !c.Audio {
-		return make([]byte, 512*8), nil
+	bins := 512
+	for bins > 1 && bin*int64(bins) > 16000*120 {
+		bins /= 2
 	}
-	mins, maxs := make([]float32, 512), make([]float32, 512)
+	start := float64(tile) * float64(bin) * float64(bins) / 16000
+	if start >= c.Duration || !c.Audio {
+		return make([]byte, bins*8), nil
+	}
+	mins, maxs := make([]float32, bins), make([]float32, bins)
 	var frame int64
-	duration := math.Min(float64(bin*512)/16000, c.Duration-start)
+	duration := math.Min(float64(bin*int64(bins))/16000, c.Duration-start)
 	err := decode(ctx, c.Source, start, duration, 16000, func(b []byte) error {
 		for off := 0; off+7 < len(b); off += 8 {
 			bucket := frame / bin
-			if bucket >= 512 {
+			if bucket >= int64(bins) {
 				break
 			}
 			for ch := 0; ch < 2; ch++ {
@@ -321,8 +327,8 @@ func (s *Service) wave(ctx context.Context, r *http.Request, c Clip) ([]byte, er
 	if err != nil {
 		return nil, err
 	}
-	out := make([]byte, 512*8)
-	for i := 0; i < 512; i++ {
+	out := make([]byte, bins*8)
+	for i := 0; i < bins; i++ {
 		binary.LittleEndian.PutUint32(out[i*8:], math.Float32bits(mins[i]))
 		binary.LittleEndian.PutUint32(out[i*8+4:], math.Float32bits(maxs[i]))
 	}
@@ -394,7 +400,10 @@ func (s *Service) serveAudio(ctx context.Context, w http.ResponseWriter, r *http
 				return
 			}
 			var pcm []float32
-			err := decode(ctx, c.Source, math.Max(0, a), math.Min(c.Duration-a, b-a+2./rate), rate, func(data []byte) error {
+			// Decode a guard on both sides so resampler startup/ending transients
+			// stay outside adjoining audition blocks. Keep the grid sample-aligned.
+			decodeStart := math.Max(0, math.Floor((a-.05)*rate)/rate)
+			err := decode(ctx, c.Source, decodeStart, math.Min(c.Duration-decodeStart, b-decodeStart+.05), rate, func(data []byte) error {
 				for j := 0; j+3 < len(data); j += 4 {
 					pcm = append(pcm, sample(data[j:]))
 				}
@@ -406,14 +415,15 @@ func (s *Service) serveAudio(ctx context.Context, w http.ResponseWriter, r *http
 			}
 			first, last := max(0, int(math.Ceil((lo-start)*rate-1e-7))), min(len(out)/2, int(math.Ceil((hi-start)*rate-1e-7)))
 			for j := first; j < last; j++ {
-				src := (autosync.MapTime(inv, start+float64(j)/rate) - a) * rate
+				src := (autosync.MapTime(inv, start+float64(j)/rate) - decodeStart) * rate
 				k := int(math.Floor(src))
 				f := float32(src - float64(k))
-				if k < 0 || k*2+3 >= len(pcm) {
+				if k < 0 || k*2+1 >= len(pcm) {
 					continue
 				}
+				next := min(k+1, len(pcm)/2-1)
 				for ch := 0; ch < 2; ch++ {
-					out[j*2+ch] += (pcm[k*2+ch]*(1-f) + pcm[(k+1)*2+ch]*f) / float32(len(tracks))
+					out[j*2+ch] += (pcm[k*2+ch]*(1-f) + pcm[next*2+ch]*f) / float32(len(tracks))
 				}
 			}
 		}

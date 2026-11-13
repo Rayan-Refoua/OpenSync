@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	wr "github.com/wailsapp/wails/v2/pkg/runtime"
 	"opensync/internal/autosync"
@@ -20,18 +21,22 @@ type Event struct {
 	Message string `json:"message"`
 }
 type App struct {
-	ctx           context.Context
-	media         *desktop.Service
-	mu            sync.Mutex
-	events        []Event
-	seq           int64
-	stage, detail string
-	running       bool
-	cancel        context.CancelFunc
-	inputs        []string
+	ctx               context.Context
+	media             *desktop.Service
+	mu                sync.Mutex
+	events            []Event
+	seq               int64
+	stage, detail     string
+	running           bool
+	cancel            context.CancelFunc
+	inputs            []string
+	diagnosticWritten bool
+	clipActivity      map[int]string
 }
 
-func newApp() *App { return &App{media: desktop.NewService(), stage: "Ready"} }
+func newApp() *App {
+	return &App{media: desktop.NewService(), stage: "Ready", clipActivity: map[int]string{}}
+}
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	for _, arg := range os.Args[1:] {
@@ -138,11 +143,28 @@ func (a *App) Status(after int64) map[string]any {
 		}
 	}
 	r := map[string]any{"running": a.running, "stage": a.stage, "detail": a.detail, "events": events, "inputs": len(a.inputs), "version": autosync.BuildVersion}
+	activity := map[int]string{}
+	for k, v := range a.clipActivity {
+		activity[k] = v
+	}
+	r["clipActivity"] = activity
 	a.mu.Unlock()
 	if p := a.media.Project(); p != nil {
 		r["generation"] = p.Generation
 	}
 	r["visualization"] = a.media.Stats()
+	// Opt-in hidden launch smoke test; no diagnostic file is written normally.
+	if path := os.Getenv("OPENSYNC_DESKTOP_SMOKE"); path != "" {
+		a.mu.Lock()
+		if !a.diagnosticWritten && a.media.Stats()["completed"].(int64) > 0 {
+			if data, err := json.MarshalIndent(r, "", "  "); err == nil {
+				if os.WriteFile(path, data, 0600) == nil {
+					a.diagnosticWritten = true
+				}
+			}
+		}
+		a.mu.Unlock()
+	}
 	return r
 }
 func (a *App) CancelSync() {
@@ -170,9 +192,11 @@ func (a *App) StartSync() error {
 	}
 	out := filepath.Join(root, "OpenSync-"+time.Now().Format("20060102-150405"))
 	ctx, cancel := context.WithCancel(a.ctx)
+	ctx = autosync.WithHiddenMediaWindows(ctx)
 	ctx = autosync.WithProgressObserver(ctx, a.progress)
 	a.mu.Lock()
 	a.running = true
+	a.clipActivity = map[int]string{}
 	a.cancel = cancel
 	a.stage = "Starting synchronization"
 	a.mu.Unlock()
@@ -211,6 +235,14 @@ func (a *App) StartSync() error {
 	return nil
 }
 func (a *App) progress(e autosync.ProgressEvent) {
+	if e.Kind == "pair" {
+		a.mu.Lock()
+		for _, i := range []int{e.Reference, e.Query} {
+			a.clipActivity[i] = e.Status
+		}
+		a.mu.Unlock()
+		a.log("pair", fmt.Sprintf("%s · %d/%d · recordings %d ↔ %d · %s", e.Stage, e.Completed, e.Total, e.Reference+1, e.Query+1, e.Status))
+	}
 	if e.Kind == "stage" || e.Kind == "heartbeat" {
 		a.mu.Lock()
 		a.stage = e.Stage
@@ -226,13 +258,35 @@ func (a *App) progress(e autosync.ProgressEvent) {
 	if e.Kind == "inventory" || e.Kind == "layout" {
 		payload := autosync.NativePayload{Name: "Live synchronization", Records: e.Records, Graph: map[string]any{}}
 		for _, v := range e.Layout {
+			origin := 0.
+			if r := e.Records[v.Recording]; r.Video != nil && r.Audio != nil {
+				origin = asFloat(r.Audio["start_time"]) - asFloat(r.Video["start_time"])
+			}
+			knots := append([]autosync.TimePoint(nil), v.Knots...)
+			for i := range knots {
+				knots[i][0] += origin
+			}
 			status := "provisional_live_" + v.Status
 			if strings.HasPrefix(v.Status, "unresolved") {
 				status = v.Status
 			}
-			payload.Models = append(payload.Models, autosync.TimeModel{Recording: v.Recording, Component: v.Component, ComponentSize: v.ComponentSize, Offset: v.Start, Rate: v.Rate, Error: v.Error, Status: status, Knots: v.Knots, Resolved: !strings.HasPrefix(v.Status, "unresolved")})
+			payload.Models = append(payload.Models, autosync.TimeModel{Recording: v.Recording, Component: v.Component, ComponentSize: v.ComponentSize, Offset: v.Start - v.Rate*origin, AudioOrigin: origin, Rate: v.Rate, Error: v.Error, Status: status, Knots: knots, Resolved: !strings.HasPrefix(v.Status, "unresolved")})
 		}
 		a.media.SetProject(desktop.BuildProject(payload))
 		a.log(e.Kind, fmt.Sprintf("%d recordings · %s", len(e.Records), e.Detail))
 	}
+}
+func asFloat(v any) float64 {
+	switch n := v.(type) {
+	case float64:
+		return n
+	case json.Number:
+		f, _ := n.Float64()
+		return f
+	case string:
+		var f float64
+		fmt.Sscan(n, &f)
+		return f
+	}
+	return 0
 }

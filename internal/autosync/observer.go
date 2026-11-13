@@ -13,6 +13,9 @@ type ProgressEvent struct {
 	Layout    []NativeLayout `json:"layout,omitempty"`
 	Completed int            `json:"completed,omitempty"`
 	Total     int            `json:"total,omitempty"`
+	Reference int            `json:"reference,omitempty"`
+	Query     int            `json:"query,omitempty"`
+	Status    string         `json:"status,omitempty"`
 }
 type observerKey struct{}
 

@@ -3,7 +3,7 @@
 An independent, community-driven audio/video synchronization
 application inspired by the capabilities of Red Giant PluralEyes.
 
-Status: Native Go headless engine; Premiere import acceptance pending
+Status: Native Go engine and first working desktop timeline; broader acceptance pending
 Project name: Provisional
 License: GNU GPL v3.0 or later (GPL-3.0-or-later)
 
@@ -52,6 +52,19 @@ Critical requirements:
 - docs/ARCHITECTURE.md: Architecture and open decisions
 
 ## Development
+
+The Windows desktop milestone uses Wails + vanilla JavaScript/Canvas, with
+native Go media services shared with the CLI. Build a portable folder containing
+`opensync.exe` (desktop) and `opensync-cli.exe` (headless):
+
+```powershell
+./tools/build_desktop_windows.ps1 -Output C:\OpenSync-Build
+```
+
+Open a `.opensync` project with **Open project** or pass its path to the desktop
+executable. See [desktop notes](docs/DESKTOP.md) for controls, architecture,
+measured performance and current limits. Microsoft Edge WebView2 Runtime is
+required on Windows. The root Go module remains independent of Wails.
 
 Build and test with Go 1.23 or newer. Install FFmpeg and FFprobe for media
 decoding and the integration tests. The production runtime does not require

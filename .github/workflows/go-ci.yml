@@ -15,6 +15,28 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  desktop:
+    name: Desktop Windows build and timeline tests
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: desktop/go.mod
+          cache-dependency-path: desktop/go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Timeline navigation and cache tests
+        run: node --test desktop/frontend/core.test.js
+      - name: Desktop static analysis and build
+        working-directory: desktop
+        run: |
+          go vet ./...
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go build -tags desktop,production -ldflags '-H windowsgui' -o opensync.exe .
+
   verify:
     name: Go checks
     strategy:
