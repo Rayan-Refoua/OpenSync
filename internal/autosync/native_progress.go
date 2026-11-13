@@ -1,6 +1,7 @@
 package autosync
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"time"
@@ -13,13 +14,15 @@ type nativeProgress struct {
 	done    chan struct{}
 	stopped chan struct{}
 	observe func() string
+	ctx     context.Context
 }
 
-func startNativeProgress() *nativeProgress {
-	p := &nativeProgress{done: make(chan struct{}), stopped: make(chan struct{})}
+func startNativeProgress(ctx context.Context) *nativeProgress {
+	p := &nativeProgress{done: make(chan struct{}), stopped: make(chan struct{}), ctx: ctx}
 	go func() {
 		defer close(p.stopped)
-		ticker := time.NewTicker(10 * time.Second)
+		ticker := time.NewTicker(time.Second)
+		lastPrint := time.Now()
 		defer ticker.Stop()
 		for {
 			select {
@@ -27,12 +30,16 @@ func startNativeProgress() *nativeProgress {
 				return
 			case <-ticker.C:
 				p.mu.Lock()
-				if p.stage != "" && time.Since(p.since) >= 5*time.Second {
+				if p.stage != "" {
 					detail := ""
 					if p.observe != nil {
 						detail = p.observe()
 					}
-					fmt.Printf("WORKING %s — %s elapsed%s\n", p.stage, time.Since(p.since).Round(time.Second), detail)
+					observe(p.ctx, ProgressEvent{Kind: "heartbeat", Stage: p.stage, Detail: detail, Elapsed: time.Since(p.since).Seconds()})
+					if time.Since(lastPrint) >= 10*time.Second && time.Since(p.since) >= 5*time.Second {
+						fmt.Printf("WORKING %s — %s elapsed%s\n", p.stage, time.Since(p.since).Round(time.Second), detail)
+						lastPrint = time.Now()
+					}
 				}
 				p.mu.Unlock()
 			}
@@ -46,6 +53,7 @@ func (p *nativeProgress) set(stage string) {
 	p.stage = stage
 	p.since = time.Now()
 	fmt.Printf("STAGE %s\n", stage)
+	observe(p.ctx, ProgressEvent{Kind: "stage", Stage: stage})
 }
 func (p *nativeProgress) close()                   { close(p.done); <-p.stopped }
 func (p *nativeProgress) monitor(fn func() string) { p.mu.Lock(); p.observe = fn; p.mu.Unlock() }

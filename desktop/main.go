@@ -1,0 +1,26 @@
+package main
+
+import (
+	"context"
+	"embed"
+	"fmt"
+	"github.com/wailsapp/wails/v2"
+	"github.com/wailsapp/wails/v2/pkg/options"
+	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
+	"github.com/wailsapp/wails/v2/pkg/options/windows"
+	"io/fs"
+	"os"
+)
+
+//go:embed all:frontend
+var assets embed.FS
+
+func main() {
+	a := newApp()
+	files, _ := fs.Sub(assets, "frontend")
+	err := wails.Run(&options.App{Title: "OpenSync — Synchronization workstation", Width: 1500, Height: 930, MinWidth: 1000, MinHeight: 640, BackgroundColour: options.NewRGB(19, 22, 26), AssetServer: &assetserver.Options{Assets: files, Handler: a.media}, OnStartup: a.startup, OnShutdown: func(context.Context) { a.CancelSync(); a.media.Close() }, Bind: []interface{}{a}, Windows: &windows.Options{Theme: windows.Dark}})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}

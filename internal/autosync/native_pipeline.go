@@ -176,7 +176,7 @@ func NativeSync(ctx context.Context, o NativeSyncOptions) error {
 			return err
 		}
 	}
-	progress := startNativeProgress()
+	progress := startNativeProgress(ctx)
 	if w := memoryWorkspace(ctx); w != nil {
 		progress.monitor(func() string {
 			return fmt.Sprintf(" | fingerprint buckets %d/%d active, %d done", w.indexActive.Load(), w.indexWorkers.Load(), w.indexCompleted.Load())
@@ -192,6 +192,7 @@ func NativeSync(ctx context.Context, o NativeSyncOptions) error {
 		return err
 	}
 	stages["prepare_seconds"] = time.Since(stage).Seconds()
+	observe(ctx, ProgressEvent{Kind: "inventory", Records: records, Total: len(records)})
 	if o.Stage == "cache" {
 		return writeJSON(filepath.Join(out, "native-run-profile.json"), map[string]any{"stages": stages, "total_seconds": time.Since(start).Seconds()})
 	}
@@ -266,6 +267,7 @@ func NativeSync(ctx context.Context, o NativeSyncOptions) error {
 		return err
 	}
 	stages["initial_verification_seconds"] = time.Since(stage).Seconds()
+	observe(ctx, ProgressEvent{Kind: "evidence", Stage: "Initial acoustic support", Completed: len(edges), Total: len(pairs)})
 	stage = time.Now()
 	progress.set("Searching unresolved recordings")
 	recovery, err := analyzer.recover(ctx, edges, out)
@@ -360,6 +362,7 @@ func NativeSync(ctx context.Context, o NativeSyncOptions) error {
 		return err
 	}
 	progress.set("Distributed acoustic search")
+	observe(ctx, ProgressEvent{Kind: "layout", Records: records, Layout: layout, Detail: "Preliminary timing; final graph validation pending"})
 	distributed, err := runNativeDistributed(ctx, records, layout, recovery, out, analyzer.computeTasks)
 	if err != nil {
 		return err
