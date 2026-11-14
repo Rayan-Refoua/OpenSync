@@ -11,9 +11,11 @@ import (
 	"math"
 	"net/http"
 	"opensync/internal/autosync"
+	"opensync/internal/storageio"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -22,8 +24,9 @@ import (
 )
 
 type cached struct {
-	key  string
-	data []byte
+	key       string
+	data      []byte
+	frameTime *float64
 }
 type byteCache struct {
 	mu           sync.Mutex
@@ -36,23 +39,42 @@ func newCache(limit int) *byteCache {
 	return &byteCache{entries: map[string]*list.Element{}, order: list.New(), limit: limit}
 }
 func (c *byteCache) get(k string) ([]byte, bool) {
+	v, ok := c.lookup(k)
+	return v.data, ok
+}
+func (c *byteCache) lookup(k string) (cached, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	e, ok := c.entries[k]
 	if !ok {
-		return nil, false
+		return cached{}, false
 	}
 	c.order.MoveToFront(e)
-	return e.Value.(cached).data, true
+	return e.Value.(cached), true
 }
 func (c *byteCache) put(k string, b []byte) {
+	c.putTimed(k, b, nil)
+}
+func (c *byteCache) putTimed(k string, b []byte, frameTime *float64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if _, ok := c.entries[k]; ok || len(b) > c.limit {
 		return
 	}
-	c.entries[k] = c.order.PushFront(cached{k, b})
+	c.entries[k] = c.order.PushFront(cached{k, b, frameTime})
 	c.bytes += len(b)
+	for c.bytes > c.limit {
+		e := c.order.Back()
+		v := e.Value.(cached)
+		delete(c.entries, v.key)
+		c.bytes -= len(v.data)
+		c.order.Remove(e)
+	}
+}
+func (c *byteCache) setLimit(limit int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.limit = limit
 	for c.bytes > c.limit {
 		e := c.order.Back()
 		v := e.Value.(cached)
@@ -67,7 +89,8 @@ type Service struct {
 	project                  *Project
 	generation               uint64
 	cache                    *byteCache
-	visual, playback, thumbs chan struct{}
+	peaks                    *peakStore
+	visual, playback, thumbs *mediaLimiter
 	active                   atomic.Int64
 	completed                atomic.Int64
 	ctx                      context.Context
@@ -76,7 +99,7 @@ type Service struct {
 
 func NewService() *Service {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Service{cache: newCache(64 << 20), visual: make(chan struct{}, 2), playback: make(chan struct{}, 2), thumbs: make(chan struct{}, 1), ctx: ctx, cancel: cancel}
+	return &Service{cache: newCache(16 << 20), peaks: newPeakStore(48 << 20), visual: newMediaLimiter(2), playback: newMediaLimiter(2), thumbs: newMediaLimiter(1), ctx: ctx, cancel: cancel}
 }
 func (s *Service) Close() { s.cancel() }
 func (s *Service) SetProject(p *Project) *Project {
@@ -92,9 +115,12 @@ func (s *Service) SetProject(p *Project) *Project {
 func (s *Service) Project() *Project { s.mu.RLock(); defer s.mu.RUnlock(); return s.project }
 func (s *Service) Stats() map[string]any {
 	s.cache.mu.Lock()
-	b := s.cache.bytes
+	b, limit := s.cache.bytes, s.cache.limit
 	s.cache.mu.Unlock()
-	return map[string]any{"active": s.active.Load(), "completed": s.completed.Load(), "cacheBytes": b, "cacheLimit": 64 << 20, "diskCache": false}
+	peaks, peakLimit, pending := s.peaks.stats()
+	activeWave, waveLimit := s.visual.stats()
+	activeThumb, thumbLimit := s.thumbs.stats()
+	return map[string]any{"active": s.active.Load(), "completed": s.completed.Load(), "cacheBytes": b + peaks, "cacheLimit": limit + peakLimit, "diskCache": false, "peakBytes": peaks, "peakChunksDecoded": s.peaks.decodes.Load(), "peakCacheHits": s.peaks.hits.Load(), "peakPending": pending, "waveformActive": activeWave, "waveformWorkers": waveLimit, "thumbnailActive": activeThumb, "thumbnailWorkers": thumbLimit}
 }
 
 // Relink resolves only unambiguous basename + byte-size matches. Source evidence
@@ -151,18 +177,15 @@ func command(ctx context.Context, args ...string) (*exec.Cmd, error) {
 	if e != nil {
 		return nil, fmt.Errorf("FFmpeg is required: %w", e)
 	}
+	args, e = storageio.MediaArgs(ctx, path, args)
+	if e != nil {
+		return nil, e
+	}
 	c := exec.CommandContext(ctx, path, args...)
 	hideProcess(c)
 	return c, nil
 }
-func acquire(ctx context.Context, slots chan struct{}) error {
-	select {
-	case slots <- struct{}{}:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
+func acquire(ctx context.Context, slots *mediaLimiter) error { return slots.acquire(ctx) }
 func decode(ctx context.Context, path string, start, duration float64, rate int, consume func([]byte) error) error {
 	if duration <= 0 {
 		return nil
@@ -247,44 +270,52 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	key := fmt.Sprintf("%d:%s?%s", g, r.URL.Path, r.URL.RawQuery)
 	typ := "application/octet-stream"
 	if r.URL.Path == "/media/thumb" {
-		typ = "image/jpeg"
+		typ = "image/png"
 	}
 	w.Header().Set("Content-Type", typ)
 	w.Header().Set("Cache-Control", "no-store")
-	if b, ok := s.cache.get(key); ok {
-		_, _ = w.Write(b)
+	if v, ok := s.cache.lookup(key); ok {
+		if v.frameTime != nil {
+			w.Header().Set("X-OpenSync-Frame-Time", strconv.FormatFloat(*v.frameTime, 'f', 9, 64))
+		}
+		_, _ = w.Write(v.data)
 		return
 	}
 	var b []byte
 	var err error
-	slots := s.visual
-	if r.URL.Path == "/media/thumb" {
-		slots = s.thumbs
-	}
-	if err = acquire(ctx, slots); err != nil {
-		return
-	}
-	defer func() { <-slots }()
-	s.active.Add(1)
-	defer s.active.Add(-1)
+	var frameTime *float64
 	switch r.URL.Path {
 	case "/media/wave":
-		b, err = s.wave(ctx, r, c)
+		b, err = s.wave(ctx, life, r, c)
 	case "/media/thumb":
-		b, err = s.thumbnail(ctx, r, c)
+		if err = acquire(ctx, s.thumbs); err != nil {
+			return
+		}
+		defer s.thumbs.release()
+		s.active.Add(1)
+		defer s.active.Add(-1)
+		var at float64
+		b, at, err = s.thumbnailFrame(ctx, r, c)
+		if err == nil && !math.IsNaN(at) {
+			frameTime = &at
+			w.Header().Set("X-OpenSync-Frame-Time", strconv.FormatFloat(at, 'f', 9, 64))
+		}
 	default:
 		http.NotFound(w, r)
 		return
 	}
 	if err != nil {
+		if ctx.Err() != nil {
+			return
+		}
 		http.Error(w, err.Error(), 422)
 		return
 	}
 	s.completed.Add(1)
-	s.cache.put(key, b)
+	s.cache.putTimed(key, b, frameTime)
 	_, _ = w.Write(b)
 }
-func (s *Service) wave(ctx context.Context, r *http.Request, c Clip) ([]byte, error) {
+func (s *Service) wave(ctx, life context.Context, r *http.Request, c Clip) ([]byte, error) {
 	level, e := strconv.Atoi(r.URL.Query().Get("level"))
 	if e != nil || level < 0 || level > 20 {
 		return nil, fmt.Errorf("invalid waveform level")
@@ -293,63 +324,89 @@ func (s *Service) wave(ctx context.Context, r *http.Request, c Clip) ([]byte, er
 	if e != nil || tile < 0 {
 		return nil, fmt.Errorf("invalid waveform tile")
 	}
-	bin := int64(128) << level
-	bins := 512
-	for bins > 1 && bin*int64(bins) > 16000*120 {
-		bins /= 2
-	}
-	start := float64(tile) * float64(bin) * float64(bins) / 16000
-	if start >= c.Duration || !c.Audio {
-		return make([]byte, bins*8), nil
-	}
-	mins, maxs := make([]float32, bins), make([]float32, bins)
-	var frame int64
-	duration := math.Min(float64(bin*int64(bins))/16000, c.Duration-start)
-	err := decode(ctx, c.Source, start, duration, 16000, func(b []byte) error {
-		for off := 0; off+7 < len(b); off += 8 {
-			bucket := frame / bin
-			if bucket >= int64(bins) {
-				break
-			}
-			for ch := 0; ch < 2; ch++ {
-				v := sample(b[off+ch*4:])
-				if v < mins[bucket] {
-					mins[bucket] = v
-				}
-				if v > maxs[bucket] {
-					maxs[bucket] = v
-				}
-			}
-			frame++
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	out := make([]byte, bins*8)
-	for i := 0; i < bins; i++ {
-		binary.LittleEndian.PutUint32(out[i*8:], math.Float32bits(mins[i]))
-		binary.LittleEndian.PutUint32(out[i*8+4:], math.Float32bits(maxs[i]))
-	}
-	return out, nil
+	return s.waveFromPeaks(ctx, life, c, level, tile)
 }
 func (s *Service) thumbnail(ctx context.Context, r *http.Request, c Clip) ([]byte, error) {
+	b, _, err := s.thumbnailFrame(ctx, r, c)
+	return b, err
+}
+
+var thumbnailPTS = regexp.MustCompile(`pts_time:([+-]?[0-9]+(?:\.[0-9]+)?)`)
+
+func metadataFloat(v any) float64 {
+	switch n := v.(type) {
+	case float64:
+		return n
+	case json.Number:
+		f, _ := n.Float64()
+		return f
+	case string:
+		f, _ := strconv.ParseFloat(n, 64)
+		return f
+	}
+	return 0
+}
+func metadataFPS(v any) float64 {
+	parts := strings.Split(fmt.Sprint(v), "/")
+	if len(parts) == 2 {
+		a, _ := strconv.ParseFloat(parts[0], 64)
+		b, _ := strconv.ParseFloat(parts[1], 64)
+		if b > 0 {
+			return a / b
+		}
+	}
+	return metadataFloat(v)
+}
+func (s *Service) thumbnailFrame(ctx context.Context, r *http.Request, c Clip) ([]byte, float64, error) {
 	t, e := strconv.ParseFloat(r.URL.Query().Get("time"), 64)
 	if e != nil || math.IsNaN(t) || math.IsInf(t, 0) || t < 0 || t >= c.Duration || !c.Video {
-		return nil, fmt.Errorf("invalid thumbnail time")
+		return nil, 0, fmt.Errorf("invalid thumbnail time")
 	}
-	cmd, err := command(ctx, "-hide_banner", "-loglevel", "error", "-nostdin", "-threads", "1", "-ss", fmt.Sprintf("%.6f", t), "-i", c.Source, "-frames:v", "1", "-an", "-vf", "scale=160:90:force_original_aspect_ratio=decrease,pad=160:90:(ow-iw)/2:(oh-ih)/2", "-threads", "1", "-f", "image2pipe", "-vcodec", "mjpeg", "pipe:1")
-	if err != nil {
-		return nil, err
+	end := c.Duration
+	if d := metadataFloat(c.Metadata.Video["duration"]); d > 0 {
+		end = math.Min(end, d)
 	}
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	b, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("thumbnail: %w: %.500s", err, stderr.String())
+	fps := metadataFPS(c.Metadata.Video["r_frame_rate"])
+	if fps <= 0 || math.IsNaN(fps) || math.IsInf(fps, 0) {
+		fps = 30
 	}
-	return b, nil
+	step := math.Min(.5, math.Max(.001, 1/fps))
+	t = math.Min(t, math.Max(0, end-step))
+	// Explicit RGB output avoids MJPEG's YUV range/encoder constraints and
+	// geometry surprises from odd-sized/rotated/high-bit-depth sources.
+	// A VFR recording can hold its last frame beyond that frame's PTS. Accurate
+	// input seeking then discards the last frame. Retry a bounded earlier point
+	// only when the decoder returned no frame; never conceal a decode error.
+	previous := -1.
+	for _, back := range []float64{0, step, .25, 1, 2} {
+		at := math.Max(0, t-back)
+		if at == previous {
+			continue
+		}
+		previous = at
+		cmd, err := command(ctx, "-hide_banner", "-loglevel", "info", "-nostdin", "-copyts", "-start_at_zero", "-threads", "1", "-filter_threads", "1", "-ss", fmt.Sprintf("%.9f", at), "-i", c.Source, "-frames:v", "1", "-an", "-vf", "scale=160:90:force_original_aspect_ratio=decrease:force_divisible_by=2,setsar=1,pad=160:90:(ow-iw)/2:(oh-ih)/2:color=black,format=rgb24,showinfo", "-threads", "1", "-fps_mode", "passthrough", "-f", "image2pipe", "-vcodec", "png", "pipe:1")
+		if err != nil {
+			return nil, 0, err
+		}
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		b, err := cmd.Output()
+		if err != nil {
+			detail := stderr.String()
+			if len(detail) > 1600 {
+				detail = detail[len(detail)-1600:]
+			}
+			return nil, 0, fmt.Errorf("thumbnail %s at %.6f: %w: %s", c.Name, at, err, detail)
+		}
+		if len(b) > 0 {
+			actual := math.NaN()
+			if match := thumbnailPTS.FindStringSubmatch(stderr.String()); len(match) == 2 {
+				actual, _ = strconv.ParseFloat(match[1], 64)
+			}
+			return b, actual, nil
+		}
+	}
+	return nil, 0, fmt.Errorf("no video frame available near %.6f seconds in %s", t, c.Name)
 }
 
 // Audio returns a bounded stereo float32 audition block. All selected lanes are
@@ -374,7 +431,7 @@ func (s *Service) serveAudio(ctx context.Context, w http.ResponseWriter, r *http
 	if e = acquire(ctx, s.playback); e != nil {
 		return
 	}
-	defer func() { <-s.playback }()
+	defer s.playback.release()
 	s.active.Add(1)
 	defer s.active.Add(-1)
 	const rate = 48000

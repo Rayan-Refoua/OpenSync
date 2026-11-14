@@ -2,6 +2,7 @@ package autosync
 
 import (
 	"context"
+	"opensync/internal/storageio"
 	"os/exec"
 )
 
@@ -13,7 +14,11 @@ func WithHiddenMediaWindows(ctx context.Context) context.Context {
 	return context.WithValue(ctx, hiddenMediaWindowsKey{}, true)
 }
 func mediaCommandContext(ctx context.Context, name string, args ...string) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, name, args...)
+	scheduled, err := storageio.MediaArgs(ctx, name, args)
+	cmd := exec.CommandContext(ctx, name, scheduled...)
+	if err != nil {
+		cmd.Err = err
+	}
 	if hidden, _ := ctx.Value(hiddenMediaWindowsKey{}).(bool); hidden {
 		hideMediaWindow(cmd)
 	}

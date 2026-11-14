@@ -35,6 +35,8 @@ type NativeDistributedReport struct {
 }
 
 func distributedFeatures(ctx context.Context, source, path string) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	tool, err := mediaTool("ffmpeg")
 	if err != nil {
 		return err

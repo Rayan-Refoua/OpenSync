@@ -77,7 +77,7 @@ func directFingerprintIndex(ctx context.Context, records []MediaRecord, out stri
 				}
 				digest := sha256.New()
 				var frames int64
-				direct := memoryWorkspace(ctx).audio.nativePCM(r) != nil
+				direct := memoryWorkspace(ctx).audio.nativePCMContext(ctx, r) != nil
 				err := memoryWorkspace(ctx).audio.stream(ctx, r, func(reader io.Reader) error {
 					source := io.TeeReader(reader, digest)
 					var overlap []int16

@@ -1,10 +1,12 @@
 package audio
 
 import (
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
+	"opensync/internal/storageio"
 	"os"
 )
 
@@ -18,6 +20,16 @@ type Reader struct {
 }
 
 func Open(path string) (_ *Reader, err error) {
+	return OpenContext(context.Background(), path)
+}
+
+// OpenContext schedules the header read with other reads on the source disk.
+func OpenContext(ctx context.Context, path string) (_ *Reader, err error) {
+	release, err := storageio.Acquire(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -135,13 +147,55 @@ func (r *Reader) SampleRate() int {
 // PCMStream exposes only the validated PCM payload, without the WAV header.
 // Independent streams and ReadFrames calls use ReadAt and can run concurrently.
 func (r *Reader) PCMStream() io.Reader {
-	return io.NewSectionReader(r.file, r.dataOffset, r.frames*2)
+	return io.NewSectionReader(scheduledReaderAt{context.Background(), r.file}, r.dataOffset, r.frames*2)
+}
+
+type scheduledReaderAt struct {
+	ctx  context.Context
+	file *os.File
+}
+
+func (s scheduledReaderAt) ReadAt(p []byte, off int64) (int, error) {
+	release, err := storageio.Acquire(s.ctx, s.file.Name())
+	if err != nil {
+		return 0, err
+	}
+	defer release()
+	return s.file.ReadAt(p, off)
+}
+
+// WithPCMStream owns one storage lease for the sequential pass. Its consumer
+// must not acquire another lease on this source; CPU jobs may be dispatched to
+// workers while it reads. A canceled context interrupts between reads.
+func (r *Reader) WithPCMStream(ctx context.Context, consume func(io.Reader) error) error {
+	release, err := storageio.Acquire(ctx, r.file.Name())
+	if err != nil {
+		return err
+	}
+	defer release()
+	return consume(io.NewSectionReader(contextReaderAt{ctx, r.file}, r.dataOffset, r.frames*2))
+}
+
+type contextReaderAt struct {
+	ctx  context.Context
+	file *os.File
+}
+
+func (s contextReaderAt) ReadAt(p []byte, off int64) (int, error) {
+	if err := s.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return s.file.ReadAt(p, off)
 }
 
 // ReadFrames returns exactly count PCM16 mono samples.
 // start and count are sample coordinates, never floating-point seconds.
 // Memory allocation is proportional only to the requested window.
 func (r *Reader) ReadFrames(start, count int64) ([]int16, error) {
+	return r.ReadFramesContext(context.Background(), start, count)
+}
+
+func (r *Reader) ReadFramesContext(ctx context.Context, start, count int64) ([]int16, error) {
 	if start < 0 || count < 0 ||
 		start > r.frames || count > r.frames-start {
 		return nil, ErrWindowBounds
@@ -151,7 +205,13 @@ func (r *Reader) ReadFrames(start, count int64) ([]int16, error) {
 	}
 
 	buf := make([]byte, int(count)*2)
-	if _, err := r.file.ReadAt(buf, r.dataOffset+start*2); err != nil {
+	release, err := storageio.Acquire(ctx, r.file.Name())
+	if err != nil {
+		return nil, err
+	}
+	_, err = r.file.ReadAt(buf, r.dataOffset+start*2)
+	release() // Conversion is CPU work and must not monopolize the source disk.
+	if err != nil {
 		if count == 0 && errors.Is(err, io.EOF) {
 			return []int16{}, nil
 		}

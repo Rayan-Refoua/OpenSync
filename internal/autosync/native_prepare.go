@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"opensync/internal/audio"
+	"opensync/internal/storageio"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,6 +19,10 @@ import (
 )
 
 type NativeSyncOptions struct {
+	// ManagedMemoryMiB bounds persistent in-memory analysis/audio working sets.
+	// Zero preserves the CLI's adaptive defaults; temporary DSP allocations are
+	// additionally governed by the embedding application's Go memory target.
+	ManagedMemoryMiB                                    int
 	Input                                               string
 	Sources, Files, Folders                             []string
 	FileList, Output, CacheIndex, Name, Unsynced, Stage string
@@ -48,6 +53,8 @@ func mediaTool(name string) (string, error) {
 	return exec.LookPath(name)
 }
 func runMediaTool(ctx context.Context, name string, args ...string) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	tool, err := mediaTool(name)
 	if err != nil {
 		return err
@@ -71,10 +78,14 @@ func probeNative(ctx context.Context, path string) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	return rawObject(data)
+	object, err := rawObject(data)
+	if format, ok := object["format"].(map[string]any); ok {
+		format["filename"] = path
+	}
+	return object, err
 }
 func hashFile(path string) (string, error) {
-	f, err := os.Open(path)
+	f, err := storageio.Open(context.Background(), path)
 	if err != nil {
 		return "", err
 	}

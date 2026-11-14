@@ -77,7 +77,13 @@ func NativeSync(ctx context.Context, o NativeSyncOptions) error {
 		if o.Stage != "all" {
 			return fmt.Errorf("partial analysis stages require explicit --cache; normal sync runs all stages without caching")
 		}
-		ctx = context.WithValue(ctx, workspaceKey{}, &nativeWorkspace{data: map[string][]byte{}, limit: 512 << 20, audio: newDirectAudio()})
+		workspace := &nativeWorkspace{data: map[string][]byte{}, limit: 512 << 20, audio: newDirectAudio()}
+		if o.ManagedMemoryMiB > 0 {
+			budget := int64(o.ManagedMemoryMiB) << 20
+			workspace.limit = min(workspace.limit, max(int64(16<<20), budget/8))
+			workspace.audio.limit = min(workspace.audio.limit, max(int64(32<<20), budget/2))
+		}
+		ctx = context.WithValue(ctx, workspaceKey{}, workspace)
 		defer memoryWorkspace(ctx).audio.Close()
 		fmt.Printf("MEMORY audio working-set limit %d MiB; disk cache disabled\n", memoryWorkspace(ctx).audio.limit>>20)
 	}
