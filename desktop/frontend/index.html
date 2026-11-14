@@ -5,12 +5,19 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>OpenSync</title>
     <link rel="stylesheet" href="style.css" />
+    <link rel="icon" href="brand/mark.svg" type="image/svg+xml" />
   </head>
   <body>
     <header>
       <div class="brand">
-        <b>OPEN<span>SYNC</span></b
-        ><small>SYNCHRONIZATION WORKSTATION</small>
+        <img class="brand-symbol" src="brand/mark.svg" alt="" />
+        <div>
+          <img
+            class="brand-name"
+            src="brand/wordmark.svg"
+            alt="OpenSync"
+          /><small>SYNCHRONIZATION WORKSTATION</small>
+        </div>
       </div>
       <div class="tools">
         <button id="open" title="Open a precise .opensync project · Ctrl+O">
@@ -38,7 +45,32 @@
           Cancel
         </button>
       </div>
+      <section
+        id="currentState"
+        data-tone="ready"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+      >
+        <div>
+          <strong id="stateTitle">Ready</strong
+          ><span id="stateDetail">Native Go engine</span>
+        </div>
+        <div id="stateNext">Next: add recordings or open a project</div>
+        <progress
+          id="stageProgress"
+          value="0"
+          max="10"
+          aria-label="Synchronization pipeline stage"
+        ></progress>
+      </section>
       <div id="build">NATIVE GO</div>
+      <button
+        id="settingsButton"
+        title="Resource limits and keyboard shortcuts · Ctrl+Alt+K"
+      >
+        Settings
+      </button>
     </header>
     <section class="projectbar">
       <strong id="projectName">No project open</strong
@@ -53,10 +85,36 @@
       >
         Locate media
       </button>
+      <button
+        id="outputFolder"
+        title="Open the saved project's output directory in Explorer"
+      >
+        Open output folder
+      </button>
     </section>
     <main>
       <section id="workspace">
+        <section id="monitorPanel">
+          <div class="paneltitle">
+            <strong>MULTICAMERA MONITOR</strong
+            ><span id="monitorCount">4-feed limit · common timeline clock</span
+            ><button
+              id="monitorToggle"
+              title="Collapse monitor and release its video decoders"
+            >
+              Collapse
+            </button>
+          </div>
+          <div id="cameraGrid"></div>
+        </section>
+        <div
+          id="monitorResize"
+          class="resizeHorizontal"
+          title="Resize multicamera monitor"
+        ></div>
         <div class="transport">
+          <button id="selectTool" title="Selection tool · V">V</button
+          ><button id="handTool" title="Hand tool · H">H</button>
           <button id="play" title="Audition selected lanes · Space">▶</button
           ><button id="stop" title="Stop playback · Esc">■</button
           ><output
@@ -64,8 +122,8 @@
             title="Timeline time; milliseconds shown without quantizing the saved timing"
             >00:00:00.000</output
           ><span id="playState">STOPPED</span><span class="divider"></span
-          ><button id="fit" title="Fit the entire project · F">Fit</button
-          ><button id="zoomOut" title="Zoom out · −">−</button
+          ><button id="fit" title="Fit the entire project · \">Fit</button>
+          <button id="zoomOut" title="Zoom out · −">−</button
           ><input
             id="zoom"
             type="range"
@@ -123,17 +181,37 @@
           <span id="visibleRange">—</span>
           <div id="hscroll"><div></div></div>
         </div>
+        <div
+          id="activityResize"
+          class="resizeHorizontal"
+          title="Resize diagnostics"
+        ></div>
         <section id="activity">
           <div class="paneltitle">
             <strong>ENGINE / MEDIA ACTIVITY</strong
             ><span id="engineStage">Ready</span
             ><span id="activityDetail"></span>
+            <select id="logFilter" title="Filter diagnostics by severity">
+              <option value="all">All events</option>
+              <option value="stage">Stages</option>
+              <option value="pair">Evidence</option>
+              <option value="warning">Warnings + errors</option>
+              <option value="error">Errors</option></select
+            ><button id="activityToggle" title="Collapse diagnostics">−</button>
           </div>
           <div id="log" role="log" aria-live="polite"></div>
         </section>
       </section>
-      <aside>
-        <div class="paneltitle">RECORDING INSPECTOR</div>
+      <div
+        id="inspectorResize"
+        class="resizeVertical"
+        title="Resize inspector"
+      ></div>
+      <aside id="inspectorPanel">
+        <div class="paneltitle">
+          <span>RECORDING INSPECTOR</span
+          ><button id="inspectorToggle" title="Collapse inspector">›</button>
+        </div>
         <div id="inspector">
           <p class="muted">
             Select a clip to inspect exact timing, source metadata, and
@@ -141,7 +219,7 @@
           </p>
         </div>
         <div class="paneltitle">NAVIGATION</div>
-        <dl class="shortcuts">
+        <dl class="shortcuts" id="shortcutReference">
           <dt>Ctrl + wheel</dt>
           <dd>Zoom at pointer</dd>
           <dt>Shift + wheel</dt>
@@ -167,9 +245,119 @@
       <span class="statusdot"></span><span id="status">Ready</span
       ><span id="performance">Canvas 2D</span
       ><span id="memory">Visualization cache: 0 MB · disk cache OFF</span>
+      <span id="storageState" title="Source storage policy">I/O —</span>
+      <canvas
+        id="resourceGraph"
+        width="100"
+        height="20"
+        title="OpenSync process-tree CPU history"
+      ></canvas
+      ><span
+        id="resources"
+        title="OpenSync + WebView2 + live media workers; not overall system usage"
+        >CPU — · RAM —</span
+      >
     </footer>
     <div id="tooltip" hidden></div>
     <div id="toast" hidden role="alert"></div>
+    <dialog id="settingsDialog">
+      <form id="settingsForm">
+        <h2>Workstation settings</h2>
+        <div class="settingsGrid">
+          <label
+            >Managed RAM budget (MiB)<input
+              name="memoryMiB"
+              type="number"
+              min="256"
+              max="131072"
+              required
+          /></label>
+          <label
+            >Engine CPU workers<input
+              name="workers"
+              type="number"
+              min="1"
+              required
+          /></label>
+          <label
+            >Background intensity<select name="background">
+              <option value="off">Foreground only</option>
+              <option value="low">Low</option>
+              <option value="balanced">Balanced</option>
+            </select></label
+          >
+          <label
+            >Media workers per pool<input
+              name="decodeWorkers"
+              type="number"
+              min="1"
+              max="8"
+              required
+          /></label>
+          <label
+            >Thumbnail workers<input
+              name="thumbnailWorkers"
+              type="number"
+              min="1"
+              max="4"
+              required
+          /></label>
+          <label
+            >Maximum video feeds<input
+              name="maxVideoFeeds"
+              type="number"
+              min="1"
+              max="16"
+              required
+          /></label>
+          <label
+            >Monitor position<select name="monitorPosition">
+              <option value="right">Right of timeline</option>
+              <option value="top">Above timeline</option>
+            </select></label
+          >
+          <label
+            >Monitor rows<input
+              name="monitorRows"
+              type="number"
+              min="1"
+              max="16"
+              required
+          /></label>
+          <label
+            >Monitor columns<select name="monitorColumns">
+              <option value="0">Auto (expand with active feeds)</option>
+              <option value="1">1</option>
+              <option value="2">2</option>
+              <option value="3">3</option>
+              <option value="4">4</option>
+            </select></label
+          >
+        </div>
+        <p class="muted">
+          RAM controls set hard visualization/analysis cache budgets and a soft
+          Go heap target. Browser, GPU and decoder allocations cannot be capped
+          exactly here. Video decoding prefers the native hardware-capable
+          browser pipeline; unsupported formats use bounded software previews.
+          Four feeds are the default.
+        </p>
+        <h3>
+          Keyboard shortcuts
+          <small
+            >Click a field and press a key combination. Backspace clears
+            it.</small
+          >
+        </h3>
+        <div id="shortcutSettings"></div>
+        <div class="dialogActions">
+          <button type="button" id="resetShortcuts">
+            Premiere-style defaults</button
+          ><span id="settingsError"></span
+          ><button type="button" id="closeSettings">Cancel</button
+          ><button type="submit" class="primary">Apply</button>
+        </div>
+      </form>
+    </dialog>
     <script type="module" src="app.js"></script>
   </body>
 </html>

@@ -3,39 +3,61 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	wr "github.com/wailsapp/wails/v2/pkg/runtime"
 	"opensync/internal/autosync"
 	"opensync/internal/desktop"
+	"opensync/internal/storageio"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
 )
 
 type Event struct {
-	Seq     int64  `json:"seq"`
-	Time    string `json:"time"`
-	Kind    string `json:"kind"`
-	Message string `json:"message"`
+	Seq       int64  `json:"seq"`
+	Time      string `json:"time"`
+	Kind      string `json:"kind"`
+	Message   string `json:"message"`
+	Recording *int   `json:"recording,omitempty"`
 }
 type App struct {
-	ctx               context.Context
-	media             *desktop.Service
-	mu                sync.Mutex
-	events            []Event
-	seq               int64
-	stage, detail     string
-	running           bool
-	cancel            context.CancelFunc
-	inputs            []string
-	diagnosticWritten bool
-	clipActivity      map[int]string
+	ctx                         context.Context
+	media                       *desktop.Service
+	mu                          sync.Mutex
+	events                      []Event
+	seq                         int64
+	stage, detail               string
+	running                     bool
+	cancel                      context.CancelFunc
+	inputs                      []string
+	diagnosticWritten           bool
+	clipActivity                map[int]string
+	settings                    WorkstationSettings
+	resources                   *desktop.ResourceMonitor
+	stageStarted                time.Time
+	outcome                     string
+	stageCompleted, stageTotal  int
+	previewActive, previewReady int
+}
+
+// Opt-in smoke instrumentation does not run or write files in ordinary use.
+func (a *App) ReportPreviewState(active, ready int) {
+	if os.Getenv("OPENSYNC_DESKTOP_SMOKE") == "" || active < 0 || active > 16 || ready < 0 || ready > active {
+		return
+	}
+	a.mu.Lock()
+	a.previewActive, a.previewReady = active, ready
+	a.mu.Unlock()
 }
 
 func newApp() *App {
-	return &App{media: desktop.NewService(), stage: "Ready", clipActivity: map[int]string{}}
+	a := &App{media: desktop.NewService(), stage: "Ready", clipActivity: map[int]string{}, resources: desktop.NewResourceMonitor(), stageStarted: time.Now()}
+	a.loadSettings()
+	return a
 }
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
@@ -49,10 +71,13 @@ func (a *App) startup(ctx context.Context) {
 	}
 }
 func (a *App) log(kind, message string) {
+	a.logRecording(kind, message, nil)
+}
+func (a *App) logRecording(kind, message string, recording *int) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.seq++
-	a.events = append(a.events, Event{a.seq, time.Now().Format("15:04:05"), kind, message})
+	a.events = append(a.events, Event{Seq: a.seq, Time: time.Now().Format("15:04:05"), Kind: kind, Message: message, Recording: recording})
 	if len(a.events) > 256 {
 		a.events = a.events[len(a.events)-256:]
 	}
@@ -70,6 +95,11 @@ func (a *App) OpenProject(path string) (*desktop.Project, error) {
 		return nil, e
 	}
 	a.media.SetProject(p)
+	a.mu.Lock()
+	a.outcome = "ready"
+	a.stage = "Project ready"
+	a.detail = ""
+	a.mu.Unlock()
 	a.log("project", fmt.Sprintf("Opened %s · %d recordings · project integrity verified", p.Name, len(p.Clips)))
 	return p, nil
 }
@@ -148,15 +178,23 @@ func (a *App) Status(after int64) map[string]any {
 		activity[k] = v
 	}
 	r["clipActivity"] = activity
+	r["stageSeconds"] = time.Since(a.stageStarted).Seconds()
+	r["outcome"] = a.outcome
+	r["stageCompleted"], r["stageTotal"] = a.stageCompleted, a.stageTotal
 	a.mu.Unlock()
 	if p := a.media.Project(); p != nil {
 		r["generation"] = p.Generation
 	}
 	r["visualization"] = a.media.Stats()
+	r["resources"] = a.resources.Sample()
+	r["storage"] = storageio.Snapshot()
+	r["storageVolumes"] = storageio.CachedVolumes()
 	// Opt-in hidden launch smoke test; no diagnostic file is written normally.
 	if path := os.Getenv("OPENSYNC_DESKTOP_SMOKE"); path != "" {
+		r["diagnostic"] = true
 		a.mu.Lock()
-		if !a.diagnosticWritten && a.media.Stats()["completed"].(int64) > 0 {
+		r["previewActive"], r["previewReady"] = a.previewActive, a.previewReady
+		if !a.diagnosticWritten && a.previewActive > 0 && a.previewReady == a.previewActive && a.media.Stats()["completed"].(int64) > 0 {
 			if data, err := json.MarshalIndent(r, "", "  "); err == nil {
 				if os.WriteFile(path, data, 0600) == nil {
 					a.diagnosticWritten = true
@@ -195,15 +233,26 @@ func (a *App) StartSync() error {
 	ctx = autosync.WithHiddenMediaWindows(ctx)
 	ctx = autosync.WithProgressObserver(ctx, a.progress)
 	a.mu.Lock()
+	if a.running {
+		a.mu.Unlock()
+		cancel()
+		return fmt.Errorf("sync is already running")
+	}
 	a.running = true
+	a.outcome = "running"
+	a.stageStarted = time.Now()
+	a.stageCompleted, a.stageTotal = 0, 0
 	a.clipActivity = map[int]string{}
 	a.cancel = cancel
 	a.stage = "Starting synchronization"
 	a.mu.Unlock()
 	a.log("sync", "Native Go synchronization started · disk cache disabled · "+out)
+	settings := a.GetSettings()
 	go func() {
+		prior := runtime.GOMAXPROCS(settings.Resources.Workers)
 		defer cancel()
 		o := autosync.NativeSyncOptions{Output: out, Name: "OpenSync", Stage: "all", Unsynced: "append", MaxResidualMS: 150}
+		o.ManagedMemoryMiB = settings.Resources.MemoryMiB
 		for _, p := range paths {
 			if st, e := os.Stat(p); e == nil && st.IsDir() {
 				o.Folders = append(o.Folders, p)
@@ -212,14 +261,21 @@ func (a *App) StartSync() error {
 			}
 		}
 		err := autosync.NativeSync(ctx, o)
+		runtime.GOMAXPROCS(prior)
 		a.mu.Lock()
 		a.running = false
 		a.cancel = nil
 		a.detail = ""
 		if err != nil {
 			a.stage = "Sync stopped"
+			a.outcome = "failed"
+			if errors.Is(err, context.Canceled) {
+				a.outcome = "cancelled"
+			}
+			a.detail = err.Error()
 		} else {
 			a.stage = "Sync complete"
+			a.outcome = "complete"
 		}
 		a.mu.Unlock()
 		if err != nil {
@@ -227,8 +283,16 @@ func (a *App) StartSync() error {
 			return
 		}
 		if _, err = a.OpenProject(filepath.Join(out, "OpenSync.opensync")); err != nil {
+			a.mu.Lock()
+			a.outcome = "failed"
+			a.detail = "Saved project could not be reopened: " + err.Error()
+			a.mu.Unlock()
 			a.log("error", err.Error())
 		} else {
+			a.mu.Lock()
+			a.outcome = "complete"
+			a.stage = "Sync complete"
+			a.mu.Unlock()
 			a.log("complete", "Project and Premiere XML saved in "+out)
 		}
 	}()
@@ -237,11 +301,13 @@ func (a *App) StartSync() error {
 func (a *App) progress(e autosync.ProgressEvent) {
 	if e.Kind == "pair" {
 		a.mu.Lock()
+		a.stageCompleted, a.stageTotal = e.Completed, e.Total
 		for _, i := range []int{e.Reference, e.Query} {
 			a.clipActivity[i] = e.Status
 		}
 		a.mu.Unlock()
-		a.log("pair", fmt.Sprintf("%s · %d/%d · recordings %d ↔ %d · %s", e.Stage, e.Completed, e.Total, e.Reference+1, e.Query+1, e.Status))
+		i := e.Query
+		a.logRecording("pair", fmt.Sprintf("%s · %d/%d · recordings %d ↔ %d · %s", e.Stage, e.Completed, e.Total, e.Reference+1, e.Query+1, e.Status), &i)
 	}
 	if e.Kind == "stage" || e.Kind == "heartbeat" {
 		a.mu.Lock()
@@ -250,6 +316,10 @@ func (a *App) progress(e autosync.ProgressEvent) {
 		a.mu.Unlock()
 	}
 	if e.Kind == "stage" {
+		a.mu.Lock()
+		a.stageStarted = time.Now()
+		a.stageCompleted, a.stageTotal = 0, 0
+		a.mu.Unlock()
 		a.log("stage", e.Stage)
 	}
 	if e.Kind == "evidence" {

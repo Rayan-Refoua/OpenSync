@@ -29,11 +29,13 @@ jobs:
         with:
           node-version: '22'
       - name: Timeline navigation and cache tests
-        run: node --test desktop/frontend/core.test.js
+        run: node --test desktop/frontend/core.test.js desktop/frontend/monitor.test.js desktop/frontend/status.test.js
       - name: Desktop static analysis and build
         working-directory: desktop
         run: |
           go vet ./...
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go run ./tools/winresources
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           go build -tags desktop,production -ldflags '-H windowsgui' -o opensync.exe .
 

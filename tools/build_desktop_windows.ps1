@@ -12,7 +12,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'CLI build failed' }
     Push-Location -LiteralPath (Join-Path $repository 'desktop')
     try {
-        go run github.com/akavel/rsrc@v0.10.2 -arch amd64 -manifest app.manifest -o rsrc_windows_amd64.syso
+        go run ./tools/winresources
         if ($LASTEXITCODE -ne 0) { throw 'Windows manifest build failed' }
         go build -trimpath -tags desktop,production -ldflags '-H windowsgui' -o (Join-Path $destination 'opensync.exe') .
         if ($LASTEXITCODE -ne 0) { throw 'Desktop build failed' }

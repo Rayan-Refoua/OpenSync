@@ -1,3 +1,5 @@
+import { setupWorkstation } from "./workstation.js";
+import { placementLabel } from "./status.js";
 import {
   HEADER,
   ROW,
@@ -54,9 +56,27 @@ function message(text, error = false) {
     toastTimer = setTimeout(() => ($("toast").hidden = true), 12000);
   }
 }
-function log(kind, text, time = new Date().toLocaleTimeString()) {
+function log(
+  kind,
+  text,
+  time = new Date().toLocaleTimeString(),
+  recording = null,
+) {
   const row = document.createElement("div");
   row.className = kind === "error" ? "error" : "";
+  row.dataset.kind = kind;
+  if (recording !== null) {
+    row.classList.add("recording-event");
+    row.title = "Locate this recording on the timeline";
+    row.onclick = () => {
+      const c = state.project?.clips[recording];
+      if (c) {
+        inspect(c);
+        pan(c.start);
+        $("scroller").scrollTop = c.track * ROW;
+      }
+    };
+  }
   const stamp = document.createElement("span");
   stamp.className = "stamp";
   stamp.textContent = time;
@@ -189,8 +209,20 @@ function setProject(p, fitView = true) {
   hint.textContent =
     "Select a recording to inspect precise timing and evidence.";
   $("inspector").append(hint);
-  if (fitView) fit();
-  else pan(state.left);
+  // Measure after inserting the project, before computing fit. Also refit once
+  // the browser has applied panel layout; no manual window resize is required.
+  resize();
+  if (fitView) {
+    fit();
+    const fittedScale = state.pps;
+    requestAnimationFrame(() => {
+      if (state.project === p) {
+        const unchanged = state.pps === fittedScale;
+        resize();
+        if (unchanged) fit();
+      }
+    });
+  } else pan(state.left);
   seek(0, false);
   requestDraw();
 }
@@ -270,18 +302,25 @@ function drawClip(c, row) {
     height = ROW - 10;
   if (width <= 0) return;
   const [fill, ink] = colors[c.state] || colors.provisional;
-  ctx.save();
-  ctx.beginPath();
-  ctx.rect(x, y, width, height);
-  ctx.clip();
+  // At overview scale a clip may occupy only two pixels. Its waveform and
+  // status remain visible; expensive text clipping has no useful pixels there.
+  const clipped = width > 24;
+  if (clipped) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x, y, width, height);
+    ctx.clip();
+  }
   ctx.fillStyle = c.missing ? "#342f35" : fill;
   ctx.fillRect(x, y, width, height);
   ctx.fillStyle = "#ffffff08";
   ctx.fillRect(x, y, width, 21);
   ctx.fillStyle = ink;
-  ctx.font = "11px Segoe UI,sans-serif";
-  ctx.fillText(c.name, x + 6, y + 14);
-  ctx.font = "9px Consolas,monospace";
+  if (clipped) {
+    ctx.font = "11px Segoe UI,sans-serif";
+    ctx.fillText(c.name, x + 6, y + 14);
+    ctx.font = "9px Consolas,monospace";
+  }
   if (width > 170) {
     const label = c.missing ? "MISSING SOURCE" : c.state.toUpperCase();
     const tw = ctx.measureText(label).width;
@@ -360,7 +399,12 @@ function drawClip(c, row) {
       tile++
     ) {
       const key = `${state.generation}:${c.index}:wave:${level}:${tile}`,
-        data = waves.get(key, url("wave", { clip: c.index, level, tile }));
+        data = waves.get(
+          key,
+          waves.cache.has(key)
+            ? ""
+            : url("wave", { clip: c.index, level, tile }),
+        );
       if (!data) continue;
       if (data.error) {
         failed = data.error;
@@ -376,14 +420,14 @@ function drawClip(c, row) {
         last = clamp(Math.ceil((sourceHi - tile * span) / bin), 0, bins);
       for (let i = first; i < last; i++) {
         const t = tile * span + i * bin,
-          px = (mapTime(c.mapping, t) - state.left) * state.pps;
+          px = clamp((mapTime(c.mapping, t) - state.left) * state.pps, x, end);
         ctx.moveTo(px, mid - data[i * 2 + 1] * waveH * 0.46);
         ctx.lineTo(px, mid - data[i * 2] * waveH * 0.46);
       }
       ctx.stroke();
     }
   }
-  if (c.missing || failed || (!loaded && c.audio)) {
+  if (width > 70 && (c.missing || failed || (!loaded && c.audio))) {
     ctx.fillStyle = "#b6bfc9";
     ctx.font = "10px Consolas,monospace";
     ctx.fillText(
@@ -396,7 +440,7 @@ function drawClip(c, row) {
       mid + 4,
     );
   }
-  if (!c.audio) {
+  if (!c.audio && width > 70) {
     ctx.fillStyle = "#aab7c3";
     ctx.fillText("No audio stream", x + 7, mid + 4);
   }
@@ -405,7 +449,7 @@ function drawClip(c, row) {
     ctx.font = "9px Consolas,monospace";
     ctx.fillText(c.activity, x + 7, y + height - 3);
   }
-  ctx.restore();
+  if (clipped) ctx.restore();
   ctx.strokeStyle = state.selected === c.index ? "#e3eff6" : ink;
   ctx.globalAlpha = state.selected === c.index ? 1 : 0.55;
   ctx.lineWidth = state.selected === c.index ? 2 : 1;
@@ -492,7 +536,8 @@ function inspect(c) {
   title.textContent = c.name;
   const badge = document.createElement("span");
   badge.className = "badge";
-  badge.textContent = c.status;
+  badge.textContent = placementLabel(c);
+  badge.title = c.status;
   el.append(title, badge);
   const dl = document.createElement("dl");
   for (const [k, v] of [
@@ -504,6 +549,7 @@ function inspect(c) {
     ["Fit residual", `${(c.residual * 1000).toFixed(3)} ms`],
     ["Component", c.component],
     ["Timing knots", c.mapping.length],
+    ["Engine status", c.status],
     ["Media", c.missing ? "OFFLINE" : c.video ? "Video + audio" : "Audio"],
     ["Source frames", c.metadata.video?.avg_frame_rate || "—"],
     [
@@ -525,7 +571,9 @@ function inspect(c) {
   note.textContent =
     c.state === "unresolved"
       ? "This component has no established placement relative to the main group. It is preserved at the timeline end."
-      : "Placement follows acoustic arrival time. Physical capture-time alignment is not independently established.";
+      : c.state === "supported"
+        ? "The engine found consistent acoustic evidence for this placement. This is a completed synchronization result, not independent certification of physical capture time. Sound travel in a large venue can introduce a camera-dependent delay."
+        : "Placement follows acoustic arrival time. Physical capture-time alignment is not independently established.";
   el.append(note);
   const evidence = (state.project.evidence || []).filter(
     (e) => e.reference === c.index || e.query === c.index,
@@ -566,12 +614,13 @@ let audioCtx = null,
   nextTime = 0,
   scheduledEnd = 0,
   pumping = false,
+  playRate = 1,
   playController = null,
   sources = new Set();
 function stopPlayback() {
   if (playing && audioCtx)
     state.playhead = clamp(
-      baseTime + Math.max(0, audioCtx.currentTime - baseClock),
+      baseTime + Math.max(0, audioCtx.currentTime - baseClock) * playRate,
       0,
       state.project?.duration || 0,
     );
@@ -590,16 +639,14 @@ function stopPlayback() {
   $("playState").textContent = "STOPPED";
   updatePlayhead();
 }
-async function startPlayback() {
-  if (!state.project || !state.tracks.size) {
-    message(
-      "Enable one or two audition lanes using their ON / OFF buttons.",
-      true,
-    );
-    return;
-  }
-  if (state.playhead >= state.project.duration) state.playhead = 0;
+async function startPlayback(speed = 1) {
+  if (!state.project) return;
   stopPlayback();
+  playRate = clamp(speed, -4, 4) || 1;
+  if (playRate > 0 && state.playhead >= state.project.duration)
+    state.playhead = 0;
+  if (playRate < 0 && state.playhead <= 0)
+    state.playhead = state.project.duration;
   const token = ++playToken;
   playController = new AbortController();
   buffering = true;
@@ -610,12 +657,19 @@ async function startPlayback() {
   nextTime = baseTime;
   scheduledEnd = 0;
   try {
+    await workstation.monitor.prepare(
+      baseTime,
+      playRate,
+      playController.signal,
+    );
+    if (token !== playToken) return;
     await pumpAudio(token, true);
     if (token !== playToken) return;
     playing = true;
     buffering = false;
     $("play").textContent = "Ⅱ";
-    $("playState").textContent = "PLAYING";
+    $("playState").textContent =
+      playRate === 1 ? "PLAYING" : `PLAY ${playRate}×`;
     requestAnimationFrame(playTick);
   } catch (e) {
     if (token === playToken) {
@@ -630,42 +684,53 @@ async function pumpAudio(token, first = false) {
   try {
     while (
       token === playToken &&
-      nextTime < state.project.duration &&
+      (playRate > 0 ? nextTime < state.project.duration : nextTime > 0) &&
       (first || scheduledEnd - audioCtx.currentTime < 5)
     ) {
-      const duration = Math.min(4, state.project.duration - nextTime),
-        at = nextTime;
-      const bytes = await fetchBytes(
-        url("audio", {
-          start: at.toFixed(9),
-          duration: duration.toFixed(9),
-          tracks: JSON.stringify([...state.tracks]),
-        }),
-        playController.signal,
-      );
+      const duration = Math.min(
+          4,
+          playRate > 0 ? state.project.duration - nextTime : nextTime,
+        ),
+        at = playRate > 0 ? nextTime : nextTime - duration;
+      const bytes = state.tracks.size
+        ? await fetchBytes(
+            url("audio", {
+              start: at.toFixed(9),
+              duration: duration.toFixed(9),
+              tracks: JSON.stringify([...state.tracks]),
+            }),
+            playController.signal,
+          )
+        : new ArrayBuffer(Math.round(duration * 48000) * 2 * 4);
       if (token !== playToken) return;
       const data = new Float32Array(bytes),
         buffer = audioCtx.createBuffer(2, data.length / 2, 48000);
       for (let ch = 0; ch < 2; ch++) {
         const dest = buffer.getChannelData(ch);
-        for (let i = 0; i < dest.length; i++) dest[i] = data[i * 2 + ch];
+        for (let i = 0; i < dest.length; i++)
+          dest[i] = data[(playRate < 0 ? dest.length - 1 - i : i) * 2 + ch];
       }
       if (first) {
         baseClock = audioCtx.currentTime + 0.08;
         first = false;
-      } else if (baseClock + (at - baseTime) < audioCtx.currentTime + 0.005)
+      } else if (
+        baseClock + Math.abs(nextTime - baseTime) / Math.abs(playRate) <
+        audioCtx.currentTime + 0.005
+      )
         throw Error(
           "Audio decode could not keep up. Audition stopped to preserve synchronization; retry closer to the region of interest.",
         );
       const source = audioCtx.createBufferSource();
       source.buffer = buffer;
+      source.playbackRate.value = Math.abs(playRate);
       source.connect(audioCtx.destination);
       sources.add(source);
       source.onended = () => sources.delete(source);
-      const when = baseClock + (at - baseTime);
+      const when =
+        baseClock + Math.abs(nextTime - baseTime) / Math.abs(playRate);
       source.start(when);
-      scheduledEnd = when + buffer.duration;
-      nextTime += duration;
+      scheduledEnd = when + buffer.duration / Math.abs(playRate);
+      nextTime += duration * Math.sign(playRate);
       // Schedule the first block immediately; continue filling asynchronously.
       if (buffering) return;
     }
@@ -676,11 +741,15 @@ async function pumpAudio(token, first = false) {
 function playTick() {
   if (!playing) return;
   state.playhead = clamp(
-    baseTime + audioCtx.currentTime - baseClock,
+    baseTime + Math.max(0, audioCtx.currentTime - baseClock) * playRate,
     0,
     state.project.duration,
   );
-  if (state.playhead >= state.project.duration) {
+  if (
+    playRate > 0
+      ? state.playhead >= state.project.duration
+      : state.playhead <= 0
+  ) {
     stopPlayback();
     return;
   }
@@ -706,12 +775,13 @@ function seek(t, restart = true) {
   state.playhead = clamp(t, 0, state.project?.duration || 0);
   updatePlayhead();
   clearTimeout(seekTimer);
-  if (resume) seekTimer = setTimeout(() => action(startPlayback), 50);
+  if (resume)
+    seekTimer = setTimeout(() => action(() => startPlayback(playRate)), 50);
 }
 
 canvas.addEventListener("pointerdown", (e) => {
   canvas.focus();
-  if (e.button === 1 || e.altKey) {
+  if (e.button === 1 || e.altKey || state.hand) {
     drag = {
       x: e.clientX,
       y: e.clientY,
@@ -755,11 +825,41 @@ canvas.addEventListener("dblclick", (e) => {
     pan(c.start - 30 / state.pps);
   }
 });
-ruler.addEventListener("pointerdown", (e) =>
-  seek(
-    state.left + (e.clientX - ruler.getBoundingClientRect().left) / state.pps,
-  ),
-);
+for (const handle of [ruler, $("playhead")]) {
+  handle.title = "Drag to scrub the timeline";
+  handle.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0 || !state.project) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const resume = playing || buffering,
+      speed = playRate;
+    clearTimeout(seekTimer);
+    stopPlayback();
+    handle.setPointerCapture(e.pointerId);
+    const move = (ev) => {
+      state.playhead = clamp(
+        state.left +
+          (ev.clientX - ruler.getBoundingClientRect().left) / state.pps,
+        0,
+        state.project.duration,
+      );
+      updatePlayhead();
+    };
+    const end = (ev) => {
+      if (ev.type === "pointerup") move(ev);
+      handle.removeEventListener("pointermove", move);
+      handle.removeEventListener("pointerup", end);
+      handle.removeEventListener("pointercancel", end);
+      if (handle.hasPointerCapture(e.pointerId))
+        handle.releasePointerCapture(e.pointerId);
+      if (resume && ev.type === "pointerup") action(() => startPlayback(speed));
+    };
+    handle.addEventListener("pointermove", move);
+    handle.addEventListener("pointerup", end);
+    handle.addEventListener("pointercancel", end);
+    move(e);
+  });
+}
 $("timeline").addEventListener(
   "wheel",
   (e) => {
@@ -805,45 +905,6 @@ $("zoomIn").onclick = () => zoom(state.pps * 1.5);
 $("zoomOut").onclick = () => zoom(state.pps / 1.5);
 $("zoom").oninput = (e) => zoom(2 ** Number(e.target.value));
 $("thumbs").onchange = requestDraw;
-document.addEventListener("keydown", (e) => {
-  if (e.target.matches("input,select,textarea")) return;
-  const key = e.key.toLowerCase();
-  if ((e.ctrlKey || e.metaKey) && key === "o") {
-    e.preventDefault();
-    $("open").click();
-    return;
-  }
-  if (
-    [
-      " ",
-      "arrowleft",
-      "arrowright",
-      "home",
-      "end",
-      "+",
-      "-",
-      "=",
-      "f",
-      "escape",
-    ].includes(key)
-  )
-    e.preventDefault();
-  if (key === " ") $("play").click();
-  else if (key === "escape") {
-    stopPlayback();
-    $("toast").hidden = true;
-  } else if (key === "f") fit();
-  else if (key === "+" || key === "=") zoom(state.pps * 1.5);
-  else if (key === "-") zoom(state.pps / 1.5);
-  else if (key === "arrowleft" || key === "arrowright")
-    seek(
-      state.playhead +
-        (key === "arrowleft" ? -1 : 1) *
-          (e.shiftKey ? 1 : 1 / Number($("fps").value)),
-    );
-  else if (key === "home") seek(0);
-  else if (key === "end") seek(state.project?.duration || 0);
-});
 let polling = false;
 async function poll() {
   if (polling || !api()) return;
@@ -852,7 +913,7 @@ async function poll() {
     const s = await api().Status(state.lastSeq);
     for (const e of s.events) {
       state.lastSeq = Math.max(state.lastSeq, e.seq);
-      log(e.kind, e.message, e.time);
+      log(e.kind, e.message, e.time, e.recording ?? null);
     }
     $("engineStage").textContent = s.stage;
     $("activityDetail").textContent = s.detail;
@@ -892,18 +953,41 @@ async function poll() {
       log("error", thumbs.lastError);
       thumbs.lastError = null;
     }
+    workstation.status(s);
   } catch (e) {
     message(String(e.message || e), true);
   } finally {
     polling = false;
   }
 }
+const workstation = setupWorkstation({
+  state,
+  api,
+  action,
+  message,
+  inspect,
+  pan,
+  zoom,
+  fit,
+  seek,
+  waves,
+  thumbs,
+  play: startPlayback,
+  stop: stopPlayback,
+  togglePlay: () =>
+    playing || buffering ? stopPlayback() : action(() => startPlayback()),
+  transport: () => ({
+    playing: playing && audioCtx.currentTime >= baseClock,
+    rate: playRate,
+  }),
+});
 setInterval(poll, 750);
 poll();
 resize();
 // Explicit test surface, independent of native UI automation. Used only by the
 // development harness to inject fixtures and measure actual Canvas rendering.
 export const testAPI = {
+  workstation,
   inspect,
   setProject,
   state,

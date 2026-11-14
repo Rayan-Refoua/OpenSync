@@ -23,11 +23,12 @@ page.on("pageerror", (e) => errors.push(e.message));
 await page.goto(base + "/?test=1");
 await page.waitForFunction(() => window.opensyncTest);
 const project = await (await fetch(base + "/test/project")).json();
-await page.evaluate((p) => window.opensyncTest.setProject(p), project);
+await page.evaluate((p) => {
+  window.opensyncTest.workstation.monitor.enabled = false;
+  window.opensyncTest.setProject(p);
+}, project);
 // Start at an overlapping region of the actual project, not a fabricated UI.
-const focus = project.clips.find(
-  (c) => c.state === "supported" && c.audio && !c.missing,
-);
+const focus = project.clips.find((c) => c.audio && !c.missing);
 assert.ok(focus, "real source project unavailable");
 await page.evaluate((start) => {
   const t = window.opensyncTest;
@@ -56,7 +57,7 @@ for (const v of samples) {
 assert.ok(peak > 0.00001, "real audition block is silent");
 await page.evaluate(async () => {
   const t = window.opensyncTest;
-  t.seek(t.state.project.clips.find((c) => c.state === "supported").start + 2);
+  t.seek(t.state.project.clips.find((c) => c.audio).start + 2);
   await t.startPlayback();
 });
 await page.waitForFunction(

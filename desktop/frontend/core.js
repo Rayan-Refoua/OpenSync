@@ -101,6 +101,7 @@ export class TileCache {
     this.pump();
   }
   pump() {
+    if(this.suspended)return;
     let n = [...this.pending.values()].filter((v) => v.controller).length;
     for (const v of this.pending.values()) {
       if (n >= this.concurrency) break;

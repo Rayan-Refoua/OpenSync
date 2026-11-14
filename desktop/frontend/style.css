@@ -1,4 +1,6 @@
 :root {
+  --monitor-height: 40vh;
+  --inspector-width: 284px;
   color-scheme: dark;
   --bg: #13161a;
   --panel: #1b1f24;
@@ -68,12 +70,20 @@ header {
   border-bottom: 1px solid var(--line);
   background: #1b2026;
 }
-.brand b {
-  font-size: 19px;
-  letter-spacing: 1.7px;
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-shrink: 0;
 }
-.brand b span {
-  color: var(--accent);
+.brand-symbol {
+  width: 38px;
+  height: 38px;
+}
+.brand-name {
+  width: 122px;
+  height: 25px;
+  display: block;
 }
 .brand small {
   display: block;
@@ -427,11 +437,324 @@ main {
   color: #df9983;
 }
 aside {
-  width: 284px;
-  min-width: 284px;
+  width: var(--inspector-width);
+  min-width: var(--inspector-width);
   border-left: 1px solid var(--line);
   background: #1b2026;
   overflow: auto;
+}
+#monitorPanel {
+  height: var(--monitor-height);
+  min-height: 110px;
+  flex-shrink: 0;
+  background: #0e1216;
+  display: flex;
+  flex-direction: column;
+}
+#monitorPanel.collapsed {
+  height: 29px;
+  min-height: 29px;
+}
+#monitorPanel.collapsed #cameraGrid {
+  display: none;
+}
+#monitorPanel .paneltitle {
+  flex-shrink: 0;
+}
+#monitorToggle {
+  margin-left: auto;
+  padding: 2px 7px;
+  font-size: 9px;
+}
+#monitorCount {
+  font:
+    10px Consolas,
+    monospace;
+  color: #8c9caa;
+}
+#cameraGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-auto-rows: minmax(0, 1fr);
+  gap: 3px;
+  padding: 3px;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.cameraTile {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: #080c10;
+  border: 1px solid #34434f;
+}
+.cameraTile video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.cameraTitle,
+.cameraDetail {
+  position: absolute;
+  left: 0;
+  right: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 4px 7px;
+  font:
+    10px Consolas,
+    monospace;
+  background: #0d151bdd;
+  pointer-events: none;
+}
+.cameraTitle {
+  top: 0;
+  padding-right: 50px;
+  color: #c1d6df;
+}
+.cameraDetail {
+  bottom: 0;
+  color: #8fa6b5;
+  font-size: 9px;
+}
+.cameraTile.late {
+  border-color: #a27d48;
+}
+.cameraOverlay {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  color: #dbbe8c;
+  background: #19212acc;
+  font:
+    10px Consolas,
+    monospace;
+  padding: 4px;
+  pointer-events: none;
+}
+.cameraOverlay:empty {
+  display: none;
+}
+.pin {
+  position: absolute;
+  right: 4px;
+  top: 3px;
+  padding: 2px 5px;
+  font-size: 9px;
+}
+.pin.active {
+  background: #365769;
+  border-color: #80a4b8;
+}
+.resizeHorizontal {
+  height: 5px;
+  min-height: 5px;
+  background: #29333d;
+  cursor: ns-resize;
+}
+.resizeHorizontal:hover,
+.resizeVertical:hover {
+  background: #7197ad;
+}
+.resizeVertical {
+  width: 5px;
+  min-width: 5px;
+  background: #29333d;
+  cursor: ew-resize;
+}
+#inspectorToggle {
+  margin-left: auto;
+  padding: 1px 6px;
+}
+#inspectorPanel.collapsed {
+  width: 31px;
+  min-width: 31px;
+}
+#inspectorPanel.collapsed > * {
+  display: none;
+}
+#inspectorPanel.collapsed > .paneltitle {
+  display: flex;
+  padding: 0 4px;
+}
+#inspectorPanel.collapsed .paneltitle span {
+  display: none;
+}
+#activity.collapsed {
+  height: 29px;
+  min-height: 29px;
+}
+#activity.collapsed #log {
+  display: none;
+}
+#activity {
+  position: relative;
+  flex-shrink: 0;
+}
+#log {
+  height: calc(100% - 29px);
+}
+#logFilter {
+  font-size: 9px;
+  padding: 2px 5px;
+  margin-left: auto;
+}
+#activityToggle {
+  font-size: 10px;
+  padding: 1px 6px;
+}
+#log .recording-event {
+  cursor: pointer;
+}
+#log .recording-event:hover {
+  background: #2d3945;
+  text-decoration: underline;
+}
+#log .warning {
+  color: #d9b477;
+}
+#outputFolder {
+  font-size: 10px;
+  padding: 3px 7px;
+}
+#settingsButton {
+  font-size: 10px;
+  padding: 4px 7px;
+}
+#resourceGraph {
+  width: 100px;
+  height: 20px;
+  flex-shrink: 0;
+}
+#resources {
+  font:
+    10px Consolas,
+    monospace;
+  white-space: nowrap;
+}
+#settingsDialog {
+  width: min(760px, 90vw);
+  max-height: 88vh;
+  background: #1b222a;
+  border: 1px solid #5a7083;
+  border-radius: 3px;
+  padding: 18px;
+  color: #d7e1e9;
+}
+#settingsDialog::backdrop {
+  background: #05090dbb;
+}
+#settingsDialog h2 {
+  font-size: 17px;
+  margin: 0 0 16px;
+}
+#settingsDialog h3 {
+  font-size: 12px;
+}
+#settingsDialog h3 small {
+  font-weight: normal;
+  color: #8e9fae;
+  font-size: 10px;
+  margin-left: 10px;
+}
+.settingsGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 13px 20px;
+}
+.settingsGrid label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+  gap: 7px;
+}
+.settingsGrid input,
+.settingsGrid select {
+  width: 130px;
+  background: #121920;
+  border: 1px solid #465665;
+  color: #d3dfe8;
+  padding: 5px;
+  border-radius: 2px;
+}
+#shortcutSettings {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 5px 18px;
+}
+#shortcutSettings label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+}
+#shortcutSettings input {
+  width: 126px;
+  padding: 4px;
+  background: #121920;
+  border: 1px solid #435362;
+  border-radius: 2px;
+  color: #b2d3e2;
+  text-align: center;
+  font:
+    10px Consolas,
+    monospace;
+}
+.dialogActions {
+  display: flex;
+  gap: 8px;
+  margin-top: 17px;
+  align-items: center;
+}
+.dialogActions span {
+  flex: 1;
+  color: #dca08b;
+  font-size: 11px;
+}
+.transport button.tool-active {
+  border-color: #b7c8d7;
+  background: #3b4957;
+}
+@media (max-width: 1400px) {
+  #build {
+    display: none;
+  }
+  .tools {
+    gap: 3px;
+  }
+  header {
+    gap: 12px;
+  }
+  .tools button {
+    font-size: 10px;
+  }
+  #performance {
+    font-size: 9px;
+  }
+  #memory {
+    max-width: 230px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .transport {
+    gap: 3px;
+  }
+  #time {
+    font-size: 16px;
+    width: 126px;
+  }
+  #playState {
+    min-width: 45px;
+  }
+  #resourceGraph {
+    width: 65px;
+  }
 }
 #inspector {
   padding: 12px;
@@ -595,4 +918,135 @@ footer {
   #scale {
     display: none;
   }
+}
+
+/* Current-state report stays visible after synchronization completes. */
+header {
+  height: 92px;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-content: center;
+  row-gap: 5px;
+}
+#currentState {
+  order: 10;
+  flex: 1 0 100%;
+  min-width: 0;
+  height: 35px;
+  position: relative;
+  padding-left: 9px;
+  border-left: 3px solid var(--state-color);
+  --state-color: #8d9ca9;
+  font-size: 10px;
+}
+#currentState[data-tone="working"] {
+  --state-color: #83bbd0;
+}
+#currentState[data-tone="complete"] {
+  --state-color: #98c4a0;
+}
+#currentState[data-tone="review"] {
+  --state-color: #ddbe7b;
+}
+#currentState[data-tone="error"] {
+  --state-color: #e58b82;
+}
+#stateTitle {
+  color: var(--state-color);
+  font-size: 11px;
+}
+#stateDetail {
+  margin-left: 14px;
+  color: #b0bdca;
+}
+#stateNext {
+  color: #96a7b6;
+  margin-top: 2px;
+}
+#stageProgress {
+  position: absolute;
+  bottom: 0;
+  left: 9px;
+  width: calc(100% - 9px);
+  height: 3px;
+  border: 0;
+  background: #30363e;
+  accent-color: var(--state-color);
+}
+#stageProgress::-webkit-progress-bar {
+  background: #30363e;
+}
+#stageProgress::-webkit-progress-value {
+  background: var(--state-color);
+}
+main {
+  height: calc(100vh - 153px);
+}
+#playhead {
+  pointer-events: auto;
+  width: 11px;
+  transform: translateX(-5px);
+  background: linear-gradient(
+    to right,
+    transparent 5px,
+    #b8dce8 5px,
+    #b8dce8 6px,
+    transparent 6px
+  );
+  cursor: ew-resize;
+  touch-action: none;
+  box-shadow: none;
+}
+#playhead span {
+  left: 0;
+}
+:root {
+  --monitor-width: 32vw;
+}
+.monitor-right #monitorPanel {
+  width: var(--monitor-width);
+  min-width: 220px;
+  height: 100%;
+  min-height: 0;
+  flex-shrink: 0;
+}
+.monitor-right #monitorResize {
+  width: 5px;
+  height: 100%;
+  cursor: col-resize;
+  flex-shrink: 0;
+}
+.monitor-right #monitorPanel.collapsed {
+  width: 32px;
+  min-width: 32px;
+}
+.monitor-right #monitorPanel.collapsed .paneltitle {
+  writing-mode: vertical-rl;
+  height: 100%;
+  padding: 8px 4px;
+}
+.monitor-right #monitorPanel.collapsed #monitorCount {
+  display: none;
+}
+.monitor-right #monitorCount {
+  font-size: 9px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.transport {
+  overflow-x: auto;
+  overflow-y: hidden;
+  flex-shrink: 0;
+}
+.transport > * {
+  flex-shrink: 0;
+}
+#cameraGrid {
+  grid-auto-flow: column;
+  min-height: 0;
+  overflow: hidden;
+}
+.cameraTile {
+  min-height: 0;
 }
