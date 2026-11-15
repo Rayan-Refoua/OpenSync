@@ -26,22 +26,25 @@ type MediaRecord struct {
 	Video          map[string]any `json:"video"`
 	Audio          map[string]any `json:"audio"`
 	SourceTimecode map[string]any `json:"source_timecode"`
+	FormatTags     map[string]any `json:"format_tags,omitempty"`
 	SourceGroup    string         `json:"source_group,omitempty"`
 	AnalysisAudio  string         `json:"analysis_audio,omitempty"`
 	CacheReused    bool           `json:"cache_reused"`
 }
 type TimeModel struct {
-	Recording      int         `json:"recording"`
-	Component      int         `json:"component"`
-	ComponentSize  int         `json:"component_size"`
-	Offset         float64     `json:"component_offset_seconds"`
-	AnalysisOffset float64     `json:"analysis_component_offset_seconds"`
-	AudioOrigin    float64     `json:"analysis_audio_origin_seconds"`
-	Rate           float64     `json:"rate"`
-	Error          float64     `json:"fit_residual_seconds"`
-	Status         string      `json:"status"`
-	Knots          []TimePoint `json:"timing_knots"`
-	Resolved       bool        `json:"globally_resolved"`
+	PlacementUncertainty float64     `json:"placement_uncertainty_seconds,omitempty"`
+	TimingBasis          string      `json:"timing_basis,omitempty"`
+	Recording            int         `json:"recording"`
+	Component            int         `json:"component"`
+	ComponentSize        int         `json:"component_size"`
+	Offset               float64     `json:"component_offset_seconds"`
+	AnalysisOffset       float64     `json:"analysis_component_offset_seconds"`
+	AudioOrigin          float64     `json:"analysis_audio_origin_seconds"`
+	Rate                 float64     `json:"rate"`
+	Error                float64     `json:"fit_residual_seconds"`
+	Status               string      `json:"status"`
+	Knots                []TimePoint `json:"timing_knots"`
+	Resolved             bool        `json:"globally_resolved"`
 }
 type NativePayload struct {
 	Name    string         `json:"name"`
@@ -214,6 +217,12 @@ func LoadNativeProject(path string) (*NativeProject, error) {
 		return nil, fmt.Errorf("missing project component identities")
 	}
 	for _, m := range p.Data.Models {
+		if m.PlacementUncertainty < 0 || math.IsNaN(m.PlacementUncertainty) || math.IsInf(m.PlacementUncertainty, 0) {
+			return nil, fmt.Errorf("invalid placement uncertainty")
+		}
+		if m.Status == "provisional_chronological_estimate" && (m.PlacementUncertainty < 1 || m.TimingBasis == "" || m.TimingBasis == "acoustic_arrival") {
+			return nil, fmt.Errorf("chronological estimate lacks explicit uncertainty or provenance")
+		}
 		if m.Recording < 0 || m.Recording >= len(p.Data.Records) || seen[m.Recording] || m.Rate <= 0 || math.IsNaN(m.Rate) || math.IsInf(m.Rate, 0) || math.IsNaN(m.Offset) || math.IsInf(m.Offset, 0) {
 			return nil, fmt.Errorf("invalid timing model")
 		}
@@ -244,6 +253,12 @@ func LoadNativeProject(path string) (*NativeProject, error) {
 }
 
 func saveNativeProject(path, name string, records []MediaRecord, edges []*PairEvidence, layout []NativeLayout, graph map[string]any) error {
+	chronology := map[int]ChronologicalPlacement{}
+	if placements, ok := graph["chronological_placements"].([]ChronologicalPlacement); ok {
+		for _, p := range placements {
+			chronology[p.Recording] = p
+		}
+	}
 	models := []map[string]any{}
 	schema := 1
 	for _, item := range layout {
@@ -264,6 +279,12 @@ func saveNativeProject(path, name string, records []MediaRecord, edges []*PairEv
 			m["component_offset_seconds"] = MapTime(points, 0)
 		}
 		models = append(models, m)
+		if p, ok := chronology[item.Recording]; ok {
+			m["timing_basis"] = p.Basis
+			m["placement_uncertainty_seconds"] = p.Uncertainty
+			m["acoustic_verification"] = "not_established_for_this_placement"
+			m["uncertainty_interpretation"] = "conditional_estimate_not_statistical_confidence_bound"
+		}
 	}
 	payload := map[string]any{"name": name, "engine_version": "opensync-autonomous-v1", "implementation": "native-go-v1", "recordings": records, "timing_models": models, "validated_relations": edges, "graph": graph, "timing_precision": "IEEE-754 binary64 seconds, affine rates and monotonic timing knots; no timeline frame quantization", "verification_status": "acoustic_and_graph_evidence_supported; production_import_review_pending", "acoustic_environment_policy": map[string]any{"constant_path_delay": "absorbed_in_measured_offset_not_clock_drift", "changing_path_or_echo": "requires_timing_evidence_not_blanket_tolerance", "physical_event_time": "not_identifiable_from_unreferenced_audio_alone"}, "source_media_modified": false}
 	data, err := json.Marshal(payload)

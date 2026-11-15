@@ -51,6 +51,7 @@ func NativeSyncCommand(ctx context.Context, args []string) error {
 	f.StringVar(&o.Output, "output", "OpenSync-Output", "project output directory")
 	f.StringVar(&o.CacheIndex, "cache-index", "", "existing guarded PCM cache index")
 	f.StringVar(&o.Name, "name", "OpenSync", "project name")
+	f.StringVar(&o.Mode, "mode", "clips", "clips (acoustic placement) or chronological (also estimate bounded gaps from calibrated recording order)")
 	f.StringVar(&o.Unsynced, "unsynced", "append", "append or separate-sequence")
 	f.StringVar(&o.Stage, "stage", "all", "cache, discover, verify, or all")
 	f.Float64Var(&o.MaxResidualMS, "max-residual-ms", 150, "maximum export presentation residual")
@@ -70,6 +71,12 @@ func NativeSyncCommand(ctx context.Context, args []string) error {
 	return NativeSync(ctx, o)
 }
 func NativeSync(ctx context.Context, o NativeSyncOptions) error {
+	if o.Mode == "" {
+		o.Mode = "clips"
+	}
+	if o.Mode != "clips" && o.Mode != "chronological" {
+		return fmt.Errorf("mode must be clips or chronological")
+	}
 	fmt.Printf("OpenSync %s\n", BuildVersion)
 	// These switches are explicit requests to persist/reuse analysis.
 	o.CacheEnabled = o.CacheEnabled || o.CacheIndex != "" || o.Resume || o.Stage == "cache"
@@ -402,6 +409,14 @@ func nativeFinish(records []MediaRecord, edges []*PairEvidence, profiles []Nativ
 		return err
 	}
 	graph["event_decisions"] = decisions
+	mode := o.Mode
+	if mode == "" {
+		mode = "clips"
+	}
+	graph["placement_mode"] = mode
+	if mode == "chronological" {
+		layout = applyChronology(records, layout, graph)
+	}
 	graph["acoustic_relationships"] = nativeRelationshipMap(records, profiles, graph)
 	graph["provisional_placements"] = nativeComparisonPlacements(records, layout, profiles, distributed)
 	if distributed != nil {

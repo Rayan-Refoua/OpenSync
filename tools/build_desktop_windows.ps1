@@ -36,6 +36,7 @@ try {
     foreach ($program in @('ffmpeg','ffprobe')) { Copy-Item -LiteralPath (Get-Command $program -ErrorAction Stop).Source -Destination (Join-Path $destination "runtime/bin/$program.exe") }
     Copy-Item -LiteralPath 'LICENSE' -Destination $destination
     Copy-Item -LiteralPath 'docs/DESKTOP.md' -Destination (Join-Path $destination 'DESKTOP-NOTES.md')
+    Copy-Item -LiteralPath 'docs/COMPONENT-AND-CHRONOLOGY.md' -Destination (Join-Path $destination 'ENGINE-NOTES.md')
     & (Join-Path $destination 'runtime/bin/ffmpeg.exe') -L *> (Join-Path $destination 'FFmpeg-license.txt')
     & (Join-Path $destination 'runtime/bin/ffmpeg.exe') -version *> (Join-Path $destination 'FFmpeg-version.txt')
     & (Join-Path $destination 'opensync-cli.exe') --help | Set-Content -LiteralPath (Join-Path $destination 'CLI-HELP.txt')

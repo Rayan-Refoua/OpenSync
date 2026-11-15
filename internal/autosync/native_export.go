@@ -103,23 +103,25 @@ func channelType(n int) string {
 }
 
 type NativePlacement struct {
-	Recording          int     `json:"recording"`
-	ID                 string  `json:"id"`
-	Status             string  `json:"status"`
-	Component          int     `json:"component"`
-	HasVideo           bool    `json:"has_video"`
-	Start              int64   `json:"start"`
-	End                int64   `json:"end"`
-	In                 int64   `json:"source_in"`
-	Out                int64   `json:"source_out"`
-	Rate               string  `json:"source_fps"`
-	Segment            int     `json:"segment"`
-	Segments           int     `json:"segments"`
-	Sequence           string  `json:"sequence"`
-	Error              float64 `json:"presentation_error_seconds"`
-	Derivative         *string `json:"derivative"`
-	DerivativeDuration float64 `json:"derivative_duration_seconds,omitempty"`
-	rate               FrameRate
+	PlacementUncertainty float64 `json:"placement_uncertainty_seconds,omitempty"`
+	TimingBasis          string  `json:"timing_basis,omitempty"`
+	Recording            int     `json:"recording"`
+	ID                   string  `json:"id"`
+	Status               string  `json:"status"`
+	Component            int     `json:"component"`
+	HasVideo             bool    `json:"has_video"`
+	Start                int64   `json:"start"`
+	End                  int64   `json:"end"`
+	In                   int64   `json:"source_in"`
+	Out                  int64   `json:"source_out"`
+	Rate                 string  `json:"source_fps"`
+	Segment              int     `json:"segment"`
+	Segments             int     `json:"segments"`
+	Sequence             string  `json:"sequence"`
+	Error                float64 `json:"presentation_error_seconds"`
+	Derivative           *string `json:"derivative"`
+	DerivativeDuration   float64 `json:"derivative_duration_seconds,omitempty"`
+	rate                 FrameRate
 }
 type NativeExportOptions struct {
 	Output, Unsynced   string
@@ -253,14 +255,14 @@ func nativePlacements(p *NativeProject, o NativeExportOptions) ([]NativePlacemen
 					return nil, seq, fmt.Errorf("audio derivative duration mismatch")
 				}
 				start := roundFrame(m.Offset * seq.FPS())
-				result = append(result, NativePlacement{Recording: m.Recording, ID: fmt.Sprintf("recording-%s-part-1", r.ID), Status: m.Status, Component: m.Component, Start: start, End: start + roundFrame(actual*seq.FPS()), In: 0, Out: roundFrame(actual * rate.FPS()), Rate: rate.String(), Segment: 1, Segments: 1, Error: .03 + m.Error + .5/seq.FPS(), Derivative: &target, DerivativeDuration: actual, rate: rate})
+				result = append(result, NativePlacement{PlacementUncertainty: m.PlacementUncertainty, TimingBasis: m.TimingBasis, Recording: m.Recording, ID: fmt.Sprintf("recording-%s-part-1", r.ID), Status: m.Status, Component: m.Component, Start: start, End: start + roundFrame(actual*seq.FPS()), In: 0, Out: roundFrame(actual * rate.FPS()), Rate: rate.String(), Segment: 1, Segments: 1, Error: .03 + m.Error + .5/seq.FPS(), Derivative: &target, DerivativeDuration: actual, rate: rate})
 				continue
 			}
 		}
 		for j, v := range parts {
 			start := roundFrame((float64(v.First)/rate.FPS() + v.Offset) * seq.FPS())
 			end := start + roundFrame(float64(v.Last-v.First)/rate.FPS()*seq.FPS())
-			result = append(result, NativePlacement{Recording: m.Recording, ID: fmt.Sprintf("recording-%s-part-%d", r.ID, j+1), Status: m.Status, Component: m.Component, HasVideo: r.Video != nil, Start: start, End: end, In: v.First, Out: v.Last, Rate: rate.String(), Segment: j + 1, Segments: len(parts), Error: v.Error + m.Error + .5/seq.FPS(), rate: rate})
+			result = append(result, NativePlacement{PlacementUncertainty: m.PlacementUncertainty, TimingBasis: m.TimingBasis, Recording: m.Recording, ID: fmt.Sprintf("recording-%s-part-%d", r.ID, j+1), Status: m.Status, Component: m.Component, HasVideo: r.Video != nil, Start: start, End: end, In: v.First, Out: v.Last, Rate: rate.String(), Segment: j + 1, Segments: len(parts), Error: v.Error + m.Error + .5/seq.FPS(), rate: rate})
 		}
 	}
 	move := func(indices []int, start int64, sequence string) int64 {
@@ -637,6 +639,9 @@ func buildNativeXML(p *NativeProject, placements []NativePlacement, seqRate Fram
 				} else if strings.HasPrefix(v.Status, "provisional") {
 					label = "Mango"
 					description = "Provisional acoustic placement for comparison, not certified"
+				}
+				if v.PlacementUncertainty > 0 {
+					description = fmt.Sprintf("Chronological estimate (%s), uncertainty +/- %.3f s; not acoustically verified", v.TimingBasis, v.PlacementUncertainty)
 				}
 				c.add("labels", nil).add("label2", label)
 				c.add("logginginfo", nil).add("description", description)

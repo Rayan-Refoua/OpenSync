@@ -547,7 +547,21 @@ function inspect(c) {
     ["Source duration", `${c.duration.toFixed(6)} s`],
     ["Model rate", c.rate.toPrecision(12)],
     ["Clock difference", `${((c.rate - 1) * 1e6).toFixed(3)} ppm`],
-    ["Fit residual", `${(c.residual * 1000).toFixed(3)} ms`],
+    [
+      "Fit residual",
+      c.placementUncertainty
+        ? "Not acoustically measured"
+        : `${(c.residual * 1000).toFixed(3)} ms`,
+    ],
+    ...(c.placementUncertainty
+      ? [
+          ["Placement basis", c.timingBasis],
+          [
+            "Estimated uncertainty",
+            `±${c.placementUncertainty.toFixed(3)} s (conditional)`,
+          ],
+        ]
+      : []),
     ["Component", c.component],
     ["Timing knots", c.mapping.length],
     ["Engine status", c.status],
@@ -859,7 +873,7 @@ canvas.addEventListener("pointermove", (e) => {
     tip.hidden = true;
     return;
   }
-  tip.textContent = `${c.name}\n${c.status}\nIn ${formatTime(c.start)}  •  ${c.duration.toFixed(3)} s\nResidual ${(c.residual * 1000).toFixed(3)} ms${c.missing ? "\nSOURCE MISSING" : ""}`;
+  tip.textContent = `${c.name}\n${c.status}\nIn ${formatTime(c.start)}  •  ${c.duration.toFixed(3)} s\n${c.placementUncertainty ? `Chronological estimate ±${c.placementUncertainty.toFixed(3)} s` : `Residual ${(c.residual * 1000).toFixed(3)} ms`}${c.missing ? "\nSOURCE MISSING" : ""}`;
   tip.hidden = false;
   tip.style.left = `${Math.min(e.clientX + 15, innerWidth - 430)}px`;
   tip.style.top = `${Math.min(e.clientY + 17, innerHeight - 130)}px`;

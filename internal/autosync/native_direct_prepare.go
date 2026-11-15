@@ -59,6 +59,7 @@ func nativePrepareDirect(ctx context.Context, o NativeSyncOptions, files []strin
 					continue
 				}
 				format, _ := info["format"].(map[string]any)
+				r.FormatTags, _ = format["tags"].(map[string]any)
 				r.Duration = number(format["duration"])
 				if r.Audio != nil && number(r.Audio["duration"]) > 0 {
 					r.Duration = number(r.Audio["duration"])

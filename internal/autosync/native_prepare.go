@@ -23,6 +23,7 @@ type NativeSyncOptions struct {
 	// Zero preserves the CLI's adaptive defaults; temporary DSP allocations are
 	// additionally governed by the embedding application's Go memory target.
 	ManagedMemoryMiB                                    int
+	Mode                                                string
 	Input                                               string
 	Sources, Files, Folders                             []string
 	FileList, Output, CacheIndex, Name, Unsynced, Stage string
@@ -277,6 +278,9 @@ func nativePrepare(ctx context.Context, o NativeSyncOptions, files []string, exc
 					}
 				}
 				streams, _ := info["streams"].([]any)
+				if format, ok := info["format"].(map[string]any); ok {
+					r.FormatTags, _ = format["tags"].(map[string]any)
+				}
 				for _, raw := range streams {
 					s, ok := raw.(map[string]any)
 					if !ok {
@@ -387,6 +391,7 @@ func nativePrepare(ctx context.Context, o NativeSyncOptions, files []string, exc
 			r.Audio = p.Audio
 			r.Duration = p.Duration
 			r.SourceTimecode = p.SourceTimecode
+			r.FormatTags = p.FormatTags
 		}
 		if o.Input != "" {
 			root, _ := filepath.Abs(o.Input)
@@ -399,6 +404,7 @@ func nativePrepare(ctx context.Context, o NativeSyncOptions, files []string, exc
 				r.Video = prior.Video
 				r.Audio = prior.Audio
 				r.SourceTimecode = prior.SourceTimecode
+				r.FormatTags = prior.FormatTags
 				r.CacheSHA = prior.CacheSHA
 				r.AnalysisAudio = prior.AnalysisAudio
 				if _, err = os.Stat(prior.LocalSource); err == nil {

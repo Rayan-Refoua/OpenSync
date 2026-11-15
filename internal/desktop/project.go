@@ -14,25 +14,27 @@ import (
 )
 
 type Clip struct {
-	ID          string               `json:"id"`
-	Index       int                  `json:"index"`
-	Name        string               `json:"name"`
-	Source      string               `json:"source"`
-	Duration    float64              `json:"duration"`
-	Start       float64              `json:"start"`
-	End         float64              `json:"end"`
-	Track       int                  `json:"track"`
-	Status      string               `json:"status"`
-	State       string               `json:"state"`
-	Component   int                  `json:"component"`
-	Residual    float64              `json:"residual"`
-	Rate        float64              `json:"rate"`
-	Mapping     []autosync.TimePoint `json:"mapping"`
-	AudioOrigin float64              `json:"audioOrigin"`
-	Video       bool                 `json:"video"`
-	Audio       bool                 `json:"audio"`
-	Missing     bool                 `json:"missing"`
-	Metadata    autosync.MediaRecord `json:"metadata"`
+	PlacementUncertainty float64              `json:"placementUncertainty,omitempty"`
+	TimingBasis          string               `json:"timingBasis,omitempty"`
+	ID                   string               `json:"id"`
+	Index                int                  `json:"index"`
+	Name                 string               `json:"name"`
+	Source               string               `json:"source"`
+	Duration             float64              `json:"duration"`
+	Start                float64              `json:"start"`
+	End                  float64              `json:"end"`
+	Track                int                  `json:"track"`
+	Status               string               `json:"status"`
+	State                string               `json:"state"`
+	Component            int                  `json:"component"`
+	Residual             float64              `json:"residual"`
+	Rate                 float64              `json:"rate"`
+	Mapping              []autosync.TimePoint `json:"mapping"`
+	AudioOrigin          float64              `json:"audioOrigin"`
+	Video                bool                 `json:"video"`
+	Audio                bool                 `json:"audio"`
+	Missing              bool                 `json:"missing"`
+	Metadata             autosync.MediaRecord `json:"metadata"`
 }
 type Track struct {
 	Name  string `json:"name"`
@@ -100,6 +102,8 @@ func BuildProject(p autosync.NativePayload) *Project {
 		}
 		c := Clip{ID: r.ID, Index: i, Name: r.Name, Source: source, Duration: r.Duration, Start: autosync.MapTime(points, 0), End: autosync.MapTime(points, r.Duration), Status: m.Status, State: state, Component: m.Component, Residual: m.Error, Rate: m.Rate, Mapping: points, AudioOrigin: m.AudioOrigin, Video: r.Video != nil, Audio: r.Audio != nil, Missing: !exists(source), Metadata: r}
 		v.Clips = append(v.Clips, c)
+		v.Clips[len(v.Clips)-1].PlacementUncertainty = m.PlacementUncertainty
+		v.Clips[len(v.Clips)-1].TimingBasis = m.TimingBasis
 		if state == "unresolved" {
 			groups[m.Component] = append(groups[m.Component], i)
 		} else {
