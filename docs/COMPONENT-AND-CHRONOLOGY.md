@@ -110,6 +110,10 @@ Controlled evidence tests with known relationships:
   gaps stay unresolved. Audio-less clips can receive explicitly provisional
   chronological placement. Saved-project / XML tests preserve source duration
   and the uncertainty annotation.
+- A complete FFmpeg-backed five-recording run synchronized A/C/D acoustically,
+  reconstructed the silent B clip at the known 12-second gap, saved/reopened the
+  project and exported the annotated XML with no analysis cache. This fixture
+  has synthetic known truth; it does not establish real-camera timestamp accuracy.
 
 Saved evidence replay, baseline commit `2759c65` versus this selector:
 

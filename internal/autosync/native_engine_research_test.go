@@ -1,6 +1,7 @@
 package autosync
 
 import (
+	"context"
 	"encoding/json"
 	"math"
 	"os"
@@ -10,6 +11,66 @@ import (
 	"testing"
 	"time"
 )
+
+func TestChronologicalPipelineKnownTimeline(t *testing.T) {
+	if os.Getenv("OPENSYNC_INTEGRATION") != "1" {
+		t.Skip("FFmpeg integration")
+	}
+	root := t.TempDir()
+	reference := filepath.Join(root, "reference.wav")
+	if err := writeFixtureWAV(reference, fixtureNoise(60, 49171)); err != nil {
+		t.Fatal(err)
+	}
+	files := []string{reference}
+	for i, start := range []float64{0, 12, 24, 40} {
+		path := filepath.Join(root, "C000"+stringValue(i+1)+".mov")
+		args := []string{"-v", "error", "-f", "lavfi", "-i", "color=size=64x64:rate=25:duration=10"}
+		if i != 1 {
+			args = append(args, "-ss", stringValue(start), "-i", reference, "-map", "0:v:0", "-map", "1:a:0", "-c:a", "pcm_s16le")
+		} else {
+			args = append(args, "-an")
+		}
+		args = append(args, "-t", "10", "-c:v", "libx264", "-preset", "ultrafast", path)
+		if err := runMediaTool(context.Background(), "ffmpeg", args...); err != nil {
+			t.Fatal(err)
+		}
+		stamp := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC).Add(time.Duration(start) * time.Second)
+		if err := os.Chtimes(path, stamp, stamp); err != nil {
+			t.Fatal(err)
+		}
+		files = append(files, path)
+	}
+	out := filepath.Join(root, "result")
+	if err := NativeSync(context.Background(), NativeSyncOptions{Files: files, Output: out, Name: "Chronology truth", Mode: "chronological", Stage: "all", Unsynced: "append", MaxResidualMS: 150}); err != nil {
+		t.Fatal(err)
+	}
+	p, err := LoadNativeProject(filepath.Join(out, "OpenSync.opensync"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, m := range p.Data.Models {
+		if p.Data.Records[m.Recording].Name == "C0002.mov" {
+			found = true
+			if m.Status != "provisional_chronological_estimate" || math.Abs(m.Offset-12) > m.PlacementUncertainty || m.PlacementUncertainty < 1 {
+				t.Fatalf("known silent gap was not reconstructed: %+v", m)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("missing audio-less recording")
+	}
+	xml, err := os.ReadFile(filepath.Join(out, "OpenSync.xml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(xml), "Chronological estimate") {
+		t.Fatal("missing XML provenance")
+	}
+	if _, err := os.Stat(filepath.Join(out, "features")); !os.IsNotExist(err) {
+		t.Fatal("default sync persisted analysis cache")
+	}
+}
 
 func TestChronologyCalibratesCompletionDates(t *testing.T) {
 	r, l, _ := chronologyFixture()
