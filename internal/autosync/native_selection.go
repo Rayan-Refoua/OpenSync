@@ -114,17 +114,14 @@ func selectNativeEdges(records []MediaRecord, base []*PairEvidence, profiles []N
 			}
 			mid := records[pair.Query].Duration / 2
 			offset := p.Prior.Offset + p.Prior.Slope*mid
+			if p.Model != nil {
+				offset = p.Model.predict(mid)
+			}
 			position := anchor.Start + anchor.Rate*(mid+offset) - mid
 			candidates[pair.Query] = append(candidates[pair.Query], eventEntry{pair.Reference, anchor.Component, position, p})
 		}
 	}
-	uniqueRefs := func(group []eventEntry) int {
-		seen := map[int]bool{}
-		for _, e := range group {
-			seen[e.reference] = true
-		}
-		return len(seen)
-	}
+	uniqueRefs := func(group []eventEntry) int { return corroboratingReferences(group, records) }
 	strength := func(group []eventEntry) float64 {
 		v := 0.
 		for _, e := range group {
@@ -303,5 +300,7 @@ func selectNativeEdges(records []MediaRecord, base []*PairEvidence, profiles []N
 			seen[key] = true
 		}
 	}
+	result, componentDecisions := corroborateComponents(records, result, profiles)
+	report = append(report, componentDecisions...)
 	return result, report
 }

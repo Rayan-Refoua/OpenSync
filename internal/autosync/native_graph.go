@@ -111,7 +111,9 @@ func edgeFromProfile(pair NativeProfilePair, p *NativeProfile, records []MediaRe
 	if m.Kind == "piecewise_linear" {
 		points = append(points, TimePoint{0, m.Knots[0][1]})
 		for _, k := range m.Knots {
-			points = append(points, TimePoint{k[0], k[0] + k[1]})
+			if k[0] > 0 && k[0] < d {
+				points = append(points, TimePoint{k[0], k[0] + k[1]})
+			}
 		}
 		points = append(points, TimePoint{d, d + m.Knots[len(m.Knots)-1][1]})
 	} else {
