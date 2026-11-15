@@ -337,9 +337,10 @@
         <p class="muted">
           RAM controls set hard visualization/analysis cache budgets and a soft
           Go heap target. Browser, GPU and decoder allocations cannot be capped
-          exactly here. Video decoding prefers the native hardware-capable
-          browser pipeline; unsupported formats use bounded software previews.
-          Four feeds are the default.
+          exactly here. Buffered 640×360 video previews retain source frame
+          timing. Playback fills eight seconds first and maintains a five-second
+          reserve. Preview segments stay in RAM; original files and exports are
+          unchanged.
         </p>
         <h3>
           Keyboard shortcuts

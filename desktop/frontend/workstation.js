@@ -316,7 +316,7 @@ export function setupWorkstation(h) {
   const timer = setInterval(() => {
     const transport = h.transport();
     monitor.tick(h.state.playhead, transport.playing, transport.rate);
-    if (transport.playing && transport.rate > 0 && !monitor.ready())
+    if (transport.playing && transport.rate > 0 && monitor.needsBuffer())
       h.action(() => h.play(transport.rate));
   }, 50);
   window.addEventListener("beforeunload", () => {
@@ -328,8 +328,7 @@ export function setupWorkstation(h) {
       h.api()
         .ReportPreviewState(
           monitor.tiles.length,
-          monitor.tiles.filter((t) => t.video.readyState >= 2 && !t.failed)
-            .length,
+          monitor.ready(8) ? monitor.tiles.length : 0,
         )
         .catch(() => {});
     load();

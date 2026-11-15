@@ -331,7 +331,7 @@ func (s *Service) thumbnail(ctx context.Context, r *http.Request, c Clip) ([]byt
 	return b, err
 }
 
-var thumbnailPTS = regexp.MustCompile(`pts_time:([+-]?[0-9]+(?:\.[0-9]+)?)`)
+var thumbnailPTS = regexp.MustCompile(`pts_time:([+-]?[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)`)
 
 func metadataFloat(v any) float64 {
 	switch n := v.(type) {

@@ -21,7 +21,7 @@ func (s *Service) SetPlaybackWorkers(n int) { s.playback.set(max(1, min(8, n))) 
 // asset transport. Only recordings in the opened project are addressable.
 func (s *Service) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/media/source" && r.URL.Path != "/media/preview" {
+		if r.URL.Path != "/media/source" && r.URL.Path != "/media/preview" && r.URL.Path != "/media/segment" {
 			s.ServeHTTP(w, r)
 			return
 		}
@@ -53,6 +53,10 @@ func (s *Service) Handler() http.Handler {
 		defer stop()
 		r = r.WithContext(ctx)
 		w.Header().Set("Cache-Control", "no-store")
+		if r.URL.Path == "/media/segment" {
+			s.videoSegment(ctx, w, r, c)
+			return
+		}
 		if r.URL.Path == "/media/source" {
 			f, e := storageio.Open(ctx, c.Source)
 			if e != nil {

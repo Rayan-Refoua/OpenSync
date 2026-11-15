@@ -1,5 +1,6 @@
 import { setupWorkstation } from "./workstation.js";
 import { placementLabel } from "./status.js";
+import { BUFFER_FLOOR, BUFFER_TARGET } from "./playback-buffer.js";
 import {
   HEADER,
   ROW,
@@ -618,6 +619,7 @@ let audioCtx = null,
   playController = null,
   sources = new Set();
 function stopPlayback() {
+  clearTimeout(seekTimer);
   if (playing && audioCtx)
     state.playhead = clamp(
       baseTime + Math.max(0, audioCtx.currentTime - baseClock) * playRate,
@@ -653,6 +655,7 @@ async function startPlayback(speed = 1) {
   $("playState").textContent = "BUFFERING";
   audioCtx ??= new AudioContext({ sampleRate: 48000 });
   await audioCtx.resume();
+  if (token !== playToken) return;
   baseTime = state.playhead;
   nextTime = baseTime;
   scheduledEnd = 0;
@@ -678,61 +681,100 @@ async function startPlayback(speed = 1) {
     }
   }
 }
+async function decodeAudioBlock(token, at, duration) {
+  const bytes = state.tracks.size
+    ? await fetchBytes(
+        url("audio", {
+          start: at.toFixed(9),
+          duration: duration.toFixed(9),
+          tracks: JSON.stringify([...state.tracks]),
+        }),
+        playController.signal,
+      )
+    : new ArrayBuffer(Math.round(duration * 48000) * 2 * 4);
+  if (token !== playToken) return null;
+  const data = new Float32Array(bytes),
+    buffer = audioCtx.createBuffer(2, data.length / 2, 48000);
+  for (let ch = 0; ch < 2; ch++) {
+    const dest = buffer.getChannelData(ch);
+    for (let i = 0; i < dest.length; i++)
+      dest[i] = data[(playRate < 0 ? dest.length - 1 - i : i) * 2 + ch];
+  }
+  return buffer;
+}
+function scheduleAudioBlock(buffer, at) {
+  const source = audioCtx.createBufferSource();
+  source.buffer = buffer;
+  source.playbackRate.value = Math.abs(playRate);
+  source.connect(audioCtx.destination);
+  sources.add(source);
+  source.onended = () => sources.delete(source);
+  const when = baseClock + Math.abs(at - baseTime) / Math.abs(playRate);
+  source.start(when);
+  scheduledEnd = when + buffer.duration / Math.abs(playRate);
+}
 async function pumpAudio(token, first = false) {
   if (pumping === token || token !== playToken) return;
   pumping = token;
   try {
+    if (first) {
+      const prepared = [];
+      let cursor = baseTime,
+        seconds = 0;
+      while (
+        seconds < BUFFER_TARGET &&
+        (playRate > 0 ? cursor < state.project.duration : cursor > 0)
+      ) {
+        const duration = Math.min(
+            4,
+            playRate > 0 ? state.project.duration - cursor : cursor,
+          ),
+          at = playRate > 0 ? cursor : cursor - duration;
+        const buffer = await decodeAudioBlock(token, at, duration);
+        if (!buffer || token !== playToken) return;
+        prepared.push({ buffer, at: cursor });
+        cursor += duration * Math.sign(playRate);
+        seconds += duration / Math.abs(playRate);
+        $("playState").textContent =
+          "BUFFERING · audio " +
+          seconds.toFixed(1) +
+          "s / " +
+          BUFFER_TARGET +
+          "s";
+      }
+      // Nothing is scheduled until BOTH video and all startup PCM are ready.
+      await workstation.monitor.prepare(
+        baseTime,
+        playRate,
+        playController.signal,
+      );
+      if (token !== playToken) return;
+      baseClock = audioCtx.currentTime + 0.08;
+      for (const item of prepared) scheduleAudioBlock(item.buffer, item.at);
+      nextTime = cursor;
+      return;
+    }
     while (
       token === playToken &&
       (playRate > 0 ? nextTime < state.project.duration : nextTime > 0) &&
-      (first || scheduledEnd - audioCtx.currentTime < 5)
+      scheduledEnd - audioCtx.currentTime < BUFFER_TARGET
     ) {
       const duration = Math.min(
           4,
           playRate > 0 ? state.project.duration - nextTime : nextTime,
         ),
         at = playRate > 0 ? nextTime : nextTime - duration;
-      const bytes = state.tracks.size
-        ? await fetchBytes(
-            url("audio", {
-              start: at.toFixed(9),
-              duration: duration.toFixed(9),
-              tracks: JSON.stringify([...state.tracks]),
-            }),
-            playController.signal,
-          )
-        : new ArrayBuffer(Math.round(duration * 48000) * 2 * 4);
-      if (token !== playToken) return;
-      const data = new Float32Array(bytes),
-        buffer = audioCtx.createBuffer(2, data.length / 2, 48000);
-      for (let ch = 0; ch < 2; ch++) {
-        const dest = buffer.getChannelData(ch);
-        for (let i = 0; i < dest.length; i++)
-          dest[i] = data[(playRate < 0 ? dest.length - 1 - i : i) * 2 + ch];
-      }
-      if (first) {
-        baseClock = audioCtx.currentTime + 0.08;
-        first = false;
-      } else if (
+      const buffer = await decodeAudioBlock(token, at, duration);
+      if (!buffer || token !== playToken) return;
+      if (
         baseClock + Math.abs(nextTime - baseTime) / Math.abs(playRate) <
         audioCtx.currentTime + 0.005
       )
         throw Error(
-          "Audio decode could not keep up. Audition stopped to preserve synchronization; retry closer to the region of interest.",
+          "Audio buffer exhausted; playback stopped to preserve synchronization.",
         );
-      const source = audioCtx.createBufferSource();
-      source.buffer = buffer;
-      source.playbackRate.value = Math.abs(playRate);
-      source.connect(audioCtx.destination);
-      sources.add(source);
-      source.onended = () => sources.delete(source);
-      const when =
-        baseClock + Math.abs(nextTime - baseTime) / Math.abs(playRate);
-      source.start(when);
-      scheduledEnd = when + buffer.duration / Math.abs(playRate);
+      scheduleAudioBlock(buffer, nextTime);
       nextTime += duration * Math.sign(playRate);
-      // Schedule the first block immediately; continue filling asynchronously.
-      if (buffering) return;
     }
   } finally {
     if (pumping === token) pumping = false;
@@ -754,6 +796,13 @@ function playTick() {
     return;
   }
   updatePlayhead();
+  if (
+    (playRate > 0 ? nextTime < state.project.duration : nextTime > 0) &&
+    scheduledEnd - audioCtx.currentTime < BUFFER_FLOOR + 0.25
+  ) {
+    action(() => startPlayback(playRate));
+    return;
+  }
   if (
     $("follow").checked &&
     (state.playhead < state.left ||
@@ -998,6 +1047,11 @@ export const testAPI = {
   seek,
   startPlayback,
   stopPlayback,
+  playbackStats: () => ({
+    playing,
+    buffering,
+    audioAhead: audioCtx ? Math.max(0, scheduledEnd - audioCtx.currentTime) : 0,
+  }),
   waves,
   thumbs,
   visibleClips,
