@@ -28,31 +28,39 @@
           <option value="clips">Clips / takes</option>
           <option value="chronological">Chronological event</option>
         </select>
-        <button id="open" title="Open a precise .opensync project · Ctrl+O">
+        <button id="open" class="ui-icon" title="Open a precise .opensync project · Ctrl+O">
           Open project</button
-        ><button id="add" title="Select source recordings for a new sync">
+        ><button id="add" class="ui-icon" title="Select source recordings for a new sync">
           Add files</button
         ><button
-          id="folder"
+          id="folder" class="ui-icon"
           title="Recursively include readable recordings in a folder"
         >
           Add folder</button
-        ><button id="clear" title="Clear the input selection">
-          Clear inputs</button
+        ><button id="clear" class="ui-icon" title="Clear the input selection">
+          Clear</button
         ><button
           id="sync"
-          class="primary"
+          class="primary ui-icon"
           title="Run the native Go engine; media caching is disabled"
         >
           Synchronize</button
         ><button
-          id="cancel"
+          id="cancel" class="ui-icon"
           disabled
           title="Cancel the current synchronization"
         >
           Cancel
         </button>
       </div>
+      <div id="build">NATIVE GO</div>
+      <button
+        id="settingsButton" class="ui-icon"
+        title="Resource limits and keyboard shortcuts · Ctrl+Alt+K"
+      >
+        Settings
+      </button>
+    </header>
       <section
         id="currentState"
         data-tone="ready"
@@ -72,14 +80,7 @@
           aria-label="Synchronization pipeline stage"
         ></progress>
       </section>
-      <div id="build">NATIVE GO</div>
-      <button
-        id="settingsButton"
-        title="Resource limits and keyboard shortcuts · Ctrl+Alt+K"
-      >
-        Settings
-      </button>
-    </header>
+
     <section class="projectbar">
       <strong id="projectName">No project open</strong
       ><span id="counts">Open a project to inspect its synchronization</span
@@ -88,23 +89,24 @@
         <i class="provisional"></i>Provisional
         <i class="unresolved"></i>Unresolved</span
       ><button
-        id="locate"
+        id="locate" class="ui-icon"
         title="Find missing originals by filename and byte size; session only"
       >
         Locate media
       </button>
       <button
-        id="outputFolder"
+        id="outputFolder" class="ui-icon"
         title="Open the saved project's output directory in Explorer"
       >
         Open output folder
       </button>
       <button
-        id="nextAttention"
+        id="nextAttention" class="ui-icon"
         title="Jump to the next unresolved or provisional recording"
       >
         Next attention
       </button>
+      <button id="exportXML" class="ui-icon" title="Export the current solution to Premiere XML">Export XML</button>
       <details class="projectActions">
         <summary
           title="Review revisions, rerun synchronization, or export the current result"
@@ -136,12 +138,7 @@
           >
             Re-sync current sources
           </button>
-          <button
-            id="exportXML"
-            title="Export this exact solution as Premiere XML into a new folder"
-          >
-            Export Premiere XML
-          </button>
+
         </div>
       </details>
     </section>

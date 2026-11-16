@@ -1103,3 +1103,63 @@ main {
   justify-content: flex-end;
   margin-top: 10px;
 }
+
+/* Reserve space for live values independently of their text. */
+body { height: 100vh; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: 52px 27px auto minmax(0, 1fr) auto; }
+header { height: 52px; min-width: 0; flex-wrap: nowrap; gap: 10px; }
+header .brand { flex-shrink: 0; }
+header .brand small, header #build { display: none; }
+header .tools { flex: 1; min-width: 0; gap: 5px; white-space: nowrap; }
+header #sync { flex: 0 0 138px; font-family: Consolas, monospace; }
+#currentState {
+  order: initial; height: 27px; padding: 0 12px; min-width: 0;
+  display: grid; grid-template-columns: 250px minmax(0, 1fr) 105px;
+  align-items: center; gap: 12px; background: #171d23;
+  font: 11px Consolas, monospace; border-bottom: 1px solid #30363e;
+}
+#currentState > div:first-child { display: contents; }
+#stateTitle, #stateDetail, #stateNext { min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#stateNext { display: none; }
+#stageProgress { position: static; width: 105px; height: 4px; border-radius: 2px; overflow: hidden; }
+#stageProgress.inactive { visibility: hidden; }
+main { height: auto; min-height: 0; min-width: 0; }
+#projectName, #counts, #time, #playState, #bufferDetail, #engineStage, #activityDetail, footer span:not(.statusdot) {
+  font-family: Consolas, monospace; font-variant-numeric: tabular-nums;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
+}
+#projectName { flex: 0 0 120px; }
+#counts { flex: 1 1 0; }
+#time { flex: 0 0 135px; }
+#playState { flex: 0 0 83px; }
+#playbackBuffer { flex: 0 0 34px; }
+#playbackBuffer[hidden] { display: inline-block; visibility: hidden; }
+#bufferDetail { flex: 0 0 115px; }
+#engineStage { flex: 0 0 210px; }
+#activityDetail, footer #status { flex: 1 1 0; }
+footer #performance { flex: 0 0 160px; }
+footer #memory { flex: 0 0 240px; }
+footer #storageState { flex: 0 0 135px; }
+footer #resources { flex: 0 0 185px; }
+button.ui-icon::before {
+  content: ""; display: inline-block; width: 14px; height: 14px; margin-right: 5px;
+  vertical-align: -3px; background: currentColor;
+  mask: var(--button-icon) center / contain no-repeat;
+}
+@media (max-width: 1200px) {
+  .projectbar .legend { display: none; }
+  #bufferDetail { flex-basis: 85px; }
+  header .brand-name { width: 92px; }
+  header button { padding-inline: 6px; }
+  .projectbar { gap: 7px; }
+}
+#open { --button-icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%3E%3Cpath%20d%3D%22M2%206h7l2%202h11l-4%2011H2z%20M2%209l3-4h5%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%221.8%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22/%3E%3C/svg%3E"); }
+#add { --button-icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%3E%3Cpath%20d%3D%22M6%202h8l4%204v16H6z%20M12%209v8m-4-4h8%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%221.8%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22/%3E%3C/svg%3E"); }
+#folder { --button-icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%3E%3Cpath%20d%3D%22M2%205h7l2%203h11v12H2z%20M12%2010v7m-3-3h6%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%221.8%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22/%3E%3C/svg%3E"); }
+#clear { --button-icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%3E%3Cpath%20d%3D%22M5%206h14M9%206V3h6v3M7%206l1%2015h8l1-15%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%221.8%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22/%3E%3C/svg%3E"); }
+#sync { --button-icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%3E%3Cpath%20d%3D%22M20%209a8%208%200%200%200-14-4L3%208m0-5v5h5m-4%207a8%208%200%200%200%2014%204l3-3m0%205v-5h-5%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%221.8%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22/%3E%3C/svg%3E"); }
+#cancel { --button-icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%3E%3Cpath%20d%3D%22M6%206h12v12H6z%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%221.8%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22/%3E%3C/svg%3E"); }
+#settingsButton { --button-icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%3E%3Cpath%20d%3D%22M4%206h16M4%2012h16M4%2018h16M8%203v6m8%200v6m-7%200v6%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%221.8%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22/%3E%3C/svg%3E"); }
+#exportXML { --button-icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%3E%3Cpath%20d%3D%22M12%203v12m-4-4%204%204%204-4M4%2016v5h16v-5%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%221.8%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22/%3E%3C/svg%3E"); }
+#locate { --button-icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%3E%3Cpath%20d%3D%22M10%203a7%207%200%201%200%200%2014%207%207%200%200%200%200-14m5%2012%206%206%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%221.8%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22/%3E%3C/svg%3E"); }
+#outputFolder { --button-icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%3E%3Cpath%20d%3D%22M2%206h7l2%202h11l-4%2011H2z%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%221.8%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22/%3E%3C/svg%3E"); }
+#nextAttention { --button-icon: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%3E%3Cpath%20d%3D%22M4%2012h14m-5-5%205%205-5%205m7-12v14%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%221.8%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22/%3E%3C/svg%3E"); }

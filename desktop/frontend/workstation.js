@@ -445,7 +445,9 @@ export function setupWorkstation(h) {
     $("stageProgress").title =
       "Pipeline stages completed; stages have different processing times";
     $("stageProgress").setAttribute("aria-valuetext", report.detail);
-    $("stageProgress").hidden = !report.busy && report.value === 0;
+    $("stageProgress").hidden = false;
+    $("stageProgress").classList.toggle("inactive", !report.busy);
+    for (const id of ["stateTitle", "stateDetail", "stateNext"]) $(id).title = $(id).textContent;
     const volumes = s.storageVolumes || [],
       disks = s.storage || [],
       waiting = disks.reduce((n, d) => n + d.waiting, 0);
