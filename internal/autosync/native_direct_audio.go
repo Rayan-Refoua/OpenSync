@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"io"
 	"opensync/internal/audio"
+	"opensync/internal/storageio"
 	"os"
+	"path/filepath"
 
 	"strings"
 	"sync"
@@ -146,6 +148,20 @@ func checkSource(r MediaRecord) error {
 	}
 	return nil
 }
+
+// Direct AVIO skips video-only spans in indexed containers. Restrict the
+// seek-heavy path to confirmed SSDs, where the source is opened locally.
+func analysisAudioArgs(source string) []string {
+	args := []string{"-nostdin", "-v", "error", "-threads", "1"}
+	switch strings.ToLower(filepath.Ext(source)) {
+	case ".mp4", ".mov":
+		if info := storageio.Inspect(source); info.Kind == storageio.KindSSD && !info.Serialized {
+			args = append(args, "-avioflags", "direct")
+		}
+	}
+	return append(args, "-i", source, "-map", "0:a:0", "-vn", "-ac", "1", "-ar", "16000")
+}
+
 func decodedStream(ctx context.Context, r MediaRecord, first, count int64, consume func(io.Reader) error) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -156,7 +172,7 @@ func decodedStream(ctx context.Context, r MediaRecord, first, count int64, consu
 	if err != nil {
 		return err
 	}
-	args := []string{"-nostdin", "-v", "error", "-threads", "1", "-i", r.Source, "-map", "0:a:0", "-vn", "-ac", "1", "-ar", "16000"}
+	args := analysisAudioArgs(r.Source)
 	// Trim AFTER resampling, with an unchanged decoder/resampler origin. Input
 	// seeking can change PCM phase or codec priming and is not used as a shortcut.
 	if count >= 0 {
