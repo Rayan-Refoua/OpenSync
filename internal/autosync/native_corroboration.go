@@ -87,15 +87,16 @@ func corroborateComponents(records []MediaRecord, edges []*PairEvidence, profile
 		byID[l.Recording] = l
 	}
 	type candidate struct {
-		edge    *PairEvidence
-		points  []TimePoint // component B -> component A, including timing bends
-		windows []TimePoint // evidence in component B
-		a, b    int
+		edge                *PairEvidence
+		points              []TimePoint // component B -> component A, including timing bends
+		windows             []TimePoint // evidence in component B
+		a, b                int
+		leftSize, rightSize int
 	}
 	buckets := map[[2]int][]candidate{}
 	for _, pair := range profiles {
 		r, q := byID[pair.Reference], byID[pair.Query]
-		if r.Component == q.Component || r.ComponentSize < 2 || q.ComponentSize < 2 {
+		if r.Component == q.Component || (r.ComponentSize < 2 && q.ComponentSize < 2) {
 			continue
 		}
 		for _, p := range pair.Profiles {
@@ -127,8 +128,13 @@ func corroborateComponents(records []MediaRecord, edges []*PairEvidence, profile
 			for _, w := range profileRegions(p) {
 				windows = append(windows, TimePoint{MapTime(q.Knots, w[0]), MapTime(q.Knots, w[1])})
 			}
+			if len(windows) == 0 && (r.ComponentSize == 1 || q.ComponentSize == 1) {
+				continue
+			}
 			a, b, ca, cb := pair.Reference, pair.Query, r.Component, q.Component
+			leftSize, rightSize := r.ComponentSize, q.ComponentSize
 			if ca > cb {
+				leftSize, rightSize = rightSize, leftSize
 				for i, w := range windows {
 					windows[i] = TimePoint{MapTime(points, w[0]), MapTime(points, w[1])}
 				}
@@ -136,7 +142,7 @@ func corroborateComponents(records []MediaRecord, edges []*PairEvidence, profile
 				a, b = b, a
 				ca, cb = cb, ca
 			}
-			buckets[[2]int{ca, cb}] = append(buckets[[2]int{ca, cb}], candidate{e, points, windows, a, b})
+			buckets[[2]int{ca, cb}] = append(buckets[[2]int{ca, cb}], candidate{e, points, windows, a, b, leftSize, rightSize})
 		}
 	}
 	keys := make([][2]int, 0, len(buckets))
@@ -149,6 +155,18 @@ func corroborateComponents(records []MediaRecord, edges []*PairEvidence, profile
 		}
 		return keys[i][1] < keys[j][1]
 	})
+	// A singleton with audited hypotheses in multiple groups cannot serve
+	// as an automatic bridge between those independently placed groups.
+	singletonBuckets := map[int]int{}
+	for _, key := range keys {
+		c := buckets[key][0]
+		if c.leftSize == 1 {
+			singletonBuckets[key[0]]++
+		}
+		if c.rightSize == 1 {
+			singletonBuckets[key[1]]++
+		}
+	}
 	result := append([]*PairEvidence(nil), edges...)
 	var reports []map[string]any
 	for _, key := range keys {
@@ -167,10 +185,45 @@ func corroborateComponents(records []MediaRecord, edges []*PairEvidence, profile
 			right[identity(c.b)] = true
 			windows = append(windows, c.windows...)
 		}
+		regions := distinctRegions(windows)
+		// A single long recorder can corroborate an established group when
+		// at least three distinct group recordings agree on its clock.
+		established := len(left) >= 2 && len(right) >= 2
+		singleton := (len(left) == 1 && len(right) >= 3 && cs[0].leftSize == 1 && singletonBuckets[key[0]] == 1) ||
+			(len(right) == 1 && len(left) >= 3 && cs[0].rightSize == 1 && singletonBuckets[key[1]] == 1)
 		compatible := true
 		if len(cs) > 64 {
 			status = "deferred_component_hypothesis_budget"
 			compatible = false
+		} else if singleton {
+			// Sample each candidate only within its own measured coverage.
+			// The shared recorder clock must explain all those intervals.
+			extents := make([][2]TimePoint, 0, len(cs))
+			for _, c := range cs {
+				if len(c.windows) == 0 {
+					continue
+				}
+				lo, hi := c.windows[0][0], c.windows[0][1]
+				for _, w := range c.windows {
+					lo = min(lo, w[0])
+					hi = max(hi, w[1])
+				}
+				extents = append(extents, [2]TimePoint{{lo, MapTime(c.points, lo)}, {hi, MapTime(c.points, hi)}})
+			}
+			offset, rate, ok := fitRecorderClock(extents)
+			compatible = ok
+			for _, c := range cs {
+				for _, w := range c.windows {
+					for _, x := range w {
+						if math.Abs(offset+rate*x-MapTime(c.points, x)) > .05 {
+							compatible = false
+						}
+					}
+				}
+			}
+			if !compatible {
+				status = "deferred_competing_component_transforms"
+			}
 		} else {
 			for i, a := range cs {
 				for _, b := range cs[:i] {
@@ -187,9 +240,12 @@ func corroborateComponents(records []MediaRecord, edges []*PairEvidence, profile
 				}
 			}
 		}
-		regions := distinctRegions(windows)
-		if compatible && len(left) >= 2 && len(right) >= 2 && regions >= 3 {
+
+		if compatible && (established || singleton) && regions >= 3 {
 			status = "distributed_component_support_not_certified"
+			if singleton {
+				status = "distributed_single_recorder_support_not_certified"
+			}
 			sort.SliceStable(cs, func(i, j int) bool {
 				a, b := cs[i].edge, cs[j].edge
 				if a.Reference != b.Reference {
@@ -215,4 +271,37 @@ func corroborateComponents(records []MediaRecord, edges []*PairEvidence, profile
 		reports = append(reports, map[string]any{"components": key, "status": status, "candidate_count": len(cs), "distinct_left_recordings": len(left), "distinct_right_recordings": len(right), "separated_regions": regions, "independent_certification": false})
 	}
 	return result, reports
+}
+
+// Give each candidate equal weight. A long clip contributing more audit
+// windows must not overwhelm the other recordings in the clock estimate.
+func fitRecorderClock(extents [][2]TimePoint) (offset, rate float64, ok bool) {
+	if len(extents) < 3 {
+		return 0, 0, false
+	}
+	var mx, my float64
+	for _, interval := range extents {
+		for _, p := range interval {
+			mx += p[0]
+			my += p[1] - p[0]
+		}
+	}
+	n := float64(2 * len(extents))
+	mx, my = mx/n, my/n
+	var xx, xy float64
+	for _, interval := range extents {
+		for _, p := range interval {
+			dx := p[0] - mx
+			xx += dx * dx
+			xy += dx * (p[1] - p[0] - my)
+		}
+	}
+	if xx <= 0 {
+		return 0, 0, false
+	}
+	drift := xy / xx
+	if math.Abs(drift) > .002 || math.IsNaN(drift) {
+		return 0, 0, false
+	}
+	return my - drift*mx, 1 + drift, true
 }

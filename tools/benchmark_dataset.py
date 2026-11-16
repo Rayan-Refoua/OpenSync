@@ -36,6 +36,7 @@ def main() -> None:
     parser.add_argument("output", type=Path)
     parser.add_argument("--mode", choices=["clips", "chronological"], default="clips")
     parser.add_argument("--profile-stage", default="Evaluating timing models")
+    parser.add_argument("--anchor", action="append", type=Path, default=[], help="add a reference recording")
     parser.add_argument("--baseline", type=Path, help="previous benchmark directory")
     parser.add_argument("--compare-only", action="store_true", help="compare existing output")
     args = parser.parse_args()
@@ -45,6 +46,8 @@ def main() -> None:
     if not args.compare_only:
         if not args.media.is_dir():
             parser.error("media must point to an existing folder")
+        if any(not anchor.is_file() for anchor in args.anchor):
+            parser.error("every reference recording must exist")
         out.mkdir(parents=True, exist_ok=False)
         exe = out / "opensync.exe"
         subprocess.run(["go", "build", "-o", str(exe), "./cmd/opensync"], cwd=ROOT, check=True)
@@ -53,7 +56,8 @@ def main() -> None:
         with (out / "sync.log").open("wb") as log:
             subprocess.run(
                 [str(exe), "sync", "--folders", str(args.media.resolve()),
-                 "--output", str(out / "project"), "--mode", args.mode],
+                 "--output", str(out / "project"), "--mode", args.mode,
+                 *(["--files", *[str(path.resolve()) for path in args.anchor]] if args.anchor else [])],
                 cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT, check=True,
             )
     if args.baseline:

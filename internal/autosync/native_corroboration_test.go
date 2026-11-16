@@ -159,3 +159,54 @@ func TestComponentCorroborationPreservesNonlinearClocks(t *testing.T) {
 // Read-only replay of saved acoustic evidence; no media extraction, no use of
 // PluralEyes as truth. Existing project placements provide a regression check,
 // not independent labels for false-positive-rate claims.
+
+func TestComponentCorroborationCanAttachOneRecorder(t *testing.T) {
+	for _, variant := range []string{"compatible", "only_two", "duplicate_pcm", "inconsistent"} {
+		t.Run(variant, func(t *testing.T) {
+			r, _, fixture := componentFixture()
+			r[3].Duration = 350
+			base := []*PairEvidence{testRelation(0, 1, 10, 1), testRelation(1, 2, 10, 1)}
+			var profiles []NativeProfilePair
+			for q := 0; q < 3; q++ {
+				p := *fixture[0].Profiles[0]
+				offset := 50 + float64(q*10)
+				if variant == "inconsistent" && q == 2 {
+					offset += .2
+				}
+				p.Model = &NativeRelationModel{Kind: "constant", Offset: offset}
+				groups := []*[]*Measurement{&p.Training, &p.Selection, &p.Audit}
+				for _, g := range groups {
+					independent := make([]*Measurement, len(*g))
+					for i, o := range *g {
+						m := *o
+						m.Offset = offset
+						independent[i] = &m
+					}
+					*g = independent
+				}
+				profiles = append(profiles, NativeProfilePair{Reference: 3, Query: q, Profiles: []*NativeProfile{&p}})
+			}
+			if variant == "only_two" {
+				profiles = profiles[:2]
+			}
+			if variant == "duplicate_pcm" {
+				r[1].CacheSHA = "same"
+				r[2].CacheSHA = "same"
+			}
+			got, report := corroborateComponents(r, base, profiles)
+			want := len(base)
+			if variant == "compatible" {
+				want += 3
+			}
+			if len(got) != want {
+				t.Fatalf("got %d edges, want %d: %+v", len(got), want, report)
+			}
+			if variant == "compatible" {
+				_, graph, err := nativeSolve(r, got)
+				if err != nil || len(graph["components"].([][]int)) != 1 {
+					t.Fatalf("recorder did not attach: %v", err)
+				}
+			}
+		})
+	}
+}

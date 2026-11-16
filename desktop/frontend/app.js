@@ -325,7 +325,11 @@ function drawClip(c, row) {
     ctx.font = "9px Consolas,monospace";
   }
   if (width > 170) {
-    const label = c.missing ? "MISSING SOURCE" : c.state.toUpperCase();
+    const label = c.missing
+      ? "MISSING SOURCE"
+      : c.status === "unresolved_disconnected_group"
+        ? `GROUP ${c.component} · LOCAL SYNC`
+        : c.state.toUpperCase();
     const tw = ctx.measureText(label).width;
     ctx.fillStyle = fill;
     ctx.fillRect(end - tw - 12, y + 2, tw + 10, 16);
@@ -586,8 +590,10 @@ function inspect(c) {
   const note = document.createElement("p");
   note.className = "muted";
   note.textContent =
-    c.state === "unresolved"
-      ? "This component has no established placement relative to the main group. It is preserved at the timeline end."
+    c.status === "unresolved_disconnected_group"
+      ? "This recording has supported timing within its group. The group has no established offset to the main timeline, so it is presented separately."
+      : c.state === "unresolved"
+        ? "No supported placement relative to the main group. This recording is preserved at the timeline end."
       : c.placementUncertainty
         ? "Provisional chronological estimate from recording order or calibrated timestamps. Its uncertainty is conditional on that metadata; this is not an acoustic match."
         : c.state === "supported"

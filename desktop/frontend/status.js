@@ -13,6 +13,7 @@ export const stages = [
   "Building project and Premiere XML",
 ];
 export function placementLabel(c) {
+  if (c.status === "unresolved_disconnected_group") return "Aligned within a separate group";
   return (
     {
       supported: "Acoustically supported",
