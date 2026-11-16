@@ -31,6 +31,26 @@ try {
   console.log(result);
   assert.ok(result.body<=width && result.settings && result.export && result.inspector);
   assert.ok(result.canvas<=Math.ceil(width*1.5) && result.pixel[3]>0);
+  const progress = await page.evaluate(() => {
+   const w = window.opensyncTest.workstation;
+   const state = { running: true, stage: "Streaming audio and extracting fingerprints" };
+   const timeline = () => document.querySelector("#timeline").getBoundingClientRect().toJSON();
+   const before = timeline();
+   w.status({ ...state, ioProgress: { remaining: 5, total: 6, eta: 43, files: [
+     { name: "Office_ch5_20260820151043_20260820172806.mp4", fraction: .37, eta: 18 },
+     { name: "camera.mp4", fraction: .09, eta: 11 },
+   ] } });
+   const text = document.querySelector("#ioFiles").textContent;
+   const whileSyncing = w.monitor.enabled;
+   const after = timeline();
+   w.status({ running: false });
+   return { before, after, text, whileSyncing, idleText: document.querySelector("#ioFiles").textContent, enabled: w.monitor.enabled };
+  });
+  assert.deepEqual(progress.before, progress.after);
+  assert.match(progress.text, /Files left 5\/6.*~43s.*Office_ch5.*37%.*~18s.*camera.mp4.*~11s/);
+  assert.equal(progress.whileSyncing,false);
+  assert.equal(progress.enabled,true);
+  assert.equal(progress.idleText,"");
   assert.deepEqual(errors,[]);
   await page.close();
  }

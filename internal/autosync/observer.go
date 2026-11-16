@@ -5,6 +5,7 @@ import "context"
 // ProgressEvent is observational only. It never participates in evidence,
 // scheduling or acceptance decisions. Callbacks must return promptly.
 type ProgressEvent struct {
+	IO        *IOProgress    `json:"io,omitempty"`
 	Kind      string         `json:"kind"`
 	Stage     string         `json:"stage,omitempty"`
 	Detail    string         `json:"detail,omitempty"`

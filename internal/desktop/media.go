@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -85,6 +86,7 @@ func (c *byteCache) setLimit(limit int) {
 }
 
 type Service struct {
+	preview                  previewGate
 	mu                       sync.RWMutex
 	project                  *Project
 	generation               uint64
@@ -261,7 +263,13 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	stop := context.AfterFunc(life, cancel)
 	defer stop()
 	if r.URL.Path == "/media/audio" {
-		s.serveAudio(ctx, w, r, p)
+		job, done, err := s.preview.enter(ctx)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusServiceUnavailable)
+			return
+		}
+		defer done()
+		s.serveAudio(job, w, r, p)
 		return
 	}
 	idx, e := strconv.Atoi(r.URL.Query().Get("clip"))
@@ -295,6 +303,13 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/media/wave":
 		b, err = s.wave(ctx, life, r, c)
 	case "/media/thumb":
+		job, done, gateErr := s.preview.enter(ctx)
+		if gateErr != nil {
+			http.Error(w, gateErr.Error(), http.StatusServiceUnavailable)
+			return
+		}
+		defer done()
+		ctx = job
 		if err = acquire(ctx, s.thumbs); err != nil {
 			return
 		}
@@ -318,6 +333,10 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		if ctx.Err() != nil {
+			return
+		}
+		if errors.Is(err, errPreviewPaused) || errors.Is(err, context.Canceled) {
+			http.Error(w, err.Error(), http.StatusServiceUnavailable)
 			return
 		}
 		http.Error(w, err.Error(), 422)

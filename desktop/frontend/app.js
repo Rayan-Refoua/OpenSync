@@ -99,6 +99,7 @@ async function action(fn) {
 }
 async function fetchBytes(url, signal) {
   const r = await fetch(url, { signal });
+  if (r.status === 503) throw Object.assign(Error("Preview paused"), { retry: true });
   if (!r.ok) throw Error(await r.text());
   return r.arrayBuffer();
 }
@@ -108,6 +109,7 @@ const waves = new TileCache(24 << 20, 4, requestDraw, async (url, signal) => {
 });
 const thumbs = new TileCache(24 << 20, 2, requestDraw, async (url, signal) => {
   const r = await fetch(url, { signal });
+  if (r.status === 503) throw Object.assign(Error("Preview paused"), { retry: true });
   if (!r.ok) throw Error(await r.text());
   const im = await createImageBitmap(await r.blob());
   return { value: im, bytes: im.width * im.height * 4 };

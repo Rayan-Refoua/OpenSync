@@ -105,7 +105,7 @@ export class TileCache {
     let n = [...this.pending.values()].filter((v) => v.controller).length;
     for (const v of this.pending.values()) {
       if (n >= this.concurrency) break;
-      if (v.controller) continue;
+      if (v.controller || v.retryAt > Date.now()) continue;
       n++;
       v.controller = new AbortController();
       this.load(v.url, v.controller.signal)
@@ -125,7 +125,10 @@ export class TileCache {
           }
         })
         .catch((e) => {
-          if (e.name !== "AbortError") {
+          if (e.retry) {
+            v.retryAt = Date.now() + 1250;
+            setTimeout(() => this.pump(), 1250);
+          } else if (e.name !== "AbortError") {
             this.errors++;
             this.lastError = e.message;
             this.cache.set(v.key, { value: { error: e.message }, bytes: 0 });
@@ -135,7 +138,10 @@ export class TileCache {
           }
         })
         .finally(() => {
-          if (this.pending.get(v.key) === v) this.pending.delete(v.key);
+          if (this.pending.get(v.key) === v) {
+            if (v.retryAt > Date.now()) v.controller = null;
+            else this.pending.delete(v.key);
+          }
           this.onChange();
           this.pump();
         });

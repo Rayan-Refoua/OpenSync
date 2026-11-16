@@ -51,6 +51,13 @@ func (s *Service) Handler() http.Handler {
 		defer cancel()
 		stop := context.AfterFunc(life, cancel)
 		defer stop()
+		previewCtx, finishPreview, gateErr := s.preview.enter(ctx)
+		if gateErr != nil {
+			http.Error(w, gateErr.Error(), http.StatusServiceUnavailable)
+			return
+		}
+		defer finishPreview()
+		ctx = previewCtx
 		r = r.WithContext(ctx)
 		w.Header().Set("Cache-Control", "no-store")
 		if r.URL.Path == "/media/segment" {

@@ -32,6 +32,7 @@ type App struct {
 	seq                         int64
 	stage, detail               string
 	running                     bool
+	ioProgress                  *autosync.IOProgress
 	cancel                      context.CancelFunc
 	inputs                      []string
 	diagnosticWritten           bool
@@ -172,7 +173,7 @@ func (a *App) Status(after int64) map[string]any {
 			events = append(events, e)
 		}
 	}
-	r := map[string]any{"running": a.running, "stage": a.stage, "detail": a.detail, "events": events, "inputs": len(a.inputs), "version": autosync.BuildVersion}
+	r := map[string]any{"ioProgress": a.ioProgress, "running": a.running, "stage": a.stage, "detail": a.detail, "events": events, "inputs": len(a.inputs), "version": autosync.BuildVersion}
 	activity := map[int]string{}
 	for k, v := range a.clipActivity {
 		activity[k] = v
@@ -249,6 +250,7 @@ func (a *App) startSync(override []string, corrections string) error {
 	ctx, cancel := context.WithCancel(a.ctx)
 	ctx = autosync.WithHiddenMediaWindows(ctx)
 	ctx = autosync.WithProgressObserver(ctx, a.progress)
+	ctx = autosync.WithFingerprintPCM(ctx, a.media.SyncWaveform)
 	a.mu.Lock()
 	if a.running {
 		a.mu.Unlock()
@@ -262,6 +264,7 @@ func (a *App) startSync(override []string, corrections string) error {
 	a.clipActivity = map[int]string{}
 	a.cancel = cancel
 	a.stage = "Starting synchronization"
+	a.ioProgress = nil
 	a.mu.Unlock()
 	a.log("sync", "Native Go synchronization started · disk cache disabled · "+out)
 	settings := a.GetSettings()
@@ -284,7 +287,9 @@ func (a *App) startSync(override []string, corrections string) error {
 				o.Files = append(o.Files, p)
 			}
 		}
+		a.media.PausePreview()
 		err := autosync.NativeSync(ctx, o)
+		a.media.ResumePreview()
 		runtime.GOMAXPROCS(prior)
 		a.mu.Lock()
 		a.running = false
@@ -323,6 +328,12 @@ func (a *App) startSync(override []string, corrections string) error {
 	return nil
 }
 func (a *App) progress(e autosync.ProgressEvent) {
+	if e.Kind == "io_read" {
+		a.mu.Lock()
+		a.ioProgress = e.IO
+		a.mu.Unlock()
+		return
+	}
 	if e.Kind == "pair" {
 		a.mu.Lock()
 		a.stageCompleted, a.stageTotal = e.Completed, e.Total
@@ -342,6 +353,7 @@ func (a *App) progress(e autosync.ProgressEvent) {
 	if e.Kind == "stage" {
 		a.mu.Lock()
 		a.stageStarted = time.Now()
+		a.ioProgress = nil
 		a.stageCompleted, a.stageTotal = 0, 0
 		a.mu.Unlock()
 		a.log("stage", e.Stage)

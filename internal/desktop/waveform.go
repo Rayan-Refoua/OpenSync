@@ -140,7 +140,11 @@ func sourcePeakKey(c Clip) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	path, err := filepath.Abs(c.Source)
+	return peakIdentity(c.Source, st.Size(), st.ModTime().UnixNano())
+}
+
+func peakIdentity(source string, bytes, mtime int64) (string, error) {
+	path, err := filepath.Abs(source)
 	if err != nil {
 		return "", err
 	}
@@ -148,10 +152,15 @@ func sourcePeakKey(c Clip) (string, error) {
 	if runtime.GOOS == "windows" {
 		path = strings.ToLower(path)
 	}
-	return path + "\x00" + strconv.FormatInt(st.Size(), 10) + "\x00" + strconv.FormatInt(st.ModTime().UnixNano(), 10), nil
+	return path + "\x00" + strconv.FormatInt(bytes, 10) + "\x00" + strconv.FormatInt(mtime, 10), nil
 }
 
 func (s *Service) decodePeakChunk(ctx context.Context, c Clip, index int64) (*peakChunk, error) {
+	ctx, done, gateErr := s.preview.enter(ctx)
+	if gateErr != nil {
+		return nil, gateErr
+	}
+	defer done()
 	if err := s.visual.acquire(ctx); err != nil {
 		return nil, err
 	}
@@ -196,6 +205,10 @@ func (s *Service) decodePeakChunk(ctx context.Context, c Clip, index int64) (*pe
 			base[i] = peakPair{}
 		}
 	}
+	return buildPeakChunk(base), nil
+}
+
+func buildPeakChunk(base []peakPair) *peakChunk {
 	chunk := &peakChunk{levels: [][]peakPair{base}, bytes: 1024 + len(base)*8}
 	for len(base) > 1 {
 		next := make([]peakPair, len(base)/2)
@@ -207,7 +220,7 @@ func (s *Service) decodePeakChunk(ctx context.Context, c Clip, index int64) (*pe
 		chunk.bytes += len(next) * 8
 		base = next
 	}
-	return chunk, nil
+	return chunk
 }
 
 func (s *Service) waveFromPeaks(ctx, life context.Context, c Clip, level, tile int) ([]byte, error) {
@@ -224,7 +237,13 @@ func (s *Service) waveFromPeaks(ctx, life context.Context, c Clip, level, tile i
 		return nil, fmt.Errorf("waveform tile outside source")
 	}
 	start := int64(startFloat)
-	identity, err := sourcePeakKey(c)
+	var identity string
+	var err error
+	if c.Metadata.SourceBytes > 0 && c.Metadata.SourceMtime > 0 {
+		identity, err = peakIdentity(c.Source, c.Metadata.SourceBytes, c.Metadata.SourceMtime)
+	} else {
+		identity, err = sourcePeakKey(c)
+	}
 	if err != nil {
 		return nil, err
 	}

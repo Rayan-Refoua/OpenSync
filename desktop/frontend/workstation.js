@@ -18,6 +18,7 @@ export function setupWorkstation(h) {
       h.pan(c.start);
     },
   );
+  let wasSyncing = false;
   let config = {
       mode: "clips",
       resources: {
@@ -415,6 +416,23 @@ export function setupWorkstation(h) {
     monitor.reset();
   });
   function status(s) {
+    const estimate = (seconds) => {
+      if (!Number.isFinite(seconds) || seconds < 0) return "ETA —";
+      const n = Math.ceil(seconds);
+      return n < 60 ? `~${n}s left` : `~${Math.floor(n / 60)}m ${String(n % 60).padStart(2, "0")}s left`;
+    };
+    const io = s.running ? s.ioProgress : null;
+    const row = $("ioFiles");
+    const files = (io?.files || []).map((f) =>
+      `${f.name} · ${f.fraction >= 0 ? Math.round(f.fraction * 100) + "% · " : ""}${estimate(f.eta)}`,
+    );
+    row.textContent = io ? `Files left ${io.remaining}/${io.total} · ${estimate(io.eta)}${files.length ? "  |  " + files.join("  |  ") : ""}` : "";
+    row.title = row.textContent;
+    if (wasSyncing !== !!s.running) {
+      wasSyncing = !!s.running;
+      monitor.enabled = !s.running;
+      if (s.running) { h.stop(); monitor.reset(); }
+    }
     $("syncMode").disabled = !!s.running;
     for (const id of [
       "rebuildSolution",
@@ -487,7 +505,7 @@ export function setupWorkstation(h) {
     if (s.running)
       $("engineStage").textContent =
         `${s.stage} · ${Math.floor(s.stageSeconds || 0)}s`;
-    if (config.resources.background === "off") {
+    if (s.running || config.resources.background === "off") {
       h.thumbs.suspended = true;
     } else h.thumbs.suspended = false;
   }
