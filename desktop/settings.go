@@ -40,7 +40,7 @@ func normalizeLayout(s *WorkstationSettings) error {
 		s.UnmatchedPolicy = "append"
 	}
 	switch s.UnmatchedPolicy {
-	case "append", "separate-sequence", "order_only", "remove", "disabled":
+	case "append", "separate-sequence", "order_only", "remove", "disabled", "local-tracks":
 	default:
 		return fmt.Errorf("invalid unmatched export policy")
 	}

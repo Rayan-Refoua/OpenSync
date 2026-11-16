@@ -134,7 +134,7 @@ type NativeExportOptions struct {
 
 func validUnmatchedPolicy(policy string) bool {
 	switch policy {
-	case "append", "separate-sequence", "order_only", "disabled", "remove":
+	case "append", "separate-sequence", "order_only", "disabled", "remove", "local-tracks":
 		return true
 	}
 	return false
@@ -149,7 +149,7 @@ func NativeExportCommand(args []string) error {
 	f := flag.NewFlagSet("export", flag.ContinueOnError)
 	o := NativeExportOptions{}
 	f.StringVar(&o.Output, "output", filepath.Dir(project), "output directory")
-	f.StringVar(&o.Unsynced, "unsynced", "append", "append, separate-sequence, order_only, disabled, or remove")
+	f.StringVar(&o.Unsynced, "unsynced", "append", "append, separate-sequence, order_only, disabled, remove, or local-tracks")
 	f.Float64Var(&o.MaxResidualMS, "max-residual-ms", 150, "maximum presentation residual")
 	f.BoolVar(&o.IncludeProvisional, "include-provisional", false, "include marked comparison candidates")
 	f.Float64Var(&o.AudioEarlyMS, "audio-early-ms", 50, "allowed audio lead in milliseconds")
@@ -368,6 +368,9 @@ func nativePlacements(p *NativeProject, o NativeExportOptions) ([]NativePlacemen
 	for _, c := range components {
 		for _, i := range groups[c] {
 			result[i].Disabled = o.Unsynced == "disabled"
+			if o.Unsynced == "local-tracks" && result[i].Status == "unresolved_disconnected_group" {
+				result[i].LayoutBasis = "dedicated_local_sync_tracks"
+			}
 			if o.Unsynced == "order_only" {
 				result[i].LayoutBasis = "ordered_without_reliable_timing"
 			}
@@ -615,6 +618,9 @@ func buildNativeXML(p *NativeProject, placements []NativePlacement, seqRate Fram
 			byPlacement[i] = entries
 			for _, in := range entries {
 				k := fmt.Sprintf("%s|%s|%04d|%04d", in.Kind, recordGroup[v.Recording], in.Channel, channelCount(r))
+				if v.LayoutBasis == "dedicated_local_sync_tracks" {
+					k = fmt.Sprintf("%s|~local-sync-%08d|%s", in.Kind, v.Component, k)
+				}
 				choice := -1
 				for j, lane := range lanes[k] {
 					if placements[lane[len(lane)-1].Placement].End <= v.Start {
@@ -689,6 +695,9 @@ func buildNativeXML(p *NativeProject, placements []NativePlacement, seqRate Fram
 				if strings.HasPrefix(v.Status, "unresolved") {
 					label = "Rose"
 					description = "Unresolved relative to the main sequence"
+					if v.LayoutBasis == "dedicated_local_sync_tracks" {
+						description = fmt.Sprintf("Local sync group %d; its offset to the main sequence is unresolved", v.Component)
+					}
 				} else if strings.HasPrefix(v.Status, "provisional") {
 					label = "Mango"
 					description = "Provisional acoustic placement for comparison, not certified"

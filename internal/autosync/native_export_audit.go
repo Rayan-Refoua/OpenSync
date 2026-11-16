@@ -363,7 +363,7 @@ func ValidateNativeExport(data []byte, records []MediaRecord, placements []Nativ
 			syncedEnd = max(syncedEnd, p.End)
 		}
 	}
-	if (policy == "append" || policy == "disabled" || policy == "order_only") && unStart < syncedEnd {
+	if (policy == "append" || policy == "disabled" || policy == "order_only" || policy == "local-tracks") && unStart < syncedEnd {
 		return fmt.Errorf("unresolved section overlaps synchronized section")
 	}
 	return nil

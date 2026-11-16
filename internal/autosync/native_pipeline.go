@@ -53,7 +53,7 @@ func NativeSyncCommand(ctx context.Context, args []string) error {
 	f.StringVar(&o.Name, "name", "OpenSync", "project name")
 	f.StringVar(&o.Mode, "mode", "clips", "clips (acoustic placement) or chronological (also estimate bounded gaps from calibrated recording order)")
 	f.StringVar(&o.Corrections, "corrections", "", "saved project/revision whose explicit rejected recordings and pairs must remain rejected")
-	f.StringVar(&o.Unsynced, "unsynced", "append", "append, separate-sequence, order_only, disabled, or remove")
+	f.StringVar(&o.Unsynced, "unsynced", "append", "append, separate-sequence, order_only, disabled, remove, or local-tracks")
 	f.StringVar(&o.Stage, "stage", "all", "cache, discover, verify, or all")
 	f.Float64Var(&o.AudioEarlyMS, "audio-early-ms", 50, "allowed audio lead in milliseconds")
 	f.Float64Var(&o.AudioLateMS, "audio-late-ms", 70, "allowed audio lag in milliseconds")
