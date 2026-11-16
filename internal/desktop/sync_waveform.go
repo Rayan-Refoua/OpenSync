@@ -4,12 +4,22 @@ import (
 	"encoding/binary"
 	"math"
 	"opensync/internal/autosync"
+	"path/filepath"
 	"strconv"
 )
 
 // SyncWaveform builds the normal peak pyramid from borrowed 16 kHz mono PCM.
 // One partial chunk per decoder is held outside the bounded shared LRU.
 func (s *Service) SyncWaveform(record autosync.MediaRecord) func([]byte) {
+	return s.syncWaveform(record, "", nil)
+}
+
+// SyncWaveformTo persists complete chunks beside the project as sync progresses.
+func (s *Service) SyncWaveformTo(record autosync.MediaRecord, projectDir string, onError func(error)) func([]byte) {
+	return s.syncWaveform(record, filepath.Join(projectDir, "Waveform Peaks"), onError)
+}
+
+func (s *Service) syncWaveform(record autosync.MediaRecord, dir string, onError func(error)) func([]byte) {
 	if record.SourceBytes <= 0 || record.SourceMtime <= 0 {
 		return nil
 	}
@@ -31,6 +41,14 @@ func (s *Service) SyncWaveform(record autosync.MediaRecord) func([]byte) {
 			p.evict()
 		}
 		p.mu.Unlock()
+		if dir != "" {
+			if err := writePeakChunk(dir, key, chunk); err != nil {
+				if onError != nil {
+					onError(err)
+				}
+				dir = "" // Keep providing RAM peaks if storage is unavailable.
+			}
+		}
 		base = nil
 		samples = 0
 		index++

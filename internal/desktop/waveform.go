@@ -156,11 +156,29 @@ func peakIdentity(source string, bytes, mtime int64) (string, error) {
 }
 
 func (s *Service) decodePeakChunk(ctx context.Context, c Clip, index int64) (*peakChunk, error) {
+	return s.loadPeakChunk(ctx, c, index, "", "")
+}
+
+func (s *Service) loadPeakChunk(ctx context.Context, c Clip, index int64, dir, key string) (*peakChunk, error) {
 	ctx, done, gateErr := s.preview.enter(ctx)
 	if gateErr != nil {
 		return nil, gateErr
 	}
 	defer done()
+	if dir != "" {
+		// Validate the original's identity before reusing a project sidecar.
+		// Read only metadata here; a cache hit skips opening the audio stream.
+		actual, err := sourcePeakKey(c)
+		if err != nil {
+			return nil, err
+		}
+		if actual+"\x00"+strconv.FormatInt(index, 10) != key {
+			dir = ""
+		}
+	}
+	if cached := readPeakChunk(dir, key); cached != nil {
+		return cached, nil
+	}
 	if err := s.visual.acquire(ctx); err != nil {
 		return nil, err
 	}
@@ -205,7 +223,11 @@ func (s *Service) decodePeakChunk(ctx context.Context, c Clip, index int64) (*pe
 			base[i] = peakPair{}
 		}
 	}
-	return buildPeakChunk(base), nil
+	chunk := buildPeakChunk(base)
+	if dir != "" {
+		_ = writePeakChunk(dir, key, chunk)
+	}
+	return chunk, nil
 }
 
 func buildPeakChunk(base []peakPair) *peakChunk {
@@ -247,6 +269,16 @@ func (s *Service) waveFromPeaks(ctx, life context.Context, c Clip, level, tile i
 	if err != nil {
 		return nil, err
 	}
+	dir := ""
+	if p := s.Project(); p != nil && p.Path != "" {
+		path := p.Path
+		if revision, ok := p.Graph["solution_revision"].(map[string]any); ok {
+			if base, ok := revision["base_project"].(string); ok && base != "" {
+				path = base
+			}
+		}
+		dir = filepath.Join(filepath.Dir(path), "Waveform Peaks")
+	}
 	out := make([]byte, bins*8)
 	// One tile can touch several source chunks. Hold local references only for
 	// the duration of this request; the shared LRU owns the bounded resident set.
@@ -265,7 +297,7 @@ func (s *Service) waveFromPeaks(ctx, life context.Context, c Clip, level, tile i
 			index := pos / peakChunkSamples
 			if index != heldIndex {
 				key := identity + "\x00" + strconv.FormatInt(index, 10)
-				held, err = s.peaks.load(ctx, life, key, func(job context.Context) (*peakChunk, error) { return s.decodePeakChunk(job, c, index) })
+				held, err = s.peaks.load(ctx, life, key, func(job context.Context) (*peakChunk, error) { return s.loadPeakChunk(job, c, index, dir, key) })
 				if err != nil {
 					return nil, err
 				}

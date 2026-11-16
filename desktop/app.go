@@ -250,7 +250,12 @@ func (a *App) startSync(override []string, corrections string) error {
 	ctx, cancel := context.WithCancel(a.ctx)
 	ctx = autosync.WithHiddenMediaWindows(ctx)
 	ctx = autosync.WithProgressObserver(ctx, a.progress)
-	ctx = autosync.WithFingerprintPCM(ctx, a.media.SyncWaveform)
+	var peakWriteWarning sync.Once
+	ctx = autosync.WithFingerprintPCM(ctx, func(record autosync.MediaRecord) func([]byte) {
+		return a.media.SyncWaveformTo(record, out, func(err error) {
+			peakWriteWarning.Do(func() { a.log("warning", "Could not save waveform peaks: "+err.Error()) })
+		})
+	})
 	a.mu.Lock()
 	if a.running {
 		a.mu.Unlock()
