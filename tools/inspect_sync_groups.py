@@ -23,6 +23,21 @@ def summarize(project, earlier=None):
         "components": groups,
     }
     if earlier:
+        def status_by_name(payload):
+            items = payload["recordings"]
+            return {
+                items[m["recording"]]["name"].casefold(): m["status"]
+                for m in payload["timing_models"]
+            }
+
+        before, after = status_by_name(earlier), status_by_name(project)
+        result["changed_placements"] = [
+            {"name": record["name"], "previous": before[key], "current": after[key]}
+            for record in records
+            if (key := record["name"].casefold()) in before
+            and key in after and before[key] != after[key]
+        ]
+        result["comparison_association"] = "case-insensitive filename, for diagnosis only"
         missing = {}
         for i in earlier["graph"]["active_edges"]:
             edge = earlier["validated_relations"][i]
