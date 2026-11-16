@@ -12,10 +12,12 @@ import (
 )
 
 type WorkstationSettings struct {
-	Mode      string                   `json:"mode"`
-	Resources desktop.ResourceSettings `json:"resources"`
-	Shortcuts map[string]string        `json:"shortcuts"`
-	Layout    MonitorLayout            `json:"layout"`
+	AudioEarlyMS float64                  `json:"audioEarlyMS"`
+	AudioLateMS  float64                  `json:"audioLateMS"`
+	Mode         string                   `json:"mode"`
+	Resources    desktop.ResourceSettings `json:"resources"`
+	Shortcuts    map[string]string        `json:"shortcuts"`
+	Layout       MonitorLayout            `json:"layout"`
 }
 type MonitorLayout struct {
 	Position string `json:"position"`
@@ -24,6 +26,15 @@ type MonitorLayout struct {
 }
 
 func normalizeLayout(s *WorkstationSettings) error {
+	if s.AudioEarlyMS < 0 || s.AudioLateMS < 0 {
+		return fmt.Errorf("audio drift tolerances must be positive")
+	}
+	if s.AudioEarlyMS == 0 {
+		s.AudioEarlyMS = 50
+	}
+	if s.AudioLateMS == 0 {
+		s.AudioLateMS = 70
+	}
 	if s.Mode == "" {
 		s.Mode = "clips"
 	}
@@ -40,7 +51,7 @@ func normalizeLayout(s *WorkstationSettings) error {
 }
 
 func defaultSettings() WorkstationSettings {
-	return WorkstationSettings{Mode: "clips", Resources: desktop.DefaultResourceSettings(), Shortcuts: map[string]string{}, Layout: MonitorLayout{Position: "right", Rows: 4}}
+	return WorkstationSettings{AudioEarlyMS: 50, AudioLateMS: 70, Mode: "clips", Resources: desktop.DefaultResourceSettings(), Shortcuts: map[string]string{}, Layout: MonitorLayout{Position: "right", Rows: 4}}
 }
 func settingsPath() string {
 	root, err := os.UserConfigDir()

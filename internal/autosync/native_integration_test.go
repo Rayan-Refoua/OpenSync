@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -202,12 +203,19 @@ func TestNativeAudioOnlyDriftRender(t *testing.T) {
 		t.Fatalf("drift render duration %.12f", duration)
 	}
 	p := &NativeProject{Data: NativePayload{Name: "Render", Records: []MediaRecord{r}, Models: []TimeModel{{Recording: 0, Component: 1, ComponentSize: 1, Offset: 4, Rate: 1.015, Knots: points, Error: .001, Status: "acoustically_supported_not_certified"}}}}
-	placements, rate, err := nativePlacements(p, NativeExportOptions{Output: root, Unsynced: "append", MaxResidualMS: 45})
+	placements, rate, err := nativePlacements(p, NativeExportOptions{Output: root, Unsynced: "append", MaxResidualMS: 60})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(placements) != 1 || placements[0].Derivative == nil {
 		t.Fatal("audio correction missing")
+	}
+	if filepath.Dir(*placements[0].Derivative) != root || !strings.HasSuffix(*placements[0].Derivative, "_driftCorrection.wav") {
+		t.Fatal("correction was not written beside the original")
+	}
+	tolerated, _, err := nativePlacements(p, NativeExportOptions{Output: root, Unsynced: "append", MaxResidualMS: 150, AudioLateMS: 100})
+	if err != nil || len(tolerated) != 1 || tolerated[0].Derivative != nil {
+		t.Fatalf("drift within configured tolerance was corrected: %v", err)
 	}
 	data, err := buildNativeXML(p, placements, rate)
 	if err != nil {

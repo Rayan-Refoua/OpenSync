@@ -55,6 +55,8 @@ func NativeSyncCommand(ctx context.Context, args []string) error {
 	f.StringVar(&o.Corrections, "corrections", "", "saved project/revision whose explicit rejected recordings and pairs must remain rejected")
 	f.StringVar(&o.Unsynced, "unsynced", "append", "append or separate-sequence")
 	f.StringVar(&o.Stage, "stage", "all", "cache, discover, verify, or all")
+	f.Float64Var(&o.AudioEarlyMS, "audio-early-ms", 50, "allowed audio lead in milliseconds")
+	f.Float64Var(&o.AudioLateMS, "audio-late-ms", 70, "allowed audio lag in milliseconds")
 	f.Float64Var(&o.MaxResidualMS, "max-residual-ms", 150, "maximum export presentation residual")
 	f.BoolVar(&o.CacheEnabled, "cache", false, "explicitly retain analysis cache for reuse; never copy originals")
 	f.BoolVar(&o.Resume, "resume", false, "resume compatible cached work")
@@ -481,5 +483,5 @@ func nativeFinish(records []MediaRecord, edges []*PairEvidence, profiles []Nativ
 	if err = saveNativeProject(path, o.Name, records, edges, layout, graph); err != nil {
 		return err
 	}
-	return ExportNative(path, NativeExportOptions{Output: o.Output, Unsynced: o.Unsynced, MaxResidualMS: o.MaxResidualMS, IncludeProvisional: o.IncludeProvisional})
+	return ExportNative(path, NativeExportOptions{AudioEarlyMS: o.AudioEarlyMS, AudioLateMS: o.AudioLateMS, Output: o.Output, Unsynced: o.Unsynced, MaxResidualMS: o.MaxResidualMS, IncludeProvisional: o.IncludeProvisional})
 }

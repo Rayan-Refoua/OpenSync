@@ -19,6 +19,7 @@ import (
 )
 
 type NativeSyncOptions struct {
+	AudioEarlyMS, AudioLateMS float64
 	// ManagedMemoryMiB bounds persistent in-memory analysis/audio working sets.
 	// Zero preserves the CLI's adaptive defaults; temporary DSP allocations are
 	// additionally governed by the embedding application's Go memory target.
@@ -180,6 +181,9 @@ func nativeInputFiles(o NativeSyncOptions) ([]string, []map[string]any, error) {
 			}
 			if d.Type()&os.ModeSymlink != 0 {
 				excluded = append(excluded, map[string]any{"path": path, "reason": "symbolic link skipped to avoid duplicate media or directory cycles"})
+				return nil
+			}
+			if !d.IsDir() && strings.HasSuffix(strings.ToLower(d.Name()), "_driftcorrection.wav") {
 				return nil
 			}
 			if d.IsDir() {

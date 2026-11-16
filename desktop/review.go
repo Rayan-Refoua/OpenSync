@@ -160,7 +160,8 @@ func (a *App) ExportProjectXML() (output string, err error) {
 		}
 		a.mu.Unlock()
 	}()
-	if err = autosync.ExportNative(p.Path, autosync.NativeExportOptions{Output: out, Unsynced: "append", MaxResidualMS: 150}); err != nil {
+	settings := a.GetSettings()
+	if err = autosync.ExportNative(p.Path, autosync.NativeExportOptions{AudioEarlyMS: settings.AudioEarlyMS, AudioLateMS: settings.AudioLateMS, Output: out, Unsynced: "append", MaxResidualMS: 150}); err != nil {
 		a.log("error", err.Error())
 		return "", err
 	}

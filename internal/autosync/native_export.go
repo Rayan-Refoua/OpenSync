@@ -124,9 +124,10 @@ type NativePlacement struct {
 	rate                 FrameRate
 }
 type NativeExportOptions struct {
-	Output, Unsynced   string
-	MaxResidualMS      float64
-	IncludeProvisional bool
+	AudioEarlyMS, AudioLateMS float64
+	Output, Unsynced          string
+	MaxResidualMS             float64
+	IncludeProvisional        bool
 }
 
 func NativeExportCommand(args []string) error {
@@ -141,6 +142,8 @@ func NativeExportCommand(args []string) error {
 	f.StringVar(&o.Unsynced, "unsynced", "append", "append or separate-sequence")
 	f.Float64Var(&o.MaxResidualMS, "max-residual-ms", 150, "maximum presentation residual")
 	f.BoolVar(&o.IncludeProvisional, "include-provisional", false, "include marked comparison candidates")
+	f.Float64Var(&o.AudioEarlyMS, "audio-early-ms", 50, "allowed audio lead in milliseconds")
+	f.Float64Var(&o.AudioLateMS, "audio-late-ms", 70, "allowed audio lag in milliseconds")
 	if err := f.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -155,6 +158,18 @@ func nativePlacements(p *NativeProject, o NativeExportOptions) ([]NativePlacemen
 	}
 	if o.MaxResidualMS < 1 || o.MaxResidualMS > 150 {
 		return nil, FrameRate{}, fmt.Errorf("residual limit must be 1..150ms")
+	}
+	early, late := o.AudioEarlyMS, o.AudioLateMS
+	if early == 0 {
+		early = 50
+	}
+	if late == 0 {
+		late = 70
+	}
+	for _, v := range []float64{early, late} {
+		if math.IsNaN(v) || math.IsInf(v, 0) || v < 0 {
+			return nil, FrameRate{}, fmt.Errorf("invalid audio drift tolerance")
+		}
 	}
 	counts := map[FrameRate]int{}
 	for _, r := range p.Data.Records {
@@ -234,12 +249,12 @@ func nativePlacements(p *NativeProject, o NativeExportOptions) ([]NativePlacemen
 			if err != nil {
 				return nil, seq, fmt.Errorf("%s: %w", r.Name, err)
 			}
-		} else if resolved && (hi-lo)/2 > budget {
+		} else if resolved && r.Audio != nil && !strings.HasPrefix(m.Status, "provisional") && (MapTime(points, 0)-lo > late/1000+1e-9 || hi-MapTime(points, 0) > early/1000+1e-9) {
 			if budget < .03 {
 				m.Status = "unresolved_timing_uncertainty"
 			} else {
-				keyData, _ := json.Marshal(map[string]any{"id": r.ID, "mapping": points, "source": r.CacheSHA, "renderer": "mapped-audio-native-v1"})
-				target, _ := filepath.Abs(filepath.Join(o.Output, "Audio Derivatives", shaBytes(keyData)[:16]+".wav"))
+				keyData, _ := json.Marshal([]any{r.ID, r.SourceBytes, r.SourceMtime, r.CacheSHA, points})
+				target := strings.TrimSuffix(r.Source, filepath.Ext(r.Source)) + "_" + shaBytes(keyData)[:12] + "_driftCorrection.wav"
 				if _, err := os.Stat(target); os.IsNotExist(err) {
 					if err = renderMappedAudio(context.Background(), r, points, target); err != nil {
 						return nil, seq, err
@@ -254,10 +269,15 @@ func nativePlacements(p *NativeProject, o NativeExportOptions) ([]NativePlacemen
 				if math.Abs(actual-(MapTime(points, r.Duration)-MapTime(points, 0))) > .001 {
 					return nil, seq, fmt.Errorf("audio derivative duration mismatch")
 				}
-				start := roundFrame(m.Offset * seq.FPS())
+				start := roundFrame(MapTime(points, 0) * seq.FPS())
 				result = append(result, NativePlacement{PlacementUncertainty: m.PlacementUncertainty, TimingBasis: m.TimingBasis, Recording: m.Recording, ID: fmt.Sprintf("recording-%s-part-1", r.ID), Status: m.Status, Component: m.Component, Start: start, End: start + roundFrame(actual*seq.FPS()), In: 0, Out: roundFrame(actual * rate.FPS()), Rate: rate.String(), Segment: 1, Segments: 1, Error: .03 + m.Error + .5/seq.FPS(), Derivative: &target, DerivativeDuration: actual, rate: rate})
 				continue
 			}
+		}
+		if resolved && r.Video == nil && m.Status != "unresolved_timing_uncertainty" {
+			origin := MapTime(points, 0)
+			parts[0].Offset = origin
+			parts[0].Error = math.Max(origin-lo, hi-origin)
 		}
 		for j, v := range parts {
 			start := roundFrame((float64(v.First)/rate.FPS() + v.Offset) * seq.FPS())
