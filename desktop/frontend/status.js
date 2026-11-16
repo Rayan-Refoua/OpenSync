@@ -7,6 +7,7 @@ export const stages = [
   "Searching unresolved recordings",
   "Verifying recovery candidates",
   "Evaluating timing models",
+  "Solving independent timing anchors",
   "Distributed acoustic search",
   "Refining timing models",
   "Building project and Premiere XML",

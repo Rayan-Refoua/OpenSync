@@ -377,11 +377,15 @@ func NativeSync(ctx context.Context, o NativeSyncOptions) error {
 	if err != nil {
 		return err
 	}
+	stages["initial_timing_profiles_seconds"] = time.Since(stage).Seconds()
+	graphStarted := time.Now()
+	progress.set("Solving independent timing anchors")
 	preliminary, _ := selectNativeEdges(records, edges, profiles)
 	layout, _, err := nativeSolve(records, preliminary)
 	if err != nil {
 		return err
 	}
+	stages["preliminary_anchor_graph_seconds"] = time.Since(graphStarted).Seconds()
 	progress.set("Distributed acoustic search")
 	observe(ctx, ProgressEvent{Kind: "layout", Records: records, Layout: layout, Detail: "Preliminary timing; final graph validation pending"})
 	distributed, err := runNativeDistributed(ctx, records, layout, recovery, out, analyzer.computeTasks)

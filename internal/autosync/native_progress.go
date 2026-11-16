@@ -3,11 +3,14 @@ package autosync
 import (
 	"context"
 	"fmt"
+	"os"
+	"runtime/pprof"
 	"sync"
 	"time"
 )
 
 type nativeProgress struct {
+	profile *os.File
 	mu      sync.Mutex
 	stage   string
 	since   time.Time
@@ -50,10 +53,33 @@ func startNativeProgress(ctx context.Context) *nativeProgress {
 func (p *nativeProgress) set(stage string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.stopProfile()
+	if target := os.Getenv("OPENSYNC_PROFILE_PATH"); target != "" && stage == os.Getenv("OPENSYNC_PROFILE_STAGE") {
+		f, err := os.Create(target)
+		if err == nil {
+			err = pprof.StartCPUProfile(f)
+			if err == nil {
+				p.profile = f
+			} else {
+				_ = f.Close()
+			}
+		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "stage profiling: %v\n", err)
+		}
+	}
 	p.stage = stage
 	p.since = time.Now()
 	fmt.Printf("STAGE %s\n", stage)
 	observe(p.ctx, ProgressEvent{Kind: "stage", Stage: stage})
 }
-func (p *nativeProgress) close()                   { close(p.done); <-p.stopped }
+func (p *nativeProgress) close()                   { close(p.done); <-p.stopped; p.stopProfile() }
 func (p *nativeProgress) monitor(fn func() string) { p.mu.Lock(); p.observe = fn; p.mu.Unlock() }
+
+func (p *nativeProgress) stopProfile() {
+	if p.profile != nil {
+		pprof.StopCPUProfile()
+		_ = p.profile.Close()
+		p.profile = nil
+	}
+}

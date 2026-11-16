@@ -54,6 +54,15 @@ func newChirp(n int) *chirpPlan {
 	return p
 }
 func FFTArbitrary(data []complex128) error {
+	var workspace ArbitraryFFTWorkspace
+	return workspace.Transform(data)
+}
+
+// ArbitraryFFTWorkspace is owned by one comparison and may be reused for
+// consecutive transforms without retaining buffers across comparisons.
+type ArbitraryFFTWorkspace struct{ work []complex128 }
+
+func (w *ArbitraryFFTWorkspace) Transform(data []complex128) error {
 	n := len(data)
 	if n < 1 {
 		return ErrFFTSize
@@ -78,7 +87,11 @@ func FFTArbitrary(data []complex128) error {
 		}
 		chirpCache.Unlock()
 	}
-	work := make([]complex128, p.size)
+	if cap(w.work) < p.size {
+		w.work = make([]complex128, p.size)
+	}
+	work := w.work[:p.size]
+	clear(work[n:])
 	for i, v := range data {
 		work[i] = v * p.chirp[i]
 	}

@@ -65,6 +65,13 @@ func selectNativeEdges(records []MediaRecord, base []*PairEvidence, profiles []N
 		qs = append(qs, q)
 	}
 	sort.Ints(qs)
+	// Removing a recording with no incident anchor cannot change its independent
+	// layout. Reuse the original solve for these queries.
+	incident := make([]bool, len(records))
+	for _, e := range anchors {
+		incident[e.Query] = true
+		incident[e.Reference] = true
+	}
 	contextResults := make([]map[int]NativeLayout, len(qs))
 	jobs := make(chan int)
 	var wg sync.WaitGroup
@@ -74,7 +81,7 @@ func selectNativeEdges(records []MediaRecord, base []*PairEvidence, profiles []N
 			defer wg.Done()
 			for index := range jobs {
 				q := qs[index]
-				if records[q].Duration >= 30 && counts[q] > 1 {
+				if incident[q] && records[q].Duration >= 30 && counts[q] > 1 {
 					independent := []*PairEvidence{}
 					for _, e := range anchors {
 						if e.Query != q && e.Reference != q {
