@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // These are placement estimates, deliberately separate from acoustic edges,
@@ -23,7 +24,39 @@ type ChronologicalPlacement struct {
 	Status      string  `json:"status"`
 }
 
-var sequenceName = regexp.MustCompile(`^(.*?)([0-9]+)(\.[^.]+)$`)
+var sequenceName = regexp.MustCompile(`^(.*?)([0-9]+)([^0-9]*)$`)
+var recordingChannel = regexp.MustCompile(`(?i)[ _.-](?:tr|track|ch|channel)[ _.-]*0*[0-9]+$`)
+
+func recordingSeriesName(name string) (family string, sequence int64, ok bool) {
+	ext := filepath.Ext(name)
+	stem := strings.TrimSuffix(name, ext)
+	// Audio channel numbers are fixed suffixes, not recording counters.
+	channel := recordingChannel.FindString(stem)
+	stem = strings.TrimSuffix(stem, channel)
+	match := sequenceName.FindStringSubmatch(stem)
+	if match == nil {
+		return "", 0, false
+	}
+	sequence, err := strconv.ParseInt(match[2], 10, 64)
+	if err != nil {
+		return "", 0, false
+	}
+	normalize := func(s string) string {
+		return strings.Join(strings.FieldsFunc(strings.ToLower(s), func(r rune) bool {
+			return r == '_' || r == '-' || r == '.' || unicode.IsSpace(r)
+		}), " ")
+	}
+	prefix, suffix := normalize(match[1]), normalize(match[3]+channel)
+	pattern := strings.TrimSpace(prefix + " # " + suffix)
+	return pattern + strings.ToLower(ext), sequence, true
+}
+
+// TrackFamily groups filename patterns for presentation. It supplies no
+// acoustic timing constraints.
+func TrackFamily(name string) string {
+	family, _, _ := recordingSeriesName(name)
+	return family
+}
 
 func recordingStamp(r MediaRecord, kind string) (float64, bool) {
 	if kind == "filesystem_mtime" {
@@ -63,17 +96,12 @@ func continuitySeries(records []MediaRecord) (map[string][]continuityEntry, []st
 
 	groups := map[string][]continuityEntry{}
 	for i, r := range records {
-		m := sequenceName.FindStringSubmatch(r.Name)
-		if m == nil || r.SourceGroup == "" {
+		family, n, ok := recordingSeriesName(r.Name)
+		if !ok || (r.SourceGroup == "" && r.Source == "") {
 			continue
 		}
-		n, err := strconv.ParseInt(m[2], 10, 64)
-		if err != nil {
-			continue
-		}
-		// Folder plus filename series is a conservative series hypothesis, not
-		// a physical camera identity. Calibration and order must still agree.
-		key := strings.ToLower(filepath.Clean(r.SourceGroup) + "\x00" + m[1] + "\x00" + m[3])
+		// Retain physical directory boundaries even in a broad imported group.
+		key := strings.ToLower(filepath.Dir(r.Source)+"\x00"+filepath.Clean(r.SourceGroup)) + "\x00" + family
 		groups[key] = append(groups[key], continuityEntry{i, n})
 	}
 	keys := make([]string, 0, len(groups))

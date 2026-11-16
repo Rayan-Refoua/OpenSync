@@ -617,7 +617,7 @@ func buildNativeXML(p *NativeProject, placements []NativePlacement, seqRate Fram
 			}
 			byPlacement[i] = entries
 			for _, in := range entries {
-				k := fmt.Sprintf("%s|%s|%04d|%04d", in.Kind, recordGroup[v.Recording], in.Channel, channelCount(r))
+				k := fmt.Sprintf("%s|%s|%04d|%04d", in.Kind, recordGroup[v.Recording]+"|"+TrackFamily(r.Name), in.Channel, channelCount(r))
 				if v.LayoutBasis == "dedicated_local_sync_tracks" {
 					k = fmt.Sprintf("%s|~local-sync-%08d|%s", in.Kind, v.Component, k)
 				}

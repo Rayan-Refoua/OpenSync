@@ -162,15 +162,30 @@ func BuildProject(p autosync.NativePayload) *Project {
 	for i := range order {
 		order[i] = i
 	}
-	sort.SliceStable(order, func(i, j int) bool { return v.Clips[order[i]].Start < v.Clips[order[j]].Start })
+	type laneGroup struct{ parent, family string }
+	trackKeys := make([]laneGroup, len(v.Clips))
+	for i, c := range v.Clips {
+		source := c.Metadata.Source
+		if source == "" {
+			source = c.Source
+		}
+		trackKeys[i] = laneGroup{filepath.Dir(source), autosync.TrackFamily(c.Name)}
+	}
+	sort.SliceStable(order, func(i, j int) bool {
+		a, b := trackKeys[order[i]], trackKeys[order[j]]
+		if a.parent != b.parent {
+			return a.parent < b.parent
+		}
+		if a.family != b.family {
+			return a.family < b.family
+		}
+		return v.Clips[order[i]].Start < v.Clips[order[j]].Start
+	})
 	laneEnds := []float64{}
-	laneGroups := []string{}
+	laneGroups := []laneGroup{}
 	for _, i := range order {
 		c := &v.Clips[i]
-		group := c.Metadata.SourceGroup
-		if group == "" {
-			group = filepath.Dir(c.Source)
-		}
+		group := trackKeys[i]
 		lane := -1
 		for j, g := range laneGroups {
 			if g == group && laneEnds[j] <= c.Start+1e-9 {
@@ -180,7 +195,7 @@ func BuildProject(p autosync.NativePayload) *Project {
 		}
 		if lane < 0 {
 			lane = len(v.Tracks)
-			v.Tracks = append(v.Tracks, Track{Name: fmt.Sprintf("%02d  %s", lane+1, filepath.Base(group)), Clips: []int{}})
+			v.Tracks = append(v.Tracks, Track{Name: fmt.Sprintf("%02d  %s", lane+1, trackFamilyLabel(group.parent, group.family)), Clips: []int{}})
 			laneEnds = append(laneEnds, 0)
 			laneGroups = append(laneGroups, group)
 		}
@@ -190,5 +205,12 @@ func BuildProject(p autosync.NativePayload) *Project {
 		v.Duration = math.Max(v.Duration, c.End)
 	}
 	return v
+}
+func trackFamilyLabel(parent, family string) string {
+	label := filepath.Base(parent)
+	if family != "" {
+		label += " · " + strings.TrimSuffix(family, filepath.Ext(family))
+	}
+	return label
 }
 func exists(path string) bool { st, e := os.Stat(path); return e == nil && !st.IsDir() }

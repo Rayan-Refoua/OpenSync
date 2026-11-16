@@ -252,3 +252,34 @@ func TestEngineSavedEvidenceReplay(t *testing.T) {
 		t.Log(r["recordings"], r["changed_placements"], r["milliseconds"])
 	}
 }
+
+func TestTrackFamilySharesChronologicalCounterParsing(t *testing.T) {
+	cases := []struct {
+		a, b          string
+		first, second int64
+	}{
+		{"Hyperdeck 0001.mp4", "HYPERDECK_0002.MP4", 1, 2},
+		{"03.11.22 Araghi C3 2158.mp4", "03.11.22 Araghi C3 2159.mp4", 2158, 2159},
+		{"C0567_Proxy.mp4", "C0568_Proxy.mp4", 567, 568},
+		{"ZOOM0005_Tr1.WAV", "ZOOM0006_Tr1.WAV", 5, 6},
+	}
+	for _, tc := range cases {
+		a, x, ok := recordingSeriesName(tc.a)
+		b, y, ok2 := recordingSeriesName(tc.b)
+		if !ok || !ok2 || a != b || x != tc.first || y != tc.second {
+			t.Fatalf("%s %s: %q %d / %q %d", tc.a, tc.b, a, x, b, y)
+		}
+	}
+	if TrackFamily("C0567.mp4") == TrackFamily("C0567_Proxy.mp4") || TrackFamily("ZOOM0005_Tr1.WAV") == TrackFamily("ZOOM0005_Tr2.WAV") {
+		t.Fatal("distinct derivative or channel collapsed")
+	}
+	r := []MediaRecord{
+		{Name: "Hyperdeck 0001.mp4", Source: "C:/one/Hyperdeck 0001.mp4"},
+		{Name: "Hyperdeck_0002.mp4", Source: "C:/one/Hyperdeck_0002.mp4"},
+		{Name: "Hyperdeck 0003.mp4", Source: "C:/two/Hyperdeck 0003.mp4"},
+	}
+	links := continuityEvidence(r, nil)
+	if len(links) != 1 || links[0].Relation != "successor" {
+		t.Fatalf("unexpected links: %+v", links)
+	}
+}
