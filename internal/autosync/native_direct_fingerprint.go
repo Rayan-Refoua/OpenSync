@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"opensync/internal/storageio"
 	"path/filepath"
 	"sort"
 	"sync"
@@ -63,18 +64,18 @@ func directFingerprintIndex(ctx context.Context, records []MediaRecord, out stri
 			}
 		}()
 	}
-	probes := make([]*ioProbe, len(records))
-	byDevice := map[string]*ioProbe{}
+	probes := make([]*storageio.IOProbe, len(records))
+	byDevice := map[string]*storageio.IOProbe{}
 	for i, r := range records {
 		if r.Audio == nil {
 			continue
 		}
-		key := ioProbeKey(r.Source)
+		key := storageio.IOProbeKey(r.Source)
 		if key == "" {
 			continue
 		}
 		if byDevice[key] == nil {
-			byDevice[key] = newIOProbe()
+			byDevice[key] = storageio.NewIOProbe()
 		}
 		probes[i] = byDevice[key]
 	}
@@ -94,7 +95,7 @@ func directFingerprintIndex(ctx context.Context, records []MediaRecord, out stri
 				release := func() {}
 				if probe != nil {
 					var err error
-					release, err = probe.acquire(ctx)
+					release, err = probe.Acquire(ctx)
 					if err != nil {
 						continue
 					}
@@ -111,7 +112,7 @@ func directFingerprintIndex(ctx context.Context, records []MediaRecord, out stri
 						raw := make([]byte, need*2)
 						n, err := io.ReadFull(source, raw)
 						if probe != nil && n > 0 {
-							probe.observe(n)
+							probe.Observe(n)
 						}
 						if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
 							return err

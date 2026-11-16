@@ -7,7 +7,6 @@ import (
 	"opensync/internal/audio"
 	"opensync/internal/storageio"
 	"os"
-	"path/filepath"
 
 	"strings"
 	"sync"
@@ -153,12 +152,7 @@ func checkSource(r MediaRecord) error {
 // seek-heavy path to confirmed SSDs, where the source is opened locally.
 func analysisAudioArgs(source string) []string {
 	args := []string{"-nostdin", "-v", "error", "-threads", "1"}
-	switch strings.ToLower(filepath.Ext(source)) {
-	case ".mp4", ".mov":
-		if info := storageio.Inspect(source); info.Kind == storageio.KindSSD && !info.Serialized {
-			args = append(args, "-avioflags", "direct")
-		}
-	}
+	args = append(args, storageio.DirectMediaArgs(source)...)
 	return append(args, "-i", source, "-map", "0:a:0", "-vn", "-ac", "1", "-ar", "16000")
 }
 

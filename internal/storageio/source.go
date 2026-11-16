@@ -234,3 +234,15 @@ func MediaArgs(ctx context.Context, name string, args []string) ([]string, error
 	}
 	return out, nil
 }
+
+// DirectMediaArgs is the low-read-volume input path for indexed MP4/MOV
+// containers on confirmed SSDs.
+func DirectMediaArgs(path string) []string {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".mp4", ".mov":
+		if info := Inspect(path); info.Kind == KindSSD && !info.Serialized {
+			return []string{"-avioflags", "direct"}
+		}
+	}
+	return nil
+}

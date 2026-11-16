@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
+	"opensync/internal/storageio"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -164,7 +165,11 @@ func (s *Service) decodePeakChunk(ctx context.Context, c Clip, index int64) (*pe
 	}
 	start := float64(index) * peakChunkSeconds
 	var frame int64
-	err := decode(ctx, c.Source, start, math.Min(peakChunkSeconds, c.Duration-start), peakRate, func(data []byte) error {
+	finish, err := s.waveIO.acquire(ctx, c.Source)
+	if err != nil {
+		return nil, err
+	}
+	err = decodeAudio(ctx, c.Source, start, math.Min(peakChunkSeconds, c.Duration-start), peakRate, storageio.DirectMediaArgs(c.Source), func(data []byte) error {
 		for off := 0; off+7 < len(data); off += 8 {
 			i := frame / peakBaseSamples
 			if i >= peakChunkBins {
@@ -182,6 +187,7 @@ func (s *Service) decodePeakChunk(ctx context.Context, c Clip, index int64) (*pe
 		}
 		return nil
 	})
+	finish(err == nil)
 	if err != nil {
 		return nil, err
 	}

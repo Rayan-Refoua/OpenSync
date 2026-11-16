@@ -91,6 +91,7 @@ type Service struct {
 	cache                    *byteCache
 	peaks                    *peakStore
 	visual, playback, thumbs *mediaLimiter
+	waveIO, thumbIO          previewIO
 	active                   atomic.Int64
 	completed                atomic.Int64
 	ctx                      context.Context
@@ -187,12 +188,18 @@ func command(ctx context.Context, args ...string) (*exec.Cmd, error) {
 }
 func acquire(ctx context.Context, slots *mediaLimiter) error { return slots.acquire(ctx) }
 func decode(ctx context.Context, path string, start, duration float64, rate int, consume func([]byte) error) error {
+	return decodeAudio(ctx, path, start, duration, rate, nil, consume)
+}
+func decodeAudio(ctx context.Context, path string, start, duration float64, rate int, inputOptions []string, consume func([]byte) error) error {
 	if duration <= 0 {
 		return nil
 	}
 	// first_pts=0 retains an audio stream's delayed start as silence on the
 	// requested source-time grid instead of sliding it to the first sample.
-	cmd, err := command(ctx, "-hide_banner", "-loglevel", "error", "-nostdin", "-threads", "1", "-ss", strconv.FormatFloat(start, 'f', 9, 64), "-i", path, "-t", strconv.FormatFloat(duration, 'f', 9, 64), "-map", "0:a:0", "-vn", "-ac", "2", "-af", fmt.Sprintf("aresample=%d:async=0:first_pts=0", rate), "-ar", strconv.Itoa(rate), "-f", "f32le", "pipe:1")
+	args := []string{"-hide_banner", "-loglevel", "error", "-nostdin", "-threads", "1", "-ss", strconv.FormatFloat(start, 'f', 9, 64)}
+	args = append(args, inputOptions...)
+	args = append(args, "-i", path, "-t", strconv.FormatFloat(duration, 'f', 9, 64), "-map", "0:a:0", "-vn", "-ac", "2", "-af", fmt.Sprintf("aresample=%d:async=0:first_pts=0", rate), "-ar", strconv.Itoa(rate), "-f", "f32le", "pipe:1")
+	cmd, err := command(ctx, args...)
 	if err != nil {
 		return err
 	}
@@ -295,7 +302,12 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.active.Add(1)
 		defer s.active.Add(-1)
 		var at float64
+		finish, admissionErr := s.thumbIO.acquire(ctx, c.Source)
+		if admissionErr != nil {
+			return
+		}
 		b, at, err = s.thumbnailFrame(ctx, r, c)
+		finish(err == nil)
 		if err == nil && !math.IsNaN(at) {
 			frameTime = &at
 			w.Header().Set("X-OpenSync-Frame-Time", strconv.FormatFloat(at, 'f', 9, 64))
@@ -384,7 +396,10 @@ func (s *Service) thumbnailFrame(ctx context.Context, r *http.Request, c Clip) (
 			continue
 		}
 		previous = at
-		cmd, err := command(ctx, "-hide_banner", "-loglevel", "info", "-nostdin", "-copyts", "-start_at_zero", "-threads", "1", "-filter_threads", "1", "-ss", fmt.Sprintf("%.9f", at), "-i", c.Source, "-frames:v", "1", "-an", "-vf", "scale=160:90:force_original_aspect_ratio=decrease:force_divisible_by=2,setsar=1,pad=160:90:(ow-iw)/2:(oh-ih)/2:color=black,format=rgb24,showinfo", "-threads", "1", "-fps_mode", "passthrough", "-f", "image2pipe", "-vcodec", "png", "pipe:1")
+		args := []string{"-hide_banner", "-loglevel", "info", "-nostdin", "-copyts", "-start_at_zero", "-threads", "1", "-filter_threads", "1", "-ss", fmt.Sprintf("%.9f", at)}
+		args = append(args, storageio.DirectMediaArgs(c.Source)...)
+		args = append(args, "-i", c.Source, "-frames:v", "1", "-an", "-vf", "scale=160:90:force_original_aspect_ratio=decrease:force_divisible_by=2,setsar=1,pad=160:90:(ow-iw)/2:(oh-ih)/2:color=black,format=rgb24,showinfo", "-threads", "1", "-fps_mode", "passthrough", "-f", "image2pipe", "-vcodec", "png", "pipe:1")
+		cmd, err := command(ctx, args...)
 		if err != nil {
 			return nil, 0, err
 		}
