@@ -250,6 +250,17 @@ export class CameraMonitor {
       }
       const expected = source - (tile.proxy ? tile.previewStart : 0),
         v = tile.video;
+      // A new seek supersedes an unfinished seek. Waiting for HAVE_CURRENT_DATA
+      // or !seeking deadlocks when the old target was evicted while the new
+      // target is already buffered. Metadata is enough to move the seek target.
+      if (
+        (!playing || rate < 0) &&
+        v.readyState >= 1 &&
+        Math.abs(v.currentTime - expected) > 0.008
+      ) {
+        v.pause();
+        v.currentTime = Math.max(0, expected);
+      }
       if (v.readyState >= 2 && !tile.failed) {
         const error = v.currentTime - expected,
           dt =
