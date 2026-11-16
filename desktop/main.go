@@ -18,7 +18,7 @@ var assets embed.FS
 func main() {
 	a := newApp()
 	files, _ := fs.Sub(assets, "frontend")
-	err := wails.Run(&options.App{Title: "OpenSync — Synchronization workstation", StartHidden: os.Getenv("OPENSYNC_DESKTOP_SMOKE") != "", Width: 1500, Height: 930, MinWidth: 1000, MinHeight: 640, BackgroundColour: options.NewRGB(19, 22, 26), AssetServer: &assetserver.Options{Assets: files, Handler: a.media.Handler()}, OnStartup: a.startup, OnShutdown: func(context.Context) { a.CancelSync(); a.media.Close() }, Bind: []interface{}{a}, Windows: &windows.Options{Theme: windows.Dark}})
+	err := wails.Run(&options.App{Title: "OpenSync — Synchronization workstation", StartHidden: os.Getenv("OPENSYNC_DESKTOP_SMOKE") != "", Width: 1500, Height: 930, MinWidth: 1000, MinHeight: 640, BackgroundColour: options.NewRGB(19, 22, 26), AssetServer: &assetserver.Options{Assets: files, Handler: a.media.Handler()}, OnStartup: a.startup, OnShutdown: func(context.Context) { a.CancelSync(); a.media.Close() }, Bind: []interface{}{a}, Debug: options.Debug{OpenInspectorOnStartup: openDevTools == "true" && os.Getenv("OPENSYNC_DESKTOP_SMOKE") == ""}, Windows: &windows.Options{Theme: windows.Dark}})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

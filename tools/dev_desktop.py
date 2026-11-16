@@ -32,8 +32,8 @@ def main() -> None:
     with tempfile.TemporaryDirectory(dir=out, prefix="build-") as staging:
         candidate = Path(staging) / exe.name
         subprocess.run(
-            [go, "build", "-trimpath", "-tags", "desktop,production,devtools",
-             "-ldflags", "-H windowsgui", "-o", str(candidate), "."],
+            [go, "build", "-trimpath", "-tags", "desktop,production,debug,devtools",
+             "-ldflags", "-H windowsgui -X main.openDevTools=true", "-o", str(candidate), "."],
             cwd=ROOT / "desktop", env=env, check=True,
         )
         try:
