@@ -132,11 +132,7 @@ func (a *App) SelectInputs(folder bool) (int, error) {
 	var paths []string
 	var e error
 	if folder {
-		var p string
-		p, e = wr.OpenDirectoryDialog(a.ctx, wr.OpenDialogOptions{Title: "Add media folder (recursive)"})
-		if p != "" {
-			paths = []string{p}
-		}
+		paths, e = selectMediaFolders(a.ctx)
 	} else {
 		paths, e = wr.OpenMultipleFilesDialog(a.ctx, wr.OpenDialogOptions{Title: "Add recordings"})
 	}
@@ -144,6 +140,10 @@ func (a *App) SelectInputs(folder bool) (int, error) {
 		return 0, e
 	}
 	a.mu.Lock()
+	if a.running {
+		a.mu.Unlock()
+		return 0, fmt.Errorf("sync is already running")
+	}
 	for _, p := range paths {
 		found := false
 		for _, q := range a.inputs {
