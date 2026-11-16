@@ -36,6 +36,7 @@ def main() -> None:
     parser.add_argument("output", type=Path)
     parser.add_argument("--mode", choices=["clips", "chronological"], default="clips")
     parser.add_argument("--sync-arg", action="append", default=[], help="extra CLI token, e.g. --sync-arg=--recovery=off")
+    parser.add_argument("--engine", type=Path, help="use an existing CLI executable instead of building")
     parser.add_argument("--profile-stage", default="Evaluating timing models")
     parser.add_argument("--only", action="append", default=[], help="include only these named files from the media folder")
     parser.add_argument("--anchor", action="append", type=Path, default=[], help="add a reference recording")
@@ -51,8 +52,11 @@ def main() -> None:
         if any(not anchor.is_file() for anchor in args.anchor):
             parser.error("every reference recording must exist")
         out.mkdir(parents=True, exist_ok=False)
-        exe = out / "opensync.exe"
-        subprocess.run(["go", "build", "-o", str(exe), "./cmd/opensync"], cwd=ROOT, check=True)
+        exe = args.engine.resolve() if args.engine else out / "opensync.exe"
+        if args.engine and not exe.is_file():
+            parser.error("--engine must be an existing CLI executable")
+        if not args.engine:
+            subprocess.run(["go", "build", "-o", str(exe), "./cmd/opensync"], cwd=ROOT, check=True)
         env = dict(os.environ, OPENSYNC_PROFILE_STAGE=args.profile_stage,
                    OPENSYNC_PROFILE_PATH=str(out / "stage.pprof"))
         inputs = ["--folders", str(args.media.resolve())]

@@ -80,7 +80,7 @@ func runNativeDistributed(ctx context.Context, records []MediaRecord, layout []N
 	for _, r := range records {
 		identities = append(identities, []any{r.ID, r.CacheSHA})
 	}
-	raw, _ := pythonJSON([]any{researchmatch.DistributedVersion, "established-reference-v6", settings.Recovery, settings.LongReferenceHours, identities})
+	raw, _ := pythonJSON([]any{researchmatch.DistributedVersion, "coverage-first-v7", settings.Recovery, settings.LongReferenceHours, identities})
 	identity := shaBytes(raw)
 	saved := filepath.Join(out, "distributed-discovery.json")
 	if data, err := workspaceRead(ctx, saved); err == nil {
@@ -113,11 +113,13 @@ func runNativeDistributed(ctx context.Context, records []MediaRecord, layout []N
 	}
 	targets := []int{}
 	established := map[int]bool{}
+	bridgeSize := map[int]int{}
 	for _, m := range layout {
 		established[m.Recording] = !strings.HasPrefix(m.Status, "unresolved") && !strings.HasPrefix(m.Status, "provisional") && m.ComponentSize > 1
 		d := records[m.Recording].Duration
 		if strings.HasPrefix(m.Status, "unresolved") && d >= 1.2 && d <= maxDuration {
 			targets = append(targets, m.Recording)
+			bridgeSize[m.Recording] = m.ComponentSize
 		}
 	}
 	strength := map[[2]int]float64{}
@@ -138,6 +140,12 @@ func runNativeDistributed(ctx context.Context, records []MediaRecord, layout []N
 	}
 	sort.Slice(targets, func(i, j int) bool {
 		a, b := targets[i], targets[j]
+		if (priority[a] > 0) != (priority[b] > 0) {
+			return priority[a] > 0
+		}
+		if bridgeSize[a] != bridgeSize[b] {
+			return bridgeSize[a] > bridgeSize[b]
+		}
 		if priority[a] != priority[b] {
 			return priority[a] > priority[b]
 		}
@@ -146,8 +154,7 @@ func runNativeDistributed(ctx context.Context, records []MediaRecord, layout []N
 	pairs := [][2]int{}
 	deferred := []map[string]any{}
 	needed := map[int]bool{}
-	// Bound the extension separately from the ordinary per-query budget.
-	extraSeconds := longBudget
+	refsByQuery := make(map[int][]int, len(targets))
 	for _, q := range targets {
 		refs := []int{}
 		for r := range records {
@@ -166,40 +173,24 @@ func runNativeDistributed(ctx context.Context, records []MediaRecord, layout []N
 			}
 			return records[a].ID < records[b].ID
 		})
+		refsByQuery[q] = refs
+	}
+	longPairs := planLongReferenceCoverage(records, targets, refsByQuery, established, longBudget)
+	anchors := make(map[[2]int]bool, len(longPairs))
+	for _, pair := range longPairs {
+		pairs = append(pairs, pair)
+		anchors[pair] = true
+		needed[pair[0]], needed[pair[1]] = true, true
+	}
+	for _, q := range targets {
+		refs := refsByQuery[q]
 		used, selected := 0., 0
 		limit := pairBudget
 		if records[q].Duration > 60 {
 			limit = mediumBudget
 		}
-		// Reserve one attempt on a long, established recorder. Previously
-		// every reference longer than the ordinary budget was unreachable.
-		anchors := map[int]bool{}
 		for _, r := range refs {
-			d := records[r].Duration
-			if established[r] && d > 3600 && d <= 9000 && d <= extraSeconds {
-				anchors[r] = true
-				extraSeconds -= d
-				pairs = append(pairs, [2]int{r, q})
-				needed[r], needed[q] = true, true
-				break
-			}
-		}
-		// A medium query may belong to a different part of an event.
-		// Give it one bounded attempt against a second long recorder.
-		if records[q].Duration > 60 {
-			for _, r := range refs {
-				d := records[r].Duration
-				if !anchors[r] && d > 3600 && d <= 9000 && d <= extraSeconds {
-					anchors[r] = true
-					extraSeconds -= d
-					pairs = append(pairs, [2]int{r, q})
-					needed[r], needed[q] = true, true
-					break
-				}
-			}
-		}
-		for _, r := range refs {
-			if anchors[r] || (records[q].Duration > 60 && !established[r]) {
+			if anchors[[2]int{r, q}] || (records[q].Duration > 60 && !established[r]) {
 				continue
 			}
 			if selected >= limit || used+records[r].Duration > secondsBudget {
@@ -307,4 +298,45 @@ func runNativeDistributed(ctx context.Context, records []MediaRecord, layout []N
 	}
 	fmt.Printf("DISTRIBUTED: %d blind searches\n", len(results))
 	return report, nil
+}
+
+// Exhaust first useful long-anchor opportunities across queries before
+// spending any shared budget on a second long reference for one query.
+func planLongReferenceCoverage(records []MediaRecord, targets []int, refs map[int][]int, established map[int]bool, remaining float64) [][2]int {
+	pairs := [][2]int{}
+	first := map[int]int{}
+	choose := func(q int, primary bool) {
+		for _, r := range refs[q] {
+			duration := records[r].Duration
+			previous, seen := first[q]
+			if (primary && !established[r]) || (seen && previous == r) ||
+				duration <= 3600 || duration > 9000 || duration > remaining {
+				continue
+			}
+			pairs = append(pairs, [2]int{r, q})
+			remaining -= duration
+			if !seen {
+				first[q] = r
+			}
+			break
+		}
+	}
+	for _, q := range targets {
+		choose(q, true)
+	}
+	// Medium clips can also search an unplaced long recorder. Prioritize
+	// those that still have no long-reference attempt.
+	for _, q := range targets {
+		if _, seen := first[q]; !seen && records[q].Duration > 60 {
+			choose(q, false)
+		}
+	}
+	for _, q := range targets {
+		if records[q].Duration > 60 {
+			if r, seen := first[q]; seen && established[r] {
+				choose(q, false)
+			}
+		}
+	}
+	return pairs
 }
