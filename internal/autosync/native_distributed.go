@@ -75,11 +75,12 @@ func distributedFeatures(ctx context.Context, source, path string) error {
 	return os.Rename(temp.Name(), path)
 }
 func runNativeDistributed(ctx context.Context, records []MediaRecord, layout []NativeLayout, envelope []NativePair, out string, schedule func(int, func(int))) (*NativeDistributedReport, error) {
+	settings := analysisSettings(ctx)
 	identities := []any{}
 	for _, r := range records {
 		identities = append(identities, []any{r.ID, r.CacheSHA})
 	}
-	raw, _ := pythonJSON([]any{researchmatch.DistributedVersion, "established-reference-v5", identities})
+	raw, _ := pythonJSON([]any{researchmatch.DistributedVersion, "established-reference-v6", settings.Recovery, settings.LongReferenceHours, identities})
 	identity := shaBytes(raw)
 	saved := filepath.Join(out, "distributed-discovery.json")
 	if data, err := workspaceRead(ctx, saved); err == nil {
@@ -91,6 +92,21 @@ func runNativeDistributed(ctx context.Context, records []MediaRecord, layout []N
 			return &report, nil
 		}
 	}
+	if settings.Recovery == "off" {
+		report := &NativeDistributedReport{Version: researchmatch.DistributedVersion, Digest: identity, Status: "DISABLED_BY_USER"}
+		fmt.Println("DISTRIBUTED: disabled by user")
+		return report, workspaceJSON(ctx, saved, report)
+	}
+	pairBudget, mediumBudget, secondsBudget, longBudget, maxDuration := 8, 2, 3600., 540000., 299.
+	switch settings.Recovery {
+	case "quick":
+		pairBudget, mediumBudget, secondsBudget, longBudget, maxDuration = 4, 0, 1800, 90000, 60
+	case "deep":
+		pairBudget, mediumBudget, secondsBudget, longBudget = 16, 4, 7200, 1080000
+	}
+	if settings.LongReferenceHours > 0 {
+		longBudget = settings.LongReferenceHours * 3600
+	}
 	folder := filepath.Join(out, researchmatch.DistributedVersion)
 	if err := workspaceMkdir(ctx, folder, 0755); err != nil {
 		return nil, err
@@ -100,7 +116,7 @@ func runNativeDistributed(ctx context.Context, records []MediaRecord, layout []N
 	for _, m := range layout {
 		established[m.Recording] = !strings.HasPrefix(m.Status, "unresolved") && !strings.HasPrefix(m.Status, "provisional") && m.ComponentSize > 1
 		d := records[m.Recording].Duration
-		if strings.HasPrefix(m.Status, "unresolved") && d >= 1.2 && d <= 299 {
+		if strings.HasPrefix(m.Status, "unresolved") && d >= 1.2 && d <= maxDuration {
 			targets = append(targets, m.Recording)
 		}
 	}
@@ -131,7 +147,7 @@ func runNativeDistributed(ctx context.Context, records []MediaRecord, layout []N
 	deferred := []map[string]any{}
 	needed := map[int]bool{}
 	// Bound the extension separately from the ordinary per-query budget.
-	extraSeconds := 540000.0
+	extraSeconds := longBudget
 	for _, q := range targets {
 		refs := []int{}
 		for r := range records {
@@ -151,9 +167,9 @@ func runNativeDistributed(ctx context.Context, records []MediaRecord, layout []N
 			return records[a].ID < records[b].ID
 		})
 		used, selected := 0., 0
-		limit := 8
+		limit := pairBudget
 		if records[q].Duration > 60 {
-			limit = 2
+			limit = mediumBudget
 		}
 		// Reserve one attempt on a long, established recorder. Previously
 		// every reference longer than the ordinary budget was unreachable.
@@ -186,7 +202,7 @@ func runNativeDistributed(ctx context.Context, records []MediaRecord, layout []N
 			if anchors[r] || (records[q].Duration > 60 && !established[r]) {
 				continue
 			}
-			if selected >= limit || used+records[r].Duration > 3600 {
+			if selected >= limit || used+records[r].Duration > secondsBudget {
 				deferred = append(deferred, map[string]any{"reference": r, "query": q, "reason": "discovery_compute_budget"})
 				continue
 			}
@@ -285,7 +301,7 @@ func runNativeDistributed(ctx context.Context, records []MediaRecord, layout []N
 			return nil, err
 		}
 	}
-	report := &NativeDistributedReport{researchmatch.DistributedVersion, identity, results, deferred, 21600, 9, 3, false, "cached_mono_first_pass", "DISCOVERY_ONLY", false}
+	report := &NativeDistributedReport{researchmatch.DistributedVersion, identity, results, deferred, int(secondsBudget) + 18000, max(pairBudget+1, mediumBudget+2), 3, false, "cached_mono_first_pass", "DISCOVERY_ONLY", false}
 	if err := workspaceJSON(ctx, saved, report); err != nil {
 		return nil, err
 	}

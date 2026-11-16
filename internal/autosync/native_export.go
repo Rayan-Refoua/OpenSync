@@ -126,10 +126,15 @@ type NativePlacement struct {
 	rate                 FrameRate
 }
 type NativeExportOptions struct {
+	TrackLayout               string
 	AudioEarlyMS, AudioLateMS float64
 	Output, Unsynced          string
 	MaxResidualMS             float64
 	IncludeProvisional        bool
+}
+
+func validTrackLayout(value string) bool {
+	return value == "" || value == "family" || value == "folder"
 }
 
 func validUnmatchedPolicy(policy string) bool {
@@ -141,13 +146,21 @@ func validUnmatchedPolicy(policy string) bool {
 }
 
 func NativeExportCommand(args []string) error {
+	if len(args) == 1 && (args[0] == "-h" || args[0] == "--help") {
+		args = []string{"project.opensync", args[0]}
+	}
 	// Match the public positional-project interface, followed by options.
 	if len(args) == 0 {
 		return fmt.Errorf("export requires a saved .opensync project")
 	}
 	project := args[0]
 	f := flag.NewFlagSet("export", flag.ContinueOnError)
+	f.Usage = func() {
+		fmt.Fprintln(f.Output(), "Usage: opensync export <project.opensync> [options]")
+		f.PrintDefaults()
+	}
 	o := NativeExportOptions{}
+	f.StringVar(&o.TrackLayout, "track-layout", "family", "Premiere track grouping: family or folder")
 	f.StringVar(&o.Output, "output", filepath.Dir(project), "output directory")
 	f.StringVar(&o.Unsynced, "unsynced", "append", "append, separate-sequence, order_only, disabled, remove, or local-tracks")
 	f.Float64Var(&o.MaxResidualMS, "max-residual-ms", 150, "maximum presentation residual")
@@ -155,6 +168,9 @@ func NativeExportCommand(args []string) error {
 	f.Float64Var(&o.AudioEarlyMS, "audio-early-ms", 50, "allowed audio lead in milliseconds")
 	f.Float64Var(&o.AudioLateMS, "audio-late-ms", 70, "allowed audio lag in milliseconds")
 	if err := f.Parse(args[1:]); err != nil {
+		if err == flag.ErrHelp {
+			return nil
+		}
 		return err
 	}
 	if f.NArg() != 0 {
@@ -163,10 +179,13 @@ func NativeExportCommand(args []string) error {
 	return ExportNative(project, o)
 }
 func nativePlacements(p *NativeProject, o NativeExportOptions) ([]NativePlacement, FrameRate, error) {
+	if !validTrackLayout(o.TrackLayout) {
+		return nil, FrameRate{}, fmt.Errorf("track-layout must be family or folder")
+	}
 	if !validUnmatchedPolicy(o.Unsynced) {
 		return nil, FrameRate{}, fmt.Errorf("invalid unresolved policy")
 	}
-	if o.MaxResidualMS < 1 || o.MaxResidualMS > 150 {
+	if !(o.MaxResidualMS >= 1 && o.MaxResidualMS <= 150) {
 		return nil, FrameRate{}, fmt.Errorf("residual limit must be 1..150ms")
 	}
 	early, late := o.AudioEarlyMS, o.AudioLateMS
@@ -472,6 +491,9 @@ func addFile(n *xnode, r MediaRecord, rate FrameRate, defined map[string]bool) e
 	return nil
 }
 func buildNativeXML(p *NativeProject, placements []NativePlacement, seqRate FrameRate) ([]byte, error) {
+	return buildNativeXMLWithTracks(p, placements, seqRate, "family")
+}
+func buildNativeXMLWithTracks(p *NativeProject, placements []NativePlacement, seqRate FrameRate, trackLayout string) ([]byte, error) {
 	root := xn("xmeml", nil).attr("version", "4")
 	project := root.add("project", nil)
 	project.add("name", p.Data.Name)
@@ -617,7 +639,11 @@ func buildNativeXML(p *NativeProject, placements []NativePlacement, seqRate Fram
 			}
 			byPlacement[i] = entries
 			for _, in := range entries {
-				k := fmt.Sprintf("%s|%s|%04d|%04d", in.Kind, recordGroup[v.Recording]+"|"+TrackFamily(r.Name), in.Channel, channelCount(r))
+				group := recordGroup[v.Recording]
+				if trackLayout != "folder" {
+					group += "|" + TrackFamily(r.Name)
+				}
+				k := fmt.Sprintf("%s|%s|%04d|%04d", in.Kind, group, in.Channel, channelCount(r))
 				if v.LayoutBasis == "dedicated_local_sync_tracks" {
 					k = fmt.Sprintf("%s|~local-sync-%08d|%s", in.Kind, v.Component, k)
 				}
@@ -744,6 +770,9 @@ func buildNativeXML(p *NativeProject, placements []NativePlacement, seqRate Fram
 	return b.Bytes(), nil
 }
 func ExportNative(projectPath string, o NativeExportOptions) error {
+	if o.TrackLayout == "" {
+		o.TrackLayout = "family"
+	}
 	p, err := LoadNativeProject(projectPath)
 	if err != nil {
 		return err
@@ -761,7 +790,7 @@ func ExportNative(projectPath string, o NativeExportOptions) error {
 	if err != nil {
 		return err
 	}
-	data, err := buildNativeXML(p, placements, seq)
+	data, err := buildNativeXMLWithTracks(p, placements, seq, o.TrackLayout)
 	if err != nil {
 		return err
 	}
@@ -819,7 +848,7 @@ func ExportNative(projectPath string, o NativeExportOptions) error {
 			derivatives = append(derivatives, map[string]any{"recording_id": r.ID, "original": r.Source, "derivative": *v.Derivative, "sha256": digest, "actual_duration_seconds": v.DerivativeDuration})
 		}
 	}
-	manifest := map[string]any{"status": "EXPORTED_REQUIRES_PREMIERE_AND_ACCURACY_REVIEW", "project": projectPath, "project_content_sha256": p.Hash, "xml": path, "xml_sha256": hex.EncodeToString(sum[:]), "recordings": len(p.Data.Records), "sequence_fps": seq.String(), "unsynced_policy": o.Unsynced, "include_provisional": o.IncludeProvisional, "placements": placements, "omitted_recording_ids": omitted, "derivatives": derivatives, "unresolved_recordings": unresolved, "provisional_recordings": provisional, "source_media_modified": false, "engine": "native_go"}
+	manifest := map[string]any{"status": "EXPORTED_REQUIRES_PREMIERE_AND_ACCURACY_REVIEW", "project": projectPath, "project_content_sha256": p.Hash, "xml": path, "xml_sha256": hex.EncodeToString(sum[:]), "recordings": len(p.Data.Records), "sequence_fps": seq.String(), "unsynced_policy": o.Unsynced, "track_layout": o.TrackLayout, "include_provisional": o.IncludeProvisional, "placements": placements, "omitted_recording_ids": omitted, "derivatives": derivatives, "unresolved_recordings": unresolved, "provisional_recordings": provisional, "source_media_modified": false, "engine": "native_go"}
 	if err = writeJSON(filepath.Join(out, "timeline-manifest.json"), manifest); err != nil {
 		return err
 	}

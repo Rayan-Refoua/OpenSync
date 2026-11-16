@@ -1168,3 +1168,7 @@ button.ui-icon::before {
 
 #findClipDialog { width: min(620px, 90vw); }
 #findClipInput, #findClipResults { display: block; width: 100%; margin-bottom: 8px; }
+
+.engineSettings { margin-bottom: 12px; border: 1px solid var(--line); padding: 8px; }
+.engineSettings > summary { cursor: pointer; }
+.engineSettings[open] > summary { margin-bottom: 8px; }

@@ -62,3 +62,20 @@ opensync-cli.exe export "D:\Sync\Concert\OpenSync.opensync" --output "D:\Sync\Co
 ```
 
 For a reviewed revision, pass the revision’s `.opensync` path to `export`. OpenSync writes a timeline manifest with placement and export details so you can see which timeline was delivered.
+
+## Override automatic decisions
+
+In **Workstation Settings**, expand **Engine and Premiere export**. The recovery and input controls apply to the next sync. The export controls also apply when you export a saved project again.
+
+| Control | CLI | Effect |
+| --- | --- | --- |
+| Acoustic recovery | `--recovery off\|quick\|balanced\|deep` | **Balanced** is the default. Quick searches fewer references for short unresolved clips. Deep searches more references. Off skips the distributed search after normal acoustic matching and verification. |
+| Long-reference search budget | `--long-reference-hours N` | Sets the combined duration of reference material examined across the extra long-reference searches. This is media duration, not wall-clock time. Zero uses the preset limit (25 hours quick, 150 balanced, 300 deep). |
+| Analysis input | `--read-mode auto\|buffered` | Auto uses direct reads for supported MP4/MOV analysis on confirmed SSDs. Buffered forces the ordinary FFmpeg input path. |
+| Fingerprint readers | `--readers auto\|serial\|parallel` | Auto measures and adapts. Serial uses one reader, and parallel allows two. Applies to no-cache fingerprinting. The existing HDD scheduler still controls physical disk reads. |
+| CPU and RAM | `--workers N --memory-mib N` | Sets the CPU concurrency ceiling and retained analysis budget. The CLI uses automatic sizing at zero. Temporary allocations and other processes can still use memory. GUI resource limits are in the same settings dialog. |
+| Premiere track grouping | `--track-layout family\|folder` | Family groups numerical series within the same source folder. Folder groups by folder alone. Overlaps receive additional tracks. |
+| Export residual limit | `--max-residual-ms N` | Sets the export presentation budget from 1 to 150 ms. It does not set acoustic acceptance thresholds. |
+| Include provisional placements | `--include-provisional` | Exports marked comparison candidates for review. The precise project retains their original uncertainty and evidence. |
+
+Run `opensync-cli.exe sync -h` for all sync options or `opensync-cli.exe export -h` for export options. A broader search can find more candidates for verification. It does not reduce the evidence required to accept them.

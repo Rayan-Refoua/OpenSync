@@ -19,6 +19,8 @@ import (
 )
 
 type NativeSyncOptions struct {
+	Analysis                  AnalysisSettings
+	TrackLayout               string
 	AudioEarlyMS, AudioLateMS float64
 	// ManagedMemoryMiB bounds persistent in-memory analysis/audio working sets.
 	// Zero preserves the CLI's adaptive defaults; temporary DSP allocations are

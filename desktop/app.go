@@ -278,6 +278,12 @@ func (a *App) startSync(override []string, corrections string) error {
 		defer cancel()
 		o := autosync.NativeSyncOptions{Output: out, Name: "OpenSync", Stage: "all", Unsynced: "append", MaxResidualMS: 150}
 		o.Mode = settings.Mode
+		o.Analysis = settings.Analysis
+		o.TrackLayout = settings.TrackLayout
+		o.IncludeProvisional = settings.IncludeProvisional
+		if settings.MaxResidualMS > 0 {
+			o.MaxResidualMS = settings.MaxResidualMS
+		}
 		o.Unsynced = settings.UnmatchedPolicy
 		if o.Unsynced == "" {
 			o.Unsynced = "append"

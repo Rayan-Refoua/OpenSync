@@ -101,6 +101,13 @@ export function setupWorkstation(h) {
     const f = $("settingsForm");
     for (const [k, v] of Object.entries(config.resources))
       f.elements[k].value = v;
+    f.elements.recovery.value = config.analysis?.recovery || "balanced";
+    f.elements.readMode.value = config.analysis?.readMode || "auto";
+    f.elements.readers.value = config.analysis?.readers || "auto";
+    f.elements.longReferenceHours.value = config.analysis?.longReferenceHours || 0;
+    f.elements.trackLayout.value = config.trackLayout || "family";
+    f.elements.maxResidualMS.value = config.maxResidualMS || 150;
+    f.elements.includeProvisional.checked = !!config.includeProvisional;
     f.elements.audioEarlyMS.value = config.audioEarlyMS || 50;
     f.elements.audioLateMS.value = config.audioLateMS || 70;
     f.elements.unmatchedPolicy.value = config.unmatchedPolicy || "append";
@@ -143,6 +150,15 @@ export function setupWorkstation(h) {
     try {
       const next = {
         mode: config.mode,
+        analysis: {
+          recovery: e.target.elements.recovery.value,
+          readMode: e.target.elements.readMode.value,
+          readers: e.target.elements.readers.value,
+          longReferenceHours: Number(e.target.elements.longReferenceHours.value),
+        },
+        trackLayout: e.target.elements.trackLayout.value,
+        maxResidualMS: Number(e.target.elements.maxResidualMS.value),
+        includeProvisional: e.target.elements.includeProvisional.checked,
         unmatchedPolicy: e.target.elements.unmatchedPolicy.value,
         audioEarlyMS: Number(e.target.elements.audioEarlyMS.value),
         audioLateMS: Number(e.target.elements.audioLateMS.value),

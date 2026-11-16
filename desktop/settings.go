@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"opensync/internal/autosync"
 	"opensync/internal/desktop"
 	"os"
 	"os/exec"
@@ -12,13 +13,17 @@ import (
 )
 
 type WorkstationSettings struct {
-	UnmatchedPolicy string                   `json:"unmatchedPolicy"`
-	AudioEarlyMS    float64                  `json:"audioEarlyMS"`
-	AudioLateMS     float64                  `json:"audioLateMS"`
-	Mode            string                   `json:"mode"`
-	Resources       desktop.ResourceSettings `json:"resources"`
-	Shortcuts       map[string]string        `json:"shortcuts"`
-	Layout          MonitorLayout            `json:"layout"`
+	Analysis           autosync.AnalysisSettings `json:"analysis"`
+	TrackLayout        string                    `json:"trackLayout"`
+	MaxResidualMS      float64                   `json:"maxResidualMS"`
+	IncludeProvisional bool                      `json:"includeProvisional"`
+	UnmatchedPolicy    string                    `json:"unmatchedPolicy"`
+	AudioEarlyMS       float64                   `json:"audioEarlyMS"`
+	AudioLateMS        float64                   `json:"audioLateMS"`
+	Mode               string                    `json:"mode"`
+	Resources          desktop.ResourceSettings  `json:"resources"`
+	Shortcuts          map[string]string         `json:"shortcuts"`
+	Layout             MonitorLayout             `json:"layout"`
 }
 type MonitorLayout struct {
 	Position string `json:"position"`
@@ -27,6 +32,22 @@ type MonitorLayout struct {
 }
 
 func normalizeLayout(s *WorkstationSettings) error {
+	if err := s.Analysis.Normalize(); err != nil {
+		return err
+	}
+	if s.TrackLayout == "" {
+		s.TrackLayout = "family"
+	}
+	if s.TrackLayout != "family" && s.TrackLayout != "folder" {
+		return fmt.Errorf("invalid Premiere track layout")
+	}
+	if s.MaxResidualMS == 0 {
+		s.MaxResidualMS = 150
+	}
+	if !(s.MaxResidualMS >= 1 && s.MaxResidualMS <= 150) {
+		return fmt.Errorf("export presentation residual must be 1..150 ms")
+	}
+
 	if s.AudioEarlyMS < 0 || s.AudioLateMS < 0 {
 		return fmt.Errorf("audio drift tolerances must be positive")
 	}
@@ -60,7 +81,7 @@ func normalizeLayout(s *WorkstationSettings) error {
 }
 
 func defaultSettings() WorkstationSettings {
-	return WorkstationSettings{AudioEarlyMS: 50, AudioLateMS: 70, Mode: "clips", Resources: desktop.DefaultResourceSettings(), Shortcuts: map[string]string{}, Layout: MonitorLayout{Position: "right", Rows: 4}}
+	return WorkstationSettings{MaxResidualMS: 150, TrackLayout: "family", AudioEarlyMS: 50, AudioLateMS: 70, Mode: "clips", Resources: desktop.DefaultResourceSettings(), Shortcuts: map[string]string{}, Layout: MonitorLayout{Position: "right", Rows: 4}}
 }
 func settingsPath() string {
 	root, err := os.UserConfigDir()

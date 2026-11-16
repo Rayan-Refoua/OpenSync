@@ -82,8 +82,9 @@ func directFingerprintIndex(ctx context.Context, records []MediaRecord, out stri
 	}
 	probes := make([]*storageio.IOProbe, len(records))
 	byDevice := map[string]*storageio.IOProbe{}
+	readerMode := analysisSettings(ctx).Readers
 	for i, r := range records {
-		if r.Audio == nil {
+		if r.Audio == nil || readerMode != "auto" {
 			continue
 		}
 		key := storageio.IOProbeKey(r.Source)
@@ -95,7 +96,11 @@ func directFingerprintIndex(ctx context.Context, records []MediaRecord, out stri
 		}
 		probes[i] = byDevice[key]
 	}
-	for w := 0; w < min(2, len(records)); w++ {
+	readerLimit := 2
+	if readerMode == "serial" {
+		readerLimit = 1
+	}
+	for w := 0; w < min(readerLimit, len(records)); w++ {
 		decoders.Add(1)
 		go func() {
 			defer decoders.Done()

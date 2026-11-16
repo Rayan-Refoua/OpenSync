@@ -150,9 +150,11 @@ func checkSource(r MediaRecord) error {
 
 // Direct AVIO skips video-only spans in indexed containers. Restrict the
 // seek-heavy path to confirmed SSDs, where the source is opened locally.
-func analysisAudioArgs(source string) []string {
+func analysisAudioArgs(ctx context.Context, source string) []string {
 	args := []string{"-nostdin", "-v", "error", "-threads", "1"}
-	args = append(args, storageio.DirectMediaArgs(source)...)
+	if analysisSettings(ctx).ReadMode != "buffered" {
+		args = append(args, storageio.DirectMediaArgs(source)...)
+	}
 	return append(args, "-i", source, "-map", "0:a:0", "-vn", "-ac", "1", "-ar", "16000")
 }
 
@@ -166,7 +168,7 @@ func decodedStream(ctx context.Context, r MediaRecord, first, count int64, consu
 	if err != nil {
 		return err
 	}
-	args := analysisAudioArgs(r.Source)
+	args := analysisAudioArgs(ctx, r.Source)
 	// Trim AFTER resampling, with an unchanged decoder/resampler origin. Input
 	// seeking can change PCM phase or codec priming and is not used as a shortcut.
 	if count >= 0 {

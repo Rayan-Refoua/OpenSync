@@ -75,7 +75,7 @@ func (s *directDecoder) read(ctx context.Context, r MediaRecord, first, count in
 		child, cancel := context.WithCancel(ctx)
 		s.ctx = child
 		s.cancel = cancel
-		s.command = mediaCommandContext(child, tool, append(analysisAudioArgs(r.Source), "-f", "s16le", "-")...)
+		s.command = mediaCommandContext(child, tool, append(analysisAudioArgs(ctx, r.Source), "-f", "s16le", "-")...)
 		s.command.Stderr = &s.stderr
 		s.output, err = s.command.StdoutPipe()
 		if err != nil {

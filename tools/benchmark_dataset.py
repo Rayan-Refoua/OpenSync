@@ -35,6 +35,7 @@ def main() -> None:
     parser.add_argument("media", type=Path)
     parser.add_argument("output", type=Path)
     parser.add_argument("--mode", choices=["clips", "chronological"], default="clips")
+    parser.add_argument("--sync-arg", action="append", default=[], help="extra CLI token, e.g. --sync-arg=--recovery=off")
     parser.add_argument("--profile-stage", default="Evaluating timing models")
     parser.add_argument("--only", action="append", default=[], help="include only these named files from the media folder")
     parser.add_argument("--anchor", action="append", type=Path, default=[], help="add a reference recording")
@@ -64,7 +65,7 @@ def main() -> None:
             inputs = [*inputs, *([] if args.only else ["--files"]), *[str(path.resolve()) for path in args.anchor]]
         with (out / "sync.log").open("wb") as log:
             subprocess.run(
-                [str(exe), "sync", *inputs, "--output", str(out / "project"), "--mode", args.mode],
+                [str(exe), "sync", *inputs, "--output", str(out / "project"), "--mode", args.mode, *args.sync_arg],
                 cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT, check=True,
             )
     if args.baseline:
