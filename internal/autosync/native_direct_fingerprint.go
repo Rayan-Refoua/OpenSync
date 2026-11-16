@@ -63,6 +63,21 @@ func directFingerprintIndex(ctx context.Context, records []MediaRecord, out stri
 			}
 		}()
 	}
+	probes := make([]*ioProbe, len(records))
+	byDevice := map[string]*ioProbe{}
+	for i, r := range records {
+		if r.Audio == nil {
+			continue
+		}
+		key := ioProbeKey(r.Source)
+		if key == "" {
+			continue
+		}
+		if byDevice[key] == nil {
+			byDevice[key] = newIOProbe()
+		}
+		probes[i] = byDevice[key]
+	}
 	for w := 0; w < min(2, len(records)); w++ {
 		decoders.Add(1)
 		go func() {
@@ -75,6 +90,15 @@ func directFingerprintIndex(ctx context.Context, records []MediaRecord, out stri
 				if r.Audio == nil {
 					continue
 				}
+				probe := probes[index]
+				release := func() {}
+				if probe != nil {
+					var err error
+					release, err = probe.acquire(ctx)
+					if err != nil {
+						continue
+					}
+				}
 				digest := sha256.New()
 				var frames int64
 				direct := memoryWorkspace(ctx).audio.nativePCMContext(ctx, r) != nil
@@ -86,6 +110,9 @@ func directFingerprintIndex(ctx context.Context, records []MediaRecord, out stri
 						need := 60*16000 - len(overlap)
 						raw := make([]byte, need*2)
 						n, err := io.ReadFull(source, raw)
+						if probe != nil && n > 0 {
+							probe.observe(n)
+						}
 						if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
 							return err
 						}
@@ -130,6 +157,7 @@ func directFingerprintIndex(ctx context.Context, records []MediaRecord, out stri
 					}
 					return nil
 				})
+				release()
 				if err != nil {
 					errs[index] = err
 					cancel()
