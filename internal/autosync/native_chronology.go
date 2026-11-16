@@ -1,6 +1,7 @@
 package autosync
 
 import (
+	"encoding/json"
 	"math"
 	"path/filepath"
 	"regexp"
@@ -241,10 +242,29 @@ func chronologicalPlacements(records []MediaRecord, layout []NativeLayout, block
 // another recording's timing model. A metadata estimate never becomes an anchor.
 func applyChronology(records []MediaRecord, layout []NativeLayout, graph map[string]any) []NativeLayout {
 	blocked := map[int]bool{}
-	if decisions, ok := graph["event_decisions"].([]map[string]any); ok {
+	var decisions []map[string]any
+	if b, err := json.Marshal(graph["event_decisions"]); err == nil {
+		_ = json.Unmarshal(b, &decisions)
+	}
+	if decisions != nil {
 		for _, d := range decisions {
 			if d["status"] == "unresolved_competing_events" {
 				blocked[int(number(d["recording"]))] = true
+			}
+		}
+	}
+	var ledger ReviewLedger
+	if b, err := json.Marshal(graph["review_ledger"]); err == nil && json.Unmarshal(b, &ledger) == nil {
+		for i, r := range records {
+			for _, id := range ledger.Recordings {
+				if r.ID == id {
+					blocked[i] = true
+				}
+			}
+			for _, p := range ledger.Pairs {
+				if r.ID == p.A || r.ID == p.B {
+					blocked[i] = true
+				}
 			}
 		}
 	}

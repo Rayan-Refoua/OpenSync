@@ -178,9 +178,16 @@ func LoadNativeProject(path string) (*NativeProject, error) {
 	if err != nil {
 		return nil, err
 	}
+	return decodeNativeProject(path, data)
+}
+func decodeNativeProject(path string, data []byte) (*NativeProject, error) {
+	var err error
 	var p NativeProject
 	if err = json.Unmarshal(data, &p); err != nil {
 		return nil, err
+	}
+	if p.Format == "opensync.solution" {
+		return loadSolution(path, data)
 	}
 	if p.Format != "opensync.project" || (p.Schema != 1 && p.Schema != 2) {
 		return nil, fmt.Errorf("unsupported project format/version")
@@ -252,7 +259,7 @@ func LoadNativeProject(path string) (*NativeProject, error) {
 	return &p, nil
 }
 
-func saveNativeProject(path, name string, records []MediaRecord, edges []*PairEvidence, layout []NativeLayout, graph map[string]any) error {
+func nativeModelMaps(records []MediaRecord, layout []NativeLayout, graph map[string]any) ([]map[string]any, int) {
 	chronology := map[int]ChronologicalPlacement{}
 	if placements, ok := graph["chronological_placements"].([]ChronologicalPlacement); ok {
 		for _, p := range placements {
@@ -286,6 +293,10 @@ func saveNativeProject(path, name string, records []MediaRecord, edges []*PairEv
 			m["uncertainty_interpretation"] = "conditional_estimate_not_statistical_confidence_bound"
 		}
 	}
+	return models, schema
+}
+func saveNativeProject(path, name string, records []MediaRecord, edges []*PairEvidence, layout []NativeLayout, graph map[string]any) error {
+	models, schema := nativeModelMaps(records, layout, graph)
 	payload := map[string]any{"name": name, "engine_version": "opensync-autonomous-v1", "implementation": "native-go-v1", "recordings": records, "timing_models": models, "validated_relations": edges, "graph": graph, "timing_precision": "IEEE-754 binary64 seconds, affine rates and monotonic timing knots; no timeline frame quantization", "verification_status": "acoustic_and_graph_evidence_supported; production_import_review_pending", "acoustic_environment_policy": map[string]any{"constant_path_delay": "absorbed_in_measured_offset_not_clock_drift", "changing_path_or_echo": "requires_timing_evidence_not_blanket_tolerance", "physical_event_time": "not_identifiable_from_unreferenced_audio_alone"}, "source_media_modified": false}
 	data, err := json.Marshal(payload)
 	if err != nil {

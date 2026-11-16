@@ -4,12 +4,14 @@ package autosync
 
 import "context"
 
-const BuildVersion = "2026.11.15-r8"
+const BuildVersion = "2026.11.16-r9"
 
 // Run retains the previous Go entry point for callers and saved workflows.
 func Run(ctx context.Context, args []string) error {
 	if len(args) > 0 {
 		switch args[0] {
+		case "revise":
+			return NativeReviseCommand(args[1:])
 		case "audit-import":
 			return NativeAuditImportCommand(args[1:])
 		case "export":

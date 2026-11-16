@@ -586,13 +586,68 @@ function inspect(c) {
   note.textContent =
     c.state === "unresolved"
       ? "This component has no established placement relative to the main group. It is preserved at the timeline end."
-      : c.state === "supported"
-        ? "The engine found consistent acoustic evidence for this placement. This is a completed synchronization result, not independent certification of physical capture time. Sound travel in a large venue can introduce a camera-dependent delay."
-        : "Placement follows acoustic arrival time. Physical capture-time alignment is not independently established.";
+      : c.placementUncertainty
+        ? "Provisional chronological estimate from recording order or calibrated timestamps. Its uncertainty is conditional on that metadata; this is not an acoustic match."
+        : c.state === "supported"
+          ? "The engine found consistent acoustic evidence for this placement. This is a completed synchronization result, not independent certification of physical capture time. Sound travel in a large venue can introduce a camera-dependent delay."
+          : "Placement follows acoustic arrival time. Physical capture-time alignment is not independently established.";
   el.append(note);
+  const ledger = state.project.graph?.review_ledger || {},
+    rejected = (ledger.rejected_recordings || []).includes(c.id);
+  const correction = document.createElement("button");
+  correction.textContent = rejected
+    ? "Restore placement evidence"
+    : "Reject this placement";
+  correction.title =
+    "Save a reversible revision. Rejected recordings stay unresolved during re-evaluation; original measurements remain intact.";
+  correction.disabled = !api()?.ReviewSolution || !state.project.path;
+  correction.onclick = () =>
+    action(() =>
+      reviewSolution({
+        kind: rejected ? "restore_recording" : "reject_recording",
+        recording: c.id,
+      }),
+    );
+  el.append(correction);
   const evidence = (state.project.evidence || []).filter(
     (e) => e.reference === c.index || e.query === c.index,
   );
+  if (evidence.length) {
+    const relations = document.createElement("details"),
+      summary = document.createElement("summary");
+    summary.textContent = "Review individual relationships";
+    relations.append(summary);
+    for (const e of evidence) {
+      const a = state.project.clips[e.reference],
+        b = state.project.clips[e.query];
+      if (!a || !b) continue;
+      const rejected = (ledger.rejected_pairs || []).some(
+        (p) => (p.a === a.id && p.b === b.id) || (p.a === b.id && p.b === a.id),
+      );
+      const row = document.createElement("div"),
+        label = document.createElement("span"),
+        button = document.createElement("button");
+      row.className = "relationReview";
+      label.textContent =
+        (a.index === c.index ? b.name : a.name) +
+        (rejected ? " · rejected" : "");
+      button.textContent = rejected ? "Restore" : "Reject";
+      button.disabled = !api()?.ReviewSolution || !state.project.path;
+      button.title =
+        "Reject or restore this pair only, then re-solve the remaining saved relationships";
+      button.onclick = () =>
+        action(() =>
+          reviewSolution({
+            kind: rejected ? "restore_pair" : "reject_pair",
+            reference: a.id,
+            query: b.id,
+          }),
+        );
+      row.append(label, button);
+      relations.append(row);
+    }
+    el.append(relations);
+  }
   for (const [label, value] of [
     [`Pair evidence (${evidence.length})`, evidence],
     [
@@ -617,6 +672,19 @@ function inspect(c) {
   path.textContent = c.source;
   el.append(path);
   requestDraw();
+}
+
+async function reviewSolution(change) {
+  const selected = state.project?.clips[state.selected]?.id;
+  stopPlayback();
+  const p = await api().ReviewSolution(change);
+  setProject(p, false);
+  const c = p?.clips.find((c) => c.id === selected);
+  if (c) {
+    inspect(c);
+    pan(c.start);
+  }
+  message("Review revision saved; original evidence retained");
 }
 
 // Two-lane audition with one output clock, bounded four-second PCM blocks.
@@ -1024,6 +1092,8 @@ async function poll() {
   }
 }
 const workstation = setupWorkstation({
+  setProject,
+  reviewSolution,
   state,
   api,
   action,
@@ -1041,6 +1111,8 @@ const workstation = setupWorkstation({
     playing || buffering ? stopPlayback() : action(() => startPlayback()),
   transport: () => ({
     playing: playing && audioCtx.currentTime >= baseClock,
+    buffering,
+    audioAhead: audioCtx ? Math.max(0, scheduledEnd - audioCtx.currentTime) : 0,
     rate: playRate,
   }),
 });

@@ -53,7 +53,47 @@ build; installer and file associations are not implemented yet.
   have severity filtering and links to recordings. Panels resize/collapse.
 
 This is a synchronization/review workstation, not yet a manual timeline editor.
-There is no separate GUI export-settings dialog; engine runs save Premiere XML.
+Project actions can export the currently opened result to a new Premiere XML
+folder. Unresolved clips are appended; advanced export settings remain in the CLI.
+
+## Review workflow (2026-11-16)
+
+- Choose Clips / takes (default) or Chronological event in the header. The latter
+  enables bounded, explicitly provisional metadata estimates. Changing the selector
+  affects the next sync or explicit re-evaluation, not an already opened timeline.
+- Next attention visits unresolved/provisional recordings. The inspector can reject
+  a recording's placement or reject a particular relationship, and restore either.
+- Project actions → Re-evaluate saved evidence solves the saved relationships in
+  the selected mode without extracting audio. It retains manual rejections and
+  conservatively drops old provisional acoustic proposals whose graph may change.
+  It cannot discover hypotheses missing from the saved evidence; use Resynchronize
+  current recordings for fresh analysis, which automatically carries corrections.
+- Review changes create immutable `.opensync` revisions in `Solutions` beside the
+  original project. Undo opens the parent revision; Solution history opens any
+  saved revision or the original. Keep the original project and Solutions folder
+  together: revisions reference its integrity-checked evidence rather than copying it.
+- Export current result saves a new XML from the opened revision. Open output folder
+  opens the original project directory, including Solutions. Rejections are explicit
+  project state, not a hidden global rule affecting unrelated new projects.
+- Corrections bind to recording IDs and source size/modification time. Fresh analysis
+  refuses corrections for missing/changed sources instead of silently applying them.
+- Playback displays separate audio/video buffer reserves. New seeks supersede an
+  unfinished seek as soon as video metadata is available; an old seek cannot block
+  playback merely because its target has already been removed from the RAM buffer.
+
+Validation on the six original Zendegifakher recordings: fresh no-cache sync took
+14.77 seconds (five supported, one unresolved). An isolated Chromium test exercised
+rapid forward/backward seeks in the actual synchronized project, including the
+long Office_ch5 video and two simultaneous active cameras. Startup took 2.68/3.05
+seconds; each subsequent 20-second sample had zero rebuffering, corrective seeks,
+or catching-up overlays, with at least 7.89 seconds audio and 10.67 seconds video
+reserve. This is bounded playback evidence on this workstation, not a guarantee
+for every codec/storage combination or a Premiere import certification.
+
+`tools/test_seek_playback.mjs` reproduces the obsolete-seek regression against the
+desktop-preview server. `tools/test_review_controls.mjs` checks UI wiring with
+mocked native bindings; Go `TestSolution*` tests separately exercise real revision
+creation, restore, source guards, finalization, export, and integrity failures.
 
 ## Waveforms and thumbnails
 

@@ -19,6 +19,7 @@ export function setupWorkstation(h) {
     },
   );
   let config = {
+      mode: "clips",
       resources: {
         memoryMiB: 4096,
         workers: 8,
@@ -63,6 +64,8 @@ export function setupWorkstation(h) {
       $(id).title = `${shortcuts[action][1]} · ${keyLabel(bindings()[action])}`;
   }
   function apply() {
+    config.mode ||= "clips";
+    $("syncMode").value = config.mode;
     config.layout = { ...defaultLayout, ...config.layout };
     monitor.rows = config.layout.rows;
     monitor.columns = config.layout.columns;
@@ -135,6 +138,7 @@ export function setupWorkstation(h) {
     e.preventDefault();
     try {
       const next = {
+        mode: config.mode,
         resources: {},
         shortcuts: {},
         layout: {
@@ -161,6 +165,71 @@ export function setupWorkstation(h) {
     }
   };
   $("outputFolder").onclick = () => h.action(() => h.api().OpenOutputFolder());
+  $("nextAttention").onclick = () => {
+    const p = h.state.project;
+    if (!p) return;
+    const clips = p.clips
+      .filter((c) => c.state === "unresolved" || c.state === "provisional")
+      .sort((a, b) => a.start - b.start || a.index - b.index);
+    if (!clips.length) {
+      h.message("No unresolved or provisional recordings");
+      return;
+    }
+    const at = clips.findIndex((c) => c.index === h.state.selected),
+      c = clips[(at + 1) % clips.length];
+    h.stop();
+    h.inspect(c);
+    h.pan(c.start);
+    h.seek(c.start, false);
+  };
+  $("rebuildSolution").onclick = () =>
+    h.action(() => h.reviewSolution({ kind: "mode", mode: config.mode }));
+  $("undoReview").onclick = () =>
+    h.action(async () => {
+      h.stop();
+      h.setProject(await h.api().UndoReview(), false);
+    });
+  $("resyncProject").onclick = () =>
+    h.action(() => h.api().ResynchronizeProject());
+  $("exportXML").onclick = () =>
+    h.action(async () => {
+      const path = await h.api().ExportProjectXML();
+      if (path) h.message("Premiere XML saved: " + path);
+    });
+  $("solutionHistory").onclick = () =>
+    h.action(async () => {
+      const list = $("historyList");
+      list.replaceChildren();
+      for (const item of await h.api().SolutionHistory()) {
+        const option = document.createElement("option");
+        option.value = item.path;
+        option.textContent =
+          (item.created
+            ? new Date(item.created).toLocaleString() + " · "
+            : "") + item.label;
+        option.selected = item.path === h.state.project?.path;
+        list.append(option);
+      }
+      $("historyDialog").showModal();
+    });
+  $("closeHistory").onclick = () => $("historyDialog").close();
+  $("openHistory").onclick = () =>
+    h.action(async () => {
+      if (!$("historyList").value) return;
+      h.stop();
+      h.setProject(await h.api().OpenProject($("historyList").value), false);
+      $("historyDialog").close();
+    });
+  $("syncMode").onchange = () =>
+    h.action(async () => {
+      const next = { ...config, mode: $("syncMode").value };
+      try {
+        await h.api().UpdateSettings(next);
+        config = next;
+      } finally {
+        apply();
+      }
+    });
   $("monitorToggle").onclick = () => {
     monitor.toggle();
     $("monitorToggle").textContent = monitor.visible ? "Collapse" : "Expand";
@@ -300,7 +369,10 @@ export function setupWorkstation(h) {
       if (target !== undefined) h.seek(target);
     };
   document.addEventListener("keydown", (e) => {
-    if (e.target.matches("input,select,textarea") || $("settingsDialog").open)
+    if (
+      e.target.matches("input,select,textarea") ||
+      document.querySelector("dialog[open]")
+    )
       return;
     if (e.key === "Escape") {
       h.stop();
@@ -316,6 +388,19 @@ export function setupWorkstation(h) {
   const timer = setInterval(() => {
     const transport = h.transport();
     monitor.tick(h.state.playhead, transport.playing, transport.rate);
+    const buffers = monitor.visible
+      ? monitor.tiles.map((t) => monitor.bufferInfo(t))
+      : [];
+    const video = buffers.length
+      ? Math.min(...buffers.map((b) => b.ahead / b.speed))
+      : Infinity;
+    const reserve = Math.max(0, Math.min(video, transport.audioAhead || 0));
+    $("playbackBuffer").value = Math.min(8, reserve);
+    $("playbackBuffer").hidden = !(transport.playing || transport.buffering);
+    $("bufferDetail").textContent =
+      transport.playing || transport.buffering
+        ? `A ${(transport.audioAhead || 0).toFixed(1)}s · V ${Number.isFinite(video) ? video.toFixed(1) + "s" : "—"}`
+        : "";
     if (transport.playing && transport.rate > 0 && monitor.needsBuffer())
       h.action(() => h.play(transport.rate));
   }, 50);
@@ -324,6 +409,16 @@ export function setupWorkstation(h) {
     monitor.reset();
   });
   function status(s) {
+    $("syncMode").disabled = !!s.running;
+    for (const id of [
+      "rebuildSolution",
+      "solutionHistory",
+      "exportXML",
+      "resyncProject",
+    ])
+      $(id).disabled = !!s.running || !h.state.project?.path;
+    $("undoReview").disabled =
+      !!s.running || !h.state.project?.graph?.solution_revision;
     if (s.diagnostic && h.api()?.ReportPreviewState)
       h.api()
         .ReportPreviewState(

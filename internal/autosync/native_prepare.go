@@ -24,6 +24,8 @@ type NativeSyncOptions struct {
 	// additionally governed by the embedding application's Go memory target.
 	ManagedMemoryMiB                                    int
 	Mode                                                string
+	Corrections                                         string
+	reviewLedger                                        *ReviewLedger
 	Input                                               string
 	Sources, Files, Folders                             []string
 	FileList, Output, CacheIndex, Name, Unsynced, Stage string

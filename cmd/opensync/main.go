@@ -39,6 +39,10 @@ func main() {
 			"  opensync export MyProject/OpenSync.opensync --output Export --unsynced separate-sequence\n\n" +
 			"Check a Premiere import round trip:\n" +
 			"  opensync audit-import Export/OpenSync.xml Premiere-roundtrip.xml --output import-audit.json\n\n" +
+			"Re-evaluate saved evidence in a reversible solution revision:\n" +
+			"  opensync revise MyProject/OpenSync.opensync --mode chronological\n" +
+			"  opensync revise MyProject/OpenSync.opensync --reject-recording RECORDING_ID\n" +
+			"Use sync --corrections path/to/revision.opensync to retain manual rejections in a fresh sync.\n\n" +
 			"Caching is OFF by default. --cache explicitly retains analysis; --resume explicitly reuses it.\n" +
 			"Folders are scanned recursively. Originals are never copied. Unresolved clips are appended.\n" +
 			"Use sync --help or export --help for options.\n" +
@@ -47,6 +51,8 @@ func main() {
 	case len(os.Args) >= 2 && os.Args[1] == "export":
 		err = autosync.NativeExportCommand(os.Args[2:])
 	case len(os.Args) >= 2 && os.Args[1] == "audit-import":
+		err = autosync.Run(ctx, os.Args[1:])
+	case len(os.Args) >= 2 && os.Args[1] == "revise":
 		err = autosync.Run(ctx, os.Args[1:])
 	case len(os.Args) >= 2 && os.Args[1] == "sync":
 		err = autosync.Run(ctx, os.Args[2:])

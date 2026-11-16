@@ -20,6 +20,14 @@
         </div>
       </div>
       <div class="tools">
+        <select
+          id="syncMode"
+          aria-label="Synchronization mode"
+          title="Clips: acoustic placement for repeated takes. Chronological: also estimate bounded gaps using calibrated recording dates and order."
+        >
+          <option value="clips">Clips / takes</option>
+          <option value="chronological">Chronological event</option>
+        </select>
         <button id="open" title="Open a precise .opensync project · Ctrl+O">
           Open project</button
         ><button id="add" title="Select source recordings for a new sync">
@@ -91,7 +99,68 @@
       >
         Open output folder
       </button>
+      <button
+        id="nextAttention"
+        title="Jump to the next unresolved or provisional recording"
+      >
+        Next attention
+      </button>
+      <details class="projectActions">
+        <summary
+          title="Review revisions, rerun synchronization, or export the current result"
+        >
+          Project actions
+        </summary>
+        <div>
+          <button
+            id="rebuildSolution"
+            title="Re-evaluate saved evidence in the selected mode; retain manual rejections; no audio extraction"
+          >
+            Re-evaluate saved evidence
+          </button>
+          <button
+            id="undoReview"
+            title="Return to this revision's parent; keep both versions"
+          >
+            Undo review change
+          </button>
+          <button
+            id="solutionHistory"
+            title="Open an earlier solution without duplicating or recomputing acoustic evidence"
+          >
+            Solution history
+          </button>
+          <button
+            id="resyncProject"
+            title="Run synchronization again on this project's originals; carry forward explicit manual rejections"
+          >
+            Re-sync current sources
+          </button>
+          <button
+            id="exportXML"
+            title="Export this exact solution as Premiere XML into a new folder"
+          >
+            Export Premiere XML
+          </button>
+        </div>
+      </details>
     </section>
+    <dialog id="historyDialog">
+      <h3>Solution history</h3>
+      <p class="muted">
+        Revisions share the original project's evidence. Keep the original
+        .opensync file with its Solutions folder.
+      </p>
+      <select
+        id="historyList"
+        size="10"
+        aria-label="Saved solution revisions"
+      ></select>
+      <div class="dialogActions">
+        <button id="openHistory">Open selected revision</button
+        ><button id="closeHistory">Close</button>
+      </div>
+    </dialog>
     <main>
       <section id="workspace">
         <section id="monitorPanel">
@@ -121,7 +190,16 @@
             id="time"
             title="Timeline time; milliseconds shown without quantizing the saved timing"
             >00:00:00.000</output
-          ><span id="playState">STOPPED</span><span class="divider"></span
+          ><span id="playState">STOPPED</span
+          ><progress
+            id="playbackBuffer"
+            max="8"
+            value="0"
+            title="Playable audio/video reserve; waits for 8 seconds before starting"
+            aria-label="Playback buffer reserve"
+          ></progress
+          ><span id="bufferDetail" class="muted"></span
+          ><span class="divider"></span
           ><button id="fit" title="Fit the entire project · \">Fit</button>
           <button id="zoomOut" title="Zoom out · −">−</button
           ><input

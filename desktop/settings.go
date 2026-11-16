@@ -12,6 +12,7 @@ import (
 )
 
 type WorkstationSettings struct {
+	Mode      string                   `json:"mode"`
 	Resources desktop.ResourceSettings `json:"resources"`
 	Shortcuts map[string]string        `json:"shortcuts"`
 	Layout    MonitorLayout            `json:"layout"`
@@ -23,6 +24,12 @@ type MonitorLayout struct {
 }
 
 func normalizeLayout(s *WorkstationSettings) error {
+	if s.Mode == "" {
+		s.Mode = "clips"
+	}
+	if s.Mode != "clips" && s.Mode != "chronological" {
+		return fmt.Errorf("invalid synchronization mode")
+	}
 	if s.Layout.Position == "" {
 		s.Layout = MonitorLayout{Position: "right", Rows: 4}
 	}
@@ -33,7 +40,7 @@ func normalizeLayout(s *WorkstationSettings) error {
 }
 
 func defaultSettings() WorkstationSettings {
-	return WorkstationSettings{Resources: desktop.DefaultResourceSettings(), Shortcuts: map[string]string{}, Layout: MonitorLayout{Position: "right", Rows: 4}}
+	return WorkstationSettings{Mode: "clips", Resources: desktop.DefaultResourceSettings(), Shortcuts: map[string]string{}, Layout: MonitorLayout{Position: "right", Rows: 4}}
 }
 func settingsPath() string {
 	root, err := os.UserConfigDir()
@@ -123,6 +130,11 @@ func (a *App) OpenOutputFolder() error {
 		return fmt.Errorf("no saved output folder yet")
 	}
 	folder := filepath.Dir(p.Path)
+	if revision, ok := p.Graph["solution_revision"].(map[string]any); ok {
+		if base, ok := revision["base_project"].(string); ok && base != "" {
+			folder = filepath.Dir(base)
+		}
+	}
 	if _, e := os.Stat(folder); e != nil {
 		return e
 	}

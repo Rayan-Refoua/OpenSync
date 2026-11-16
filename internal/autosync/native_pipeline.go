@@ -52,6 +52,7 @@ func NativeSyncCommand(ctx context.Context, args []string) error {
 	f.StringVar(&o.CacheIndex, "cache-index", "", "existing guarded PCM cache index")
 	f.StringVar(&o.Name, "name", "OpenSync", "project name")
 	f.StringVar(&o.Mode, "mode", "clips", "clips (acoustic placement) or chronological (also estimate bounded gaps from calibrated recording order)")
+	f.StringVar(&o.Corrections, "corrections", "", "saved project/revision whose explicit rejected recordings and pairs must remain rejected")
 	f.StringVar(&o.Unsynced, "unsynced", "append", "append or separate-sequence")
 	f.StringVar(&o.Stage, "stage", "all", "cache, discover, verify, or all")
 	f.Float64Var(&o.MaxResidualMS, "max-residual-ms", 150, "maximum export presentation residual")
@@ -205,6 +206,11 @@ func NativeSync(ctx context.Context, o NativeSyncOptions) error {
 		return err
 	}
 	stages["prepare_seconds"] = time.Since(stage).Seconds()
+	ledger, err := correctionsForRecords(o.Corrections, records)
+	if err != nil {
+		return err
+	}
+	o.reviewLedger = &ledger
 	observe(ctx, ProgressEvent{Kind: "inventory", Records: records, Total: len(records)})
 	if o.Stage == "cache" {
 		return writeJSON(filepath.Join(out, "native-run-profile.json"), map[string]any{"stages": stages, "total_seconds": time.Since(start).Seconds()})
@@ -403,12 +409,35 @@ func NativeSync(ctx context.Context, o NativeSyncOptions) error {
 	return profile()
 }
 func nativeFinish(records []MediaRecord, edges []*PairEvidence, profiles []NativeProfilePair, distributed *NativeDistributedReport, o NativeSyncOptions) error {
+	var ledger ReviewLedger
+	var err error
+	if o.reviewLedger != nil {
+		ledger = *o.reviewLedger
+	} else {
+		ledger, err = correctionsForRecords(o.Corrections, records)
+	}
+	if err != nil {
+		return err
+	}
+	edges, err = filterReviewedEdges(records, edges, ledger)
+	if err != nil {
+		return err
+	}
+	blocked, rejected, _ := reviewBlocked(records, ledger)
+	filtered := make([]NativeProfilePair, 0, len(profiles))
+	for _, p := range profiles {
+		if !blocked[p.Reference] && !blocked[p.Query] && !rejected[orderedReviewPair(records[p.Reference].ID, records[p.Query].ID)] {
+			filtered = append(filtered, p)
+		}
+	}
+	profiles = filtered
 	edges, decisions := selectNativeEdges(records, edges, profiles)
 	layout, graph, err := nativeSolve(records, edges)
 	if err != nil {
 		return err
 	}
 	graph["event_decisions"] = decisions
+	graph["review_ledger"] = ledger
 	mode := o.Mode
 	if mode == "" {
 		mode = "clips"

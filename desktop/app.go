@@ -214,9 +214,26 @@ func (a *App) CancelSync() {
 	}
 }
 func (a *App) StartSync() error {
+	return a.startSync(nil, "")
+}
+func (a *App) ResynchronizeProject() error {
+	p := a.media.Project()
+	if p == nil || p.Path == "" {
+		return fmt.Errorf("open a saved project first")
+	}
+	var paths []string
+	for _, c := range p.Clips {
+		paths = append(paths, c.Source)
+	}
+	return a.startSync(paths, p.Path)
+}
+func (a *App) startSync(override []string, corrections string) error {
 	a.mu.Lock()
 	busy := a.running
 	paths := append([]string(nil), a.inputs...)
+	if override != nil {
+		paths = override
+	}
 	a.mu.Unlock()
 	if busy {
 		return fmt.Errorf("sync is already running")
@@ -252,6 +269,8 @@ func (a *App) StartSync() error {
 		prior := runtime.GOMAXPROCS(settings.Resources.Workers)
 		defer cancel()
 		o := autosync.NativeSyncOptions{Output: out, Name: "OpenSync", Stage: "all", Unsynced: "append", MaxResidualMS: 150}
+		o.Mode = settings.Mode
+		o.Corrections = corrections
 		o.ManagedMemoryMiB = settings.Resources.MemoryMiB
 		for _, p := range paths {
 			if st, e := os.Stat(p); e == nil && st.IsDir() {

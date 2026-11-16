@@ -23,6 +23,22 @@ export function placementLabel(c) {
 }
 export function currentReport(s, project) {
   if (s.running) {
+    if (
+      s.stage === "Re-evaluating saved evidence" ||
+      s.stage === "Exporting Premiere XML"
+    )
+      return {
+        tone: "working",
+        title: s.stage,
+        detail: `${Math.floor(s.stageSeconds || 0)}s · using the saved project`,
+        next:
+          s.stage === "Re-evaluating saved evidence"
+            ? "Save a reversible review revision"
+            : "Review the exported timeline",
+        value: 0,
+        max: 1,
+        busy: true,
+      };
     const i = stages.indexOf(s.stage),
       counts =
         s.stageTotal > 0 ? ` · ${s.stageCompleted}/${s.stageTotal} pairs` : "";
@@ -48,7 +64,9 @@ export function currentReport(s, project) {
       tone: s.outcome === "failed" ? "error" : "review",
       title:
         s.outcome === "failed"
-          ? "Synchronization stopped with an error"
+          ? s.stage === "Review failed"
+            ? "Review could not be saved"
+            : "Operation stopped with an error"
           : "Synchronization cancelled",
       detail: s.detail || "No completed result from this run",
       next: "Inspect the diagnostics before starting again",
