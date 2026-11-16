@@ -326,6 +326,7 @@ func CreateSolution(path string, change ReviewChange) (string, error) {
 		}
 	}
 	graph["placement_mode"] = mode
+	graph["recording_continuity"] = continuityEvidence(base.Data.Records, layout)
 	graph["review_ledger"] = ledger
 	graph["event_decisions"] = base.Data.Graph["event_decisions"]
 	graph["chronological_placements"] = []ChronologicalPlacement{}

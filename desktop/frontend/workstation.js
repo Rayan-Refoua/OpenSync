@@ -102,6 +102,7 @@ export function setupWorkstation(h) {
       f.elements[k].value = v;
     f.elements.audioEarlyMS.value = config.audioEarlyMS || 50;
     f.elements.audioLateMS.value = config.audioLateMS || 70;
+    f.elements.unmatchedPolicy.value = config.unmatchedPolicy || "append";
     f.elements.monitorPosition.value = config.layout.position;
     f.elements.monitorRows.value = config.layout.rows;
     f.elements.monitorColumns.value = config.layout.columns;
@@ -141,6 +142,7 @@ export function setupWorkstation(h) {
     try {
       const next = {
         mode: config.mode,
+        unmatchedPolicy: e.target.elements.unmatchedPolicy.value,
         audioEarlyMS: Number(e.target.elements.audioEarlyMS.value),
         audioLateMS: Number(e.target.elements.audioLateMS.value),
         resources: {},

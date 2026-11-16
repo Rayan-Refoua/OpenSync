@@ -54,16 +54,14 @@ func sourceOrigin(r MediaRecord) float64 {
 	return 0
 }
 
-func chronologicalPlacements(records []MediaRecord, layout []NativeLayout, blocked map[int]bool) []ChronologicalPlacement {
-	byID := map[int]NativeLayout{}
-	for _, m := range layout {
-		byID[m.Recording] = m
-	}
-	type entry struct {
-		id       int
-		sequence int64
-	}
-	groups := map[string][]entry{}
+type continuityEntry struct {
+	id       int
+	sequence int64
+}
+
+func continuitySeries(records []MediaRecord) (map[string][]continuityEntry, []string) {
+
+	groups := map[string][]continuityEntry{}
 	for i, r := range records {
 		m := sequenceName.FindStringSubmatch(r.Name)
 		if m == nil || r.SourceGroup == "" {
@@ -76,17 +74,72 @@ func chronologicalPlacements(records []MediaRecord, layout []NativeLayout, block
 		// Folder plus filename series is a conservative series hypothesis, not
 		// a physical camera identity. Calibration and order must still agree.
 		key := strings.ToLower(filepath.Clean(r.SourceGroup) + "\x00" + m[1] + "\x00" + m[3])
-		groups[key] = append(groups[key], entry{i, n})
+		groups[key] = append(groups[key], continuityEntry{i, n})
 	}
 	keys := make([]string, 0, len(groups))
 	for k := range groups {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
+	for _, series := range groups {
+		sort.Slice(series, func(i, j int) bool {
+			if series[i].sequence != series[j].sequence {
+				return series[i].sequence < series[j].sequence
+			}
+			return series[i].id < series[j].id
+		})
+	}
+	return groups, keys
+}
+
+type ContinuityLink struct {
+	Before          string `json:"before"`
+	After           string `json:"after"`
+	Relation        string `json:"relation"`
+	Basis           string `json:"basis"`
+	Status          string `json:"status"`
+	MissingCounters int64  `json:"missing_counters,omitempty"`
+}
+
+func continuityEvidence(records []MediaRecord, layout []NativeLayout) []ContinuityLink {
+	groups, keys := continuitySeries(records)
+	models := make(map[int]NativeLayout, len(layout))
+	for _, m := range layout {
+		models[m.Recording] = m
+	}
+	links := []ContinuityLink{}
+	for _, key := range keys {
+		series := groups[key]
+		for i := 1; i < len(series); i++ {
+			a, b := series[i-1], series[i]
+			link := ContinuityLink{Before: records[a.id].ID, After: records[b.id].ID, Relation: "successor", Basis: "source_group_and_filename_counter", Status: "proposed"}
+			if a.sequence == b.sequence || (i > 1 && series[i-2].sequence == a.sequence) || (i+1 < len(series) && series[i+1].sequence == b.sequence) {
+				link.Relation = "same_recorder_candidate"
+				link.Status = "unresolved"
+			} else {
+				link.MissingCounters = b.sequence - a.sequence - 1
+				x, xok := models[a.id]
+				y, yok := models[b.id]
+				if xok && yok && x.Component == y.Component && x.ComponentSize > 1 && x.Start > y.Start+x.Error+y.Error {
+					link.Status = "contradicted"
+					link.Basis += "_conflicts_with_acoustic_order"
+				}
+			}
+			links = append(links, link)
+		}
+	}
+	return links
+}
+
+func chronologicalPlacements(records []MediaRecord, layout []NativeLayout, blocked map[int]bool) []ChronologicalPlacement {
+	byID := map[int]NativeLayout{}
+	for _, m := range layout {
+		byID[m.Recording] = m
+	}
+	groups, keys := continuitySeries(records)
 	var result []ChronologicalPlacement
 	for _, key := range keys {
 		series := groups[key]
-		sort.Slice(series, func(i, j int) bool { return series[i].sequence < series[j].sequence })
 		duplicate := false
 		for i := 1; i < len(series); i++ {
 			duplicate = duplicate || series[i].sequence == series[i-1].sequence

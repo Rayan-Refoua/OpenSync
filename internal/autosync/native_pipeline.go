@@ -53,7 +53,7 @@ func NativeSyncCommand(ctx context.Context, args []string) error {
 	f.StringVar(&o.Name, "name", "OpenSync", "project name")
 	f.StringVar(&o.Mode, "mode", "clips", "clips (acoustic placement) or chronological (also estimate bounded gaps from calibrated recording order)")
 	f.StringVar(&o.Corrections, "corrections", "", "saved project/revision whose explicit rejected recordings and pairs must remain rejected")
-	f.StringVar(&o.Unsynced, "unsynced", "append", "append or separate-sequence")
+	f.StringVar(&o.Unsynced, "unsynced", "append", "append, separate-sequence, order_only, disabled, or remove")
 	f.StringVar(&o.Stage, "stage", "all", "cache, discover, verify, or all")
 	f.Float64Var(&o.AudioEarlyMS, "audio-early-ms", 50, "allowed audio lead in milliseconds")
 	f.Float64Var(&o.AudioLateMS, "audio-late-ms", 70, "allowed audio lag in milliseconds")
@@ -100,7 +100,7 @@ func NativeSync(ctx context.Context, o NativeSyncOptions) error {
 	if o.MaxResidualMS < 1 || o.MaxResidualMS > 150 {
 		return fmt.Errorf("residual limit must be 1..150ms")
 	}
-	if o.Unsynced != "append" && o.Unsynced != "separate-sequence" {
+	if !validUnmatchedPolicy(o.Unsynced) {
 		return fmt.Errorf("invalid unresolved policy")
 	}
 	if o.Stage != "cache" && o.Stage != "discover" && o.Stage != "verify" && o.Stage != "all" {
@@ -445,6 +445,7 @@ func nativeFinish(records []MediaRecord, edges []*PairEvidence, profiles []Nativ
 		mode = "clips"
 	}
 	graph["placement_mode"] = mode
+	graph["recording_continuity"] = continuityEvidence(records, layout)
 	if mode == "chronological" {
 		layout = applyChronology(records, layout, graph)
 	}

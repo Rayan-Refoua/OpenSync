@@ -12,12 +12,13 @@ import (
 )
 
 type WorkstationSettings struct {
-	AudioEarlyMS float64                  `json:"audioEarlyMS"`
-	AudioLateMS  float64                  `json:"audioLateMS"`
-	Mode         string                   `json:"mode"`
-	Resources    desktop.ResourceSettings `json:"resources"`
-	Shortcuts    map[string]string        `json:"shortcuts"`
-	Layout       MonitorLayout            `json:"layout"`
+	UnmatchedPolicy string                   `json:"unmatchedPolicy"`
+	AudioEarlyMS    float64                  `json:"audioEarlyMS"`
+	AudioLateMS     float64                  `json:"audioLateMS"`
+	Mode            string                   `json:"mode"`
+	Resources       desktop.ResourceSettings `json:"resources"`
+	Shortcuts       map[string]string        `json:"shortcuts"`
+	Layout          MonitorLayout            `json:"layout"`
 }
 type MonitorLayout struct {
 	Position string `json:"position"`
@@ -34,6 +35,14 @@ func normalizeLayout(s *WorkstationSettings) error {
 	}
 	if s.AudioLateMS == 0 {
 		s.AudioLateMS = 70
+	}
+	if s.UnmatchedPolicy == "" {
+		s.UnmatchedPolicy = "append"
+	}
+	switch s.UnmatchedPolicy {
+	case "append", "separate-sequence", "order_only", "remove", "disabled":
+	default:
+		return fmt.Errorf("invalid unmatched export policy")
 	}
 	if s.Mode == "" {
 		s.Mode = "clips"

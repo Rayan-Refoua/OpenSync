@@ -103,6 +103,8 @@ func channelType(n int) string {
 }
 
 type NativePlacement struct {
+	Disabled             bool    `json:"disabled,omitempty"`
+	LayoutBasis          string  `json:"layout_basis,omitempty"`
 	PlacementUncertainty float64 `json:"placement_uncertainty_seconds,omitempty"`
 	TimingBasis          string  `json:"timing_basis,omitempty"`
 	Recording            int     `json:"recording"`
@@ -130,6 +132,14 @@ type NativeExportOptions struct {
 	IncludeProvisional        bool
 }
 
+func validUnmatchedPolicy(policy string) bool {
+	switch policy {
+	case "append", "separate-sequence", "order_only", "disabled", "remove":
+		return true
+	}
+	return false
+}
+
 func NativeExportCommand(args []string) error {
 	// Match the public positional-project interface, followed by options.
 	if len(args) == 0 {
@@ -139,7 +149,7 @@ func NativeExportCommand(args []string) error {
 	f := flag.NewFlagSet("export", flag.ContinueOnError)
 	o := NativeExportOptions{}
 	f.StringVar(&o.Output, "output", filepath.Dir(project), "output directory")
-	f.StringVar(&o.Unsynced, "unsynced", "append", "append or separate-sequence")
+	f.StringVar(&o.Unsynced, "unsynced", "append", "append, separate-sequence, order_only, disabled, or remove")
 	f.Float64Var(&o.MaxResidualMS, "max-residual-ms", 150, "maximum presentation residual")
 	f.BoolVar(&o.IncludeProvisional, "include-provisional", false, "include marked comparison candidates")
 	f.Float64Var(&o.AudioEarlyMS, "audio-early-ms", 50, "allowed audio lead in milliseconds")
@@ -153,7 +163,7 @@ func NativeExportCommand(args []string) error {
 	return ExportNative(project, o)
 }
 func nativePlacements(p *NativeProject, o NativeExportOptions) ([]NativePlacement, FrameRate, error) {
-	if o.Unsynced != "append" && o.Unsynced != "separate-sequence" {
+	if !validUnmatchedPolicy(o.Unsynced) {
 		return nil, FrameRate{}, fmt.Errorf("invalid unresolved policy")
 	}
 	if o.MaxResidualMS < 1 || o.MaxResidualMS > 150 {
@@ -302,6 +312,15 @@ func nativePlacements(p *NativeProject, o NativeExportOptions) ([]NativePlacemen
 		}
 		return last
 	}
+	if o.Unsynced == "remove" {
+		kept := result[:0]
+		for _, v := range result {
+			if !strings.HasPrefix(v.Status, "unresolved") {
+				kept = append(kept, v)
+			}
+		}
+		result = kept
+	}
 	var synced []int
 	groups := map[int][]int{}
 	for i, v := range result {
@@ -314,7 +333,7 @@ func nativePlacements(p *NativeProject, o NativeExportOptions) ([]NativePlacemen
 	end := move(synced, 0, "synced")
 	cursor := int64(0)
 	unseq := "unresolved"
-	if o.Unsynced == "append" {
+	if o.Unsynced != "separate-sequence" {
 		unseq = "synced"
 		if len(synced) > 0 && len(groups) > 0 {
 			cursor = end + roundFrame(10*seq.FPS())
@@ -341,7 +360,16 @@ func nativePlacements(p *NativeProject, o NativeExportOptions) ([]NativePlacemen
 		}
 		return ai < bi
 	})
+	if o.Unsynced == "order_only" {
+		components = orderUnmatchedComponents(p.Data.Records, result, components)
+	}
 	for _, c := range components {
+		for _, i := range groups[c] {
+			result[i].Disabled = o.Unsynced == "disabled"
+			if o.Unsynced == "order_only" {
+				result[i].LayoutBasis = "ordered_without_reliable_timing"
+			}
+		}
 		cursor = move(groups[c], cursor, unseq) + roundFrame(seq.FPS())
 	}
 	return result, seq, nil
@@ -641,6 +669,9 @@ func buildNativeXML(p *NativeProject, placements []NativePlacement, seqRate Fram
 				rateXML(c, v.rate)
 				c.add("in", v.In)
 				c.add("out", v.Out)
+				if v.Disabled {
+					c.add("enabled", "FALSE")
+				}
 				c.add("start", v.Start)
 				c.add("end", v.End)
 				c.add("masterclipid", "master-"+r.ID)
@@ -751,6 +782,18 @@ func ExportNative(projectPath string, o NativeExportOptions) error {
 			provisional = append(provisional, r.Name)
 		}
 	}
+	omitted := []string{}
+	if o.Unsynced == "remove" {
+		present := map[int]bool{}
+		for _, v := range placements {
+			present[v.Recording] = true
+		}
+		for i, r := range p.Data.Records {
+			if !present[i] {
+				omitted = append(omitted, r.ID)
+			}
+		}
+	}
 	derivatives := []map[string]any{}
 	for _, v := range placements {
 		if v.Derivative != nil {
@@ -762,7 +805,7 @@ func ExportNative(projectPath string, o NativeExportOptions) error {
 			derivatives = append(derivatives, map[string]any{"recording_id": r.ID, "original": r.Source, "derivative": *v.Derivative, "sha256": digest, "actual_duration_seconds": v.DerivativeDuration})
 		}
 	}
-	manifest := map[string]any{"status": "EXPORTED_REQUIRES_PREMIERE_AND_ACCURACY_REVIEW", "project": projectPath, "project_content_sha256": p.Hash, "xml": path, "xml_sha256": hex.EncodeToString(sum[:]), "recordings": len(p.Data.Records), "sequence_fps": seq.String(), "unsynced_policy": o.Unsynced, "include_provisional": o.IncludeProvisional, "placements": placements, "derivatives": derivatives, "unresolved_recordings": unresolved, "provisional_recordings": provisional, "source_media_modified": false, "engine": "native_go"}
+	manifest := map[string]any{"status": "EXPORTED_REQUIRES_PREMIERE_AND_ACCURACY_REVIEW", "project": projectPath, "project_content_sha256": p.Hash, "xml": path, "xml_sha256": hex.EncodeToString(sum[:]), "recordings": len(p.Data.Records), "sequence_fps": seq.String(), "unsynced_policy": o.Unsynced, "include_provisional": o.IncludeProvisional, "placements": placements, "omitted_recording_ids": omitted, "derivatives": derivatives, "unresolved_recordings": unresolved, "provisional_recordings": provisional, "source_media_modified": false, "engine": "native_go"}
 	if err = writeJSON(filepath.Join(out, "timeline-manifest.json"), manifest); err != nil {
 		return err
 	}

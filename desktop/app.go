@@ -270,6 +270,10 @@ func (a *App) startSync(override []string, corrections string) error {
 		defer cancel()
 		o := autosync.NativeSyncOptions{Output: out, Name: "OpenSync", Stage: "all", Unsynced: "append", MaxResidualMS: 150}
 		o.Mode = settings.Mode
+		o.Unsynced = settings.UnmatchedPolicy
+		if o.Unsynced == "" {
+			o.Unsynced = "append"
+		}
 		o.AudioEarlyMS, o.AudioLateMS = settings.AudioEarlyMS, settings.AudioLateMS
 		o.Corrections = corrections
 		o.ManagedMemoryMiB = settings.Resources.MemoryMiB
