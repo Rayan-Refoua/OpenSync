@@ -286,6 +286,8 @@ func selectNativeEdges(records []MediaRecord, base []*PairEvidence, profiles []N
 		return keys[i][1] < keys[j][1]
 	})
 	result := []*PairEvidence{}
+	var local []*PairEvidence
+	occupied := make([]bool, len(records))
 	for _, k := range keys {
 		e := selected[k]
 		blocked := false
@@ -296,6 +298,17 @@ func selectNativeEdges(records []MediaRecord, base []*PairEvidence, profiles []N
 		}
 		if !blocked {
 			result = append(result, e)
+			occupied[e.Reference], occupied[e.Query] = true, true
+		} else if e.Profile != nil && e.Profile.Status == "validated_relation" {
+			local = append(local, e)
+		}
+	}
+	// Keep an audited relation between otherwise isolated recordings.
+	// An ambiguous recorder must not move an already established component.
+	for _, e := range local {
+		if !occupied[e.Reference] && !occupied[e.Query] {
+			result = append(result, e)
+			report = append(report, map[string]any{"reference": e.Reference, "query": e.Query, "status": "audited_local_alignment_global_position_unresolved"})
 		}
 	}
 	result, more := rejectExcerptBridges(records, result)

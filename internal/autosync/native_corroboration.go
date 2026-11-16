@@ -210,16 +210,57 @@ func corroborateComponents(records []MediaRecord, edges []*PairEvidence, profile
 				}
 				extents = append(extents, [2]TimePoint{{lo, MapTime(c.points, lo)}, {hi, MapTime(c.points, hi)}})
 			}
-			offset, rate, ok := fitRecorderClock(extents)
-			compatible = ok
-			for _, c := range cs {
-				for _, w := range c.windows {
-					for _, x := range w {
-						if math.Abs(offset+rate*x-MapTime(c.points, x)) > .05 {
-							compatible = false
+			active := make([]int, len(cs))
+			for i := range active {
+				active[i] = i
+			}
+			// A failed check on one camera should not erase a compatible
+			// majority. Keep the same timing tolerance and require three
+			// distinct peer recordings after removing inconsistent fits.
+			compatible = false
+			minimum := max(3, len(cs)/2+1)
+			for len(active) >= minimum {
+				measurements := make([][2]TimePoint, 0, len(active))
+				for _, i := range active {
+					measurements = append(measurements, extents[i])
+				}
+				offset, rate, ok := fitRecorderClock(measurements)
+				if !ok {
+					break
+				}
+				worst, bad := .05, -1
+				for j, i := range active {
+					c := cs[i]
+					for _, w := range c.windows {
+						for _, x := range w {
+							if residual := math.Abs(offset + rate*x - MapTime(c.points, x)); residual > worst {
+								worst, bad = residual, j
+							}
 						}
 					}
 				}
+				if bad >= 0 {
+					active = append(active[:bad], active[bad+1:]...)
+					continue
+				}
+				kept := make([]candidate, 0, len(active))
+				peers := map[string]bool{}
+				var supportedWindows []TimePoint
+				for _, i := range active {
+					c := cs[i]
+					kept = append(kept, c)
+					peer := c.a
+					if c.leftSize == 1 {
+						peer = c.b
+					}
+					peers[identity(peer)] = true
+					supportedWindows = append(supportedWindows, c.windows...)
+				}
+				compatible = len(peers) >= 3 && len(peers)*2 > max(len(left), len(right)) && distinctRegions(supportedWindows) >= 3
+				if compatible {
+					cs = kept
+				}
+				break
 			}
 			if !compatible {
 				status = "deferred_competing_component_transforms"

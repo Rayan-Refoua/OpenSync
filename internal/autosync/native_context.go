@@ -106,6 +106,59 @@ func nativeComparisonPlacements(records []MediaRecord, layout []NativeLayout, pr
 			choices[q] = append(choices[q], map[string]any{"recording": q, "reference": r, "start_seconds": start, "rate": 1., "timing_knots": []TimePoint{{0, start}, {duration, start + duration}}, "fit_residual_seconds": uncertainty, "status": "provisional_acoustic_review_required", "matched_windows": counts, "measured_window_residual_seconds": residual, "proposed_pair_offset_seconds": offset, "discovery_offset_seconds": top.Offset, "excluded_waveform_windows": excluded, "physical_capture_alignment": "not_independently_established"})
 		}
 	}
+	// Multiple distinctive spectral searches can suggest a useful comparison
+	// placement even when waveform audits do not support a timing model.
+	// Keep it separate from the solved graph and require explicit export opt-in.
+	type spectralChoice struct {
+		reference    int
+		start, score float64
+	}
+	spectral := map[int][]spectralChoice{}
+	if discovery != nil {
+		for _, pair := range discovery.Pairs {
+			r, q := models[pair.Reference], models[pair.Query]
+			if len(choices[pair.Query]) > 0 || !strings.HasPrefix(q.Status, "unresolved") ||
+				strings.HasPrefix(r.Status, "unresolved") || strings.HasPrefix(r.Status, "provisional") || r.ComponentSize < 2 || len(r.Knots) < 2 ||
+				len(pair.Peaks) < 2 || records[pair.Query].Duration > 60 {
+				continue
+			}
+			top := pair.Peaks[0]
+			if top.BackgroundZ < 8 || top.Score < .14 || top.Score < 1.4*pair.Peaks[1].Score ||
+				top.Available < 3 || top.Offset < 0 || top.Offset+records[pair.Query].Duration > records[pair.Reference].Duration {
+				continue
+			}
+			spectral[pair.Query] = append(spectral[pair.Query], spectralChoice{pair.Reference, MapTime(r.Knots, top.Offset), top.Score})
+		}
+	}
+	for q, options := range spectral {
+		if len(options) < 2 {
+			continue
+		}
+		lo, hi := options[0].start, options[0].start
+		best := options[0]
+		refs := map[string]bool{}
+		for _, option := range options {
+			lo, hi = math.Min(lo, option.start), math.Max(hi, option.start)
+			if option.score > best.score {
+				best = option
+			}
+			identity := records[option.reference].CacheSHA
+			if identity == "" {
+				identity = records[option.reference].ID
+			}
+			refs[identity] = true
+		}
+		if hi-lo > .05 || len(refs) < 2 {
+			continue
+		}
+		choices[q] = append(choices[q], map[string]any{
+			"recording": q, "reference": best.reference, "start_seconds": best.start, "rate": 1.,
+			"status":                    "provisional_spectral_consensus_review_required",
+			"timing_basis":              "independent_reference_spectral_consensus",
+			"reference_recording_count": len(refs), "reference_start_spread_seconds": hi - lo,
+			"physical_capture_alignment": "not_independently_established",
+		})
+	}
 	ids := []int{}
 	for q := range choices {
 		ids = append(ids, q)

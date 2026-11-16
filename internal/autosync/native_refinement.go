@@ -226,6 +226,22 @@ func (a *NativeAnalyzer) measure(ref, query int, center, length float64, prior N
 	return best, nil
 }
 func (a *NativeAnalyzer) profileCandidate(ref, query int, prior NativePrior) (*NativeProfile, error) {
+	profile, err := a.profileCandidateWindows(ref, query, prior, false)
+	if err != nil || !longSpectralWindows(prior, profile.Overlap) || profile.Model != nil {
+		return profile, err
+	}
+	longer, err := a.profileCandidateWindows(ref, query, prior, true)
+	if err != nil || longer.Model != nil {
+		return longer, err
+	}
+	return profile, nil
+}
+
+func longSpectralWindows(prior NativePrior, overlap float64) bool {
+	return prior.Method == "distributed_spectral" && prior.Score >= .18 && overlap >= 15 && overlap < 30
+}
+
+func (a *NativeAnalyzer) profileCandidateWindows(ref, query int, prior NativePrior, longer bool) (*NativeProfile, error) {
 	rate := 1 + prior.Slope
 	begin := math.Max(0, -prior.Offset/rate) + .15
 	end := math.Min(a.records[query].Duration, (a.records[ref].Duration-prior.Offset)/rate) - .15
@@ -258,6 +274,15 @@ func (a *NativeAnalyzer) profileCandidate(ref, query int, prior NativePrior) (*N
 			for j := role; j < 12; j += 3 {
 				schedules[role] = append(schedules[role], TimePoint{begin + (float64(j)+.5)*block, .9 * block})
 			}
+		}
+	}
+	// Strong spectral candidates can need more waveform context in a
+	// noisy room. Use guarded, longer windows while retaining held-out roles.
+	if longer {
+		schedules = [3][]TimePoint{}
+		block := overlap / 7
+		for j, role := range []int{0, 1, 0, 2, 0, 1, 2} {
+			schedules[role] = append(schedules[role], TimePoint{begin + (float64(j)+.5)*block, .95 * block})
 		}
 	}
 	outputs := []*[]*Measurement{&result.Training, &result.Selection, &result.Audit}

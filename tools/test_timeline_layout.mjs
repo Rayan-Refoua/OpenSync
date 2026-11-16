@@ -51,6 +51,18 @@ try {
   assert.equal(progress.whileSyncing,false);
   assert.equal(progress.enabled,true);
   assert.equal(progress.idleText,"");
+  const match = project.clips.find(c => c.name.startsWith("Office_ch5"));
+  assert.ok(match);
+  await page.keyboard.press("Control+f");
+  await page.locator("#findClipInput").fill("OFFICE_ch5");
+  assert.equal(await page.locator("#findClipResults option").count(), 1);
+  await page.locator("#findClipInput").press("Enter");
+  const found = await page.evaluate(() => {
+    const { state } = window.opensyncTest;
+    return { selected: state.selected, playhead: state.playhead };
+  });
+  assert.equal(found.selected, match.index);
+  assert.equal(found.playhead, match.start);
   assert.deepEqual(errors,[]);
   await page.close();
  }

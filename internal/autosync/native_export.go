@@ -216,6 +216,8 @@ func nativePlacements(p *NativeProject, o NativeExportOptions) ([]NativePlacemen
 					m.Offset = number(a["start_seconds"]) - m.AudioOrigin
 					m.Rate = 1
 					m.Error = number(a["fit_residual_seconds"])
+					m.PlacementUncertainty = number(a["placement_uncertainty_seconds"])
+					m.TimingBasis = stringValue(a["timing_basis"])
 					m.Component = 1
 					m.Resolved = true
 					m.Knots = []TimePoint{{0, m.Offset}, {p.Data.Records[idx].Duration, m.Offset + p.Data.Records[idx].Duration}}
@@ -690,6 +692,9 @@ func buildNativeXML(p *NativeProject, placements []NativePlacement, seqRate Fram
 				} else if strings.HasPrefix(v.Status, "provisional") {
 					label = "Mango"
 					description = "Provisional acoustic placement for comparison, not certified"
+				}
+				if v.Status == "provisional_spectral_consensus_review_required" {
+					description = "Spectral comparison placement; waveform timing is unverified"
 				}
 				if v.PlacementUncertainty > 0 {
 					description = fmt.Sprintf("Chronological estimate (%s), uncertainty +/- %.3f s; not acoustically verified", v.TimingBasis, v.PlacementUncertainty)

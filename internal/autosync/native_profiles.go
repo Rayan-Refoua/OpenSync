@@ -191,7 +191,7 @@ func (a *NativeAnalyzer) runProfiles(ctx context.Context, out string) ([]NativeP
 	runPair := func(i int) {
 		pair := pairs[i]
 		ref, query := a.records[pair.Reference], a.records[pair.Query]
-		raw, _ := json.Marshal(map[string]any{"version": "multilevel-profile-native-v2", "pair": pair, "sources": []string{ref.CacheSHA, query.CacheSHA}})
+		raw, _ := json.Marshal(map[string]any{"version": "multilevel-profile-native-v2", "spectral_schedule": 2, "pair": pair, "sources": []string{ref.CacheSHA, query.CacheSHA}})
 		identity := shaBytes(raw)
 		name := ref.ID + "_" + query.ID
 		path := filepath.Join(folder, name+"_"+identity[:16]+".json")

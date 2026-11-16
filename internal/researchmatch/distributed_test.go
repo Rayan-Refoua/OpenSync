@@ -182,3 +182,26 @@ func TestDistributedStereoPolarityDoesNotCancelAndSilenceHasNoPeaks(t *testing.T
 		t.Fatal("silence invented a candidate")
 	}
 }
+
+func TestDistributedLongQueryCrossesReferenceTileBoundary(t *testing.T) {
+	const start = 4789
+	root := t.TempDir()
+	ref, query := make([][]float64, 5), make([][]float64, 5)
+	for band := range ref {
+		random := rand.New(rand.NewSource(int64(81 + band)))
+		ref[band] = make([]float64, 43000)
+		for i := range ref[band] {
+			ref[band][i] = random.NormFloat64()
+		}
+		query[band] = ref[band][start : start+26000]
+	}
+	r := featureFixture(t, filepath.Join(root, "long-ref.features"), 1, ref)
+	q := featureFixture(t, filepath.Join(root, "long-query.features"), 1, query)
+	got, err := SearchDistributed(r, q, -1, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Peaks) == 0 || math.Abs(got.Peaks[0].Offset-float64(start)/100) > .011 {
+		t.Fatalf("long query did not recover expected start: %+v", got.Peaks)
+	}
+}

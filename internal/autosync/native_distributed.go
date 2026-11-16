@@ -79,7 +79,7 @@ func runNativeDistributed(ctx context.Context, records []MediaRecord, layout []N
 	for _, r := range records {
 		identities = append(identities, []any{r.ID, r.CacheSHA})
 	}
-	raw, _ := pythonJSON([]any{researchmatch.DistributedVersion, identities})
+	raw, _ := pythonJSON([]any{researchmatch.DistributedVersion, "established-reference-v4", identities})
 	identity := shaBytes(raw)
 	saved := filepath.Join(out, "distributed-discovery.json")
 	if data, err := workspaceRead(ctx, saved); err == nil {
@@ -87,23 +87,23 @@ func runNativeDistributed(ctx context.Context, records []MediaRecord, layout []N
 		if err = json.Unmarshal(data, &report); err != nil {
 			return nil, err
 		}
-		if report.Digest != identity {
-			return nil, fmt.Errorf("stale distributed discovery")
+		if report.Digest == identity {
+			return &report, nil
 		}
-		return &report, nil
 	}
 	folder := filepath.Join(out, researchmatch.DistributedVersion)
 	if err := workspaceMkdir(ctx, folder, 0755); err != nil {
 		return nil, err
 	}
 	targets := []int{}
+	established := map[int]bool{}
 	for _, m := range layout {
+		established[m.Recording] = !strings.HasPrefix(m.Status, "unresolved") && !strings.HasPrefix(m.Status, "provisional") && m.ComponentSize > 1
 		d := records[m.Recording].Duration
-		if strings.HasPrefix(m.Status, "unresolved") && d >= 1.2 && d <= 60 {
+		if strings.HasPrefix(m.Status, "unresolved") && d >= 1.2 && d <= 299 {
 			targets = append(targets, m.Recording)
 		}
 	}
-	sort.Ints(targets)
 	strength := map[[2]int]float64{}
 	for _, p := range envelope {
 		v := 0.
@@ -112,13 +112,29 @@ func runNativeDistributed(ctx context.Context, records []MediaRecord, layout []N
 		}
 		strength[[2]int{p.Reference, p.Query}] = v
 	}
+	// Spend the shared extension budget on stronger long-reference hints
+	// before falling back to filename/inventory order.
+	priority := map[int]float64{}
+	for pair, v := range strength {
+		if established[pair[0]] && records[pair[0]].Duration > 3600 && records[pair[0]].Duration <= 9000 {
+			priority[pair[1]] = max(priority[pair[1]], v)
+		}
+	}
+	sort.Slice(targets, func(i, j int) bool {
+		a, b := targets[i], targets[j]
+		if priority[a] != priority[b] {
+			return priority[a] > priority[b]
+		}
+		return a < b
+	})
 	pairs := [][2]int{}
 	deferred := []map[string]any{}
 	needed := map[int]bool{}
+	extraSeconds := 90000.0
 	for _, q := range targets {
 		refs := []int{}
 		for r := range records {
-			if r != q && records[r].Duration >= records[q].Duration {
+			if r != q && records[r].Audio != nil && records[r].Duration >= records[q].Duration {
 				refs = append(refs, r)
 			}
 		}
@@ -128,11 +144,48 @@ func runNativeDistributed(ctx context.Context, records []MediaRecord, layout []N
 			if sa != sb {
 				return sa > sb
 			}
+			if established[a] != established[b] {
+				return established[a]
+			}
 			return records[a].ID < records[b].ID
 		})
 		used, selected := 0., 0
+		limit := 8
+		if records[q].Duration > 60 {
+			limit = 2
+		}
+		// Reserve one attempt on a long, established recorder. Previously
+		// every reference longer than the ordinary budget was unreachable.
+		anchors := map[int]bool{}
 		for _, r := range refs {
-			if selected >= 8 || used+records[r].Duration > 3600 {
+			d := records[r].Duration
+			if established[r] && d > 3600 && d <= 9000 && d <= extraSeconds {
+				anchors[r] = true
+				extraSeconds -= d
+				pairs = append(pairs, [2]int{r, q})
+				needed[r], needed[q] = true, true
+				break
+			}
+		}
+		// A medium query may belong to a different part of an event.
+		// Give it one bounded attempt against a second long recorder.
+		if records[q].Duration > 60 {
+			for _, r := range refs {
+				d := records[r].Duration
+				if !anchors[r] && d > 3600 && d <= 9000 && d <= extraSeconds {
+					anchors[r] = true
+					extraSeconds -= d
+					pairs = append(pairs, [2]int{r, q})
+					needed[r], needed[q] = true, true
+					break
+				}
+			}
+		}
+		for _, r := range refs {
+			if anchors[r] || (records[q].Duration > 60 && !established[r]) {
+				continue
+			}
+			if selected >= limit || used+records[r].Duration > 3600 {
 				deferred = append(deferred, map[string]any{"reference": r, "query": q, "reason": "discovery_compute_budget"})
 				continue
 			}
@@ -231,7 +284,7 @@ func runNativeDistributed(ctx context.Context, records []MediaRecord, layout []N
 			return nil, err
 		}
 	}
-	report := &NativeDistributedReport{researchmatch.DistributedVersion, identity, results, deferred, 3600, 8, 3, false, "cached_mono_first_pass", "DISCOVERY_ONLY", false}
+	report := &NativeDistributedReport{researchmatch.DistributedVersion, identity, results, deferred, 21600, 9, 3, false, "cached_mono_first_pass", "DISCOVERY_ONLY", false}
 	if err := workspaceJSON(ctx, saved, report); err != nil {
 		return nil, err
 	}

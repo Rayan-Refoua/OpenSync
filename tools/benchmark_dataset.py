@@ -36,6 +36,7 @@ def main() -> None:
     parser.add_argument("output", type=Path)
     parser.add_argument("--mode", choices=["clips", "chronological"], default="clips")
     parser.add_argument("--profile-stage", default="Evaluating timing models")
+    parser.add_argument("--only", action="append", default=[], help="include only these named files from the media folder")
     parser.add_argument("--anchor", action="append", type=Path, default=[], help="add a reference recording")
     parser.add_argument("--baseline", type=Path, help="previous benchmark directory")
     parser.add_argument("--compare-only", action="store_true", help="compare existing output")
@@ -53,11 +54,17 @@ def main() -> None:
         subprocess.run(["go", "build", "-o", str(exe), "./cmd/opensync"], cwd=ROOT, check=True)
         env = dict(os.environ, OPENSYNC_PROFILE_STAGE=args.profile_stage,
                    OPENSYNC_PROFILE_PATH=str(out / "stage.pprof"))
+        inputs = ["--folders", str(args.media.resolve())]
+        if args.only:
+            selected = [args.media.resolve() / name for name in args.only]
+            if any(not path.is_file() for path in selected):
+                parser.error("all selected media files must exist")
+            inputs = ["--files", *map(str, selected)]
+        if args.anchor:
+            inputs = [*inputs, *([] if args.only else ["--files"]), *[str(path.resolve()) for path in args.anchor]]
         with (out / "sync.log").open("wb") as log:
             subprocess.run(
-                [str(exe), "sync", "--folders", str(args.media.resolve()),
-                 "--output", str(out / "project"), "--mode", args.mode,
-                 *(["--files", *[str(path.resolve()) for path in args.anchor]] if args.anchor else [])],
+                [str(exe), "sync", *inputs, "--output", str(out / "project"), "--mode", args.mode],
                 cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT, check=True,
             )
     if args.baseline:

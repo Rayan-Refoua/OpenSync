@@ -107,6 +107,7 @@
         Next attention
       </button>
       <button id="exportXML" class="ui-icon" title="Export the current solution to Premiere XML">Export XML</button>
+      <button id="findClip" title="Find a recording by filename · Ctrl+F">Find clip</button>
       <details class="projectActions">
         <summary
           title="Review revisions, rerun synchronization, or export the current result"
@@ -142,6 +143,12 @@
         </div>
       </details>
     </section>
+    <dialog id="findClipDialog">
+      <h3>Find recording</h3>
+      <input id="findClipInput" type="search" aria-label="Recording filename" placeholder="Type part of a filename" autofocus />
+      <select id="findClipResults" size="10" aria-label="Matching recordings"></select>
+      <div class="dialogActions"><button id="jumpToClip">Jump to clip</button><button id="cancelFindClip">Close</button></div>
+    </dialog>
     <dialog id="historyDialog">
       <h3>Solution history</h3>
       <p class="muted">

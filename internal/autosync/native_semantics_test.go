@@ -211,3 +211,19 @@ func TestNativeCanonicalUnicodeCompatibility(t *testing.T) {
 		t.Fatalf("canonical unicode changed: %q", data)
 	}
 }
+
+func TestCompetingGlobalOffsetsPreserveAuditedLocalPair(t *testing.T) {
+	records := []MediaRecord{{ID: "anchor-a", Duration: 500}, {ID: "anchor-b", Duration: 400}, {ID: "ambiguous", Duration: 120}, {ID: "local", Duration: 12}}
+	profiles := []NativeProfilePair{
+		{Reference: 0, Query: 2, Profiles: []*NativeProfile{testProfile(30, "validated_relation"), testProfile(250, "validated_relation")}},
+		{Reference: 2, Query: 3, Profiles: []*NativeProfile{testProfile(20, "validated_relation")}},
+	}
+	got, decisions := selectNativeEdges(records, []*PairEvidence{testRelation(0, 1, 10, 1)}, profiles)
+	if len(got) != 2 || got[1].Reference != 2 || got[1].Query != 3 {
+		t.Fatalf("local edge not preserved or ambiguous bridge admitted: %+v", decisions)
+	}
+	_, graph, err := nativeSolve(records, got)
+	if err != nil || len(graph["components"].([][]int)) != 2 {
+		t.Fatalf("expected two components: %v", err)
+	}
+}

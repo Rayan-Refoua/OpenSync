@@ -172,6 +172,55 @@ export function setupWorkstation(h) {
     }
   };
   $("outputFolder").onclick = () => h.action(() => h.api().OpenOutputFolder());
+  const findDialog = $("findClipDialog"), findInput = $("findClipInput"), findResults = $("findClipResults");
+  function updateMatches() {
+    const query = findInput.value.trim().toLowerCase();
+    const matches = (h.state.project?.clips || []).filter(c => c.name.toLowerCase().includes(query));
+    findResults.replaceChildren(...matches.slice(0, 200).map(c => {
+      const option = document.createElement("option");
+      option.value = c.index;
+      option.textContent = `${c.name} · lane ${c.track + 1}`;
+      return option;
+    }));
+    findResults.selectedIndex = matches.length ? 0 : -1;
+    $("jumpToClip").disabled = !matches.length;
+  }
+  function openFind() {
+    if (!h.state.project || findDialog.open) return;
+    findInput.value = "";
+    updateMatches();
+    findDialog.showModal();
+    findInput.focus();
+  }
+  function jumpToMatch() {
+    if (findResults.selectedIndex < 0) return;
+    const clip = h.state.project?.clips[Number(findResults.value)];
+    if (!clip) return;
+    findDialog.close();
+    h.stop();
+    h.inspect(clip);
+    const rowHeight = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--row"));
+    $("scroller").scrollTop = clip.track * rowHeight;
+    h.pan(clip.start);
+    h.seek(clip.start, false);
+  }
+  $("findClip").onclick = openFind;
+  $("cancelFindClip").onclick = () => findDialog.close();
+  $("jumpToClip").onclick = jumpToMatch;
+  findInput.oninput = updateMatches;
+  findResults.ondblclick = jumpToMatch;
+  findDialog.addEventListener("keydown", e => {
+    if (e.key === "Enter" && (e.target === findInput || e.target === findResults)) {
+      e.preventDefault();
+      jumpToMatch();
+    }
+  });
+  document.addEventListener("keydown", e => {
+    if (e.ctrlKey && e.key.toLowerCase() === "f" && !document.querySelector("dialog[open]") && h.state.project) {
+      e.preventDefault();
+      openFind();
+    }
+  });
   $("nextAttention").onclick = () => {
     const p = h.state.project;
     if (!p) return;

@@ -152,7 +152,7 @@ func (f *DistributedFile) Close() error {
 	return nil
 }
 func (f *DistributedFile) Read(first, count int) ([][]float64, error) {
-	if first < 0 || count < 1 || first+count > f.Frames || count > 30000 {
+	if first < 0 || count < 1 || first+count > f.Frames || count > MaxDistributedQueryFrames+distributedReferenceTile {
 		return nil, fmt.Errorf("feature window outside bounded range")
 	}
 	n := f.Channels * len(distributedBands)
@@ -271,10 +271,13 @@ func SearchDistributed(ref, query *DistributedFile, omitBand, omitSection int) (
 // SearchDistributedScheduled splits the reference into independent buckets while
 // retaining the original tile order for statistics and peak suppression.
 // schedule must complete its leaf tasks before returning.
+const MaxDistributedQueryFrames = 30000
+const distributedReferenceTile = 12000
+
 func SearchDistributedScheduled(ref, query *DistributedFile, omitBand, omitSection int, schedule func(int, func(int))) (DistributedResult, error) {
 	result := DistributedResult{Version: DistributedVersion, Status: "DISCOVERY_ONLY", GridSeconds: .01, Certification: "not_assessed", Peaks: []DistributedPeak{}}
-	if query.Frames > 6000 {
-		return result, fmt.Errorf("distributed short-query stage is bounded to 60 seconds")
+	if query.Frames > MaxDistributedQueryFrames {
+		return result, fmt.Errorf("distributed short-query stage is bounded to 300 seconds")
 	}
 	q, err := query.Read(0, query.Frames)
 	if err != nil {
@@ -285,7 +288,7 @@ func SearchDistributedScheduled(ref, query *DistributedFile, omitBand, omitSecti
 	if len(sections) < 3 {
 		return result, nil
 	}
-	const tile = 12000
+	const tile = distributedReferenceTile
 	var candidates []DistributedPeak
 	backgroundCount, backgroundMean, backgroundM2 := 0, 0., 0.
 	type tileResult struct {
