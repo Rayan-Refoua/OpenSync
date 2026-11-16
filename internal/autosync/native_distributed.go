@@ -79,7 +79,7 @@ func runNativeDistributed(ctx context.Context, records []MediaRecord, layout []N
 	for _, r := range records {
 		identities = append(identities, []any{r.ID, r.CacheSHA})
 	}
-	raw, _ := pythonJSON([]any{researchmatch.DistributedVersion, "established-reference-v4", identities})
+	raw, _ := pythonJSON([]any{researchmatch.DistributedVersion, "established-reference-v5", identities})
 	identity := shaBytes(raw)
 	saved := filepath.Join(out, "distributed-discovery.json")
 	if data, err := workspaceRead(ctx, saved); err == nil {
@@ -130,7 +130,8 @@ func runNativeDistributed(ctx context.Context, records []MediaRecord, layout []N
 	pairs := [][2]int{}
 	deferred := []map[string]any{}
 	needed := map[int]bool{}
-	extraSeconds := 90000.0
+	// Bound the extension separately from the ordinary per-query budget.
+	extraSeconds := 540000.0
 	for _, q := range targets {
 		refs := []int{}
 		for r := range records {
