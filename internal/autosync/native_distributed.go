@@ -80,7 +80,7 @@ func runNativeDistributed(ctx context.Context, records []MediaRecord, layout []N
 	for _, r := range records {
 		identities = append(identities, []any{r.ID, r.CacheSHA})
 	}
-	raw, _ := pythonJSON([]any{researchmatch.DistributedVersion, "coverage-first-v7", settings.Recovery, settings.LongReferenceHours, identities})
+	raw, _ := pythonJSON([]any{researchmatch.DistributedVersion, "heldout-onsets-v2", settings.Recovery, settings.LongReferenceHours, identities})
 	identity := shaBytes(raw)
 	saved := filepath.Join(out, "distributed-discovery.json")
 	if data, err := workspaceRead(ctx, saved); err == nil {
@@ -239,9 +239,35 @@ func runNativeDistributed(ctx context.Context, records []MediaRecord, layout []N
 			return nil, err
 		}
 	}
+	results, err := runDistributedPairs(ctx, records, pairs, paths, folder, schedule, false)
+	if err != nil {
+		return nil, err
+	}
+	var nearby [][2]int
+	if settings.Recovery != "quick" {
+		nearby = neighboringOnsetSearches(records, layout, paths, results)
+	}
+	if len(nearby) > 0 {
+		fmt.Printf("DISTRIBUTED: %d neighboring-recording searches\n", len(nearby))
+		additional, err := runDistributedPairs(ctx, records, nearby, paths, folder, schedule, true)
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, additional...)
+	}
+	report := &NativeDistributedReport{researchmatch.DistributedVersion, identity, results, deferred, int(secondsBudget) + 18000, max(pairBudget+1, mediumBudget+2), 3, false, "cached_mono_first_pass", "DISCOVERY_ONLY", false}
+	if err := workspaceJSON(ctx, saved, report); err != nil {
+		return nil, err
+	}
+	fmt.Printf("DISTRIBUTED: %d blind searches\n", len(results))
+	return report, nil
+}
+
+func runDistributedPairs(ctx context.Context, records []MediaRecord, pairs [][2]int, paths map[int]string, folder string, schedule func(int, func(int)), forceOnset bool) ([]NativeDistributedPair, error) {
 	results := make([]NativeDistributedPair, len(pairs))
-	errs = make([]error, len(pairs))
-	jobs = make(chan int)
+	errs := make([]error, len(pairs))
+	jobs := make(chan int)
+	var wg sync.WaitGroup
 	for w := 0; w < min(8, nativeWorkers(len(pairs))); w++ {
 		wg.Add(1)
 		go func() {
@@ -251,7 +277,7 @@ func runNativeDistributed(ctx context.Context, records []MediaRecord, layout []N
 					continue
 				}
 				p := pairs[i]
-				digest := shaBytes([]byte(researchmatch.DistributedVersion + records[p[0]].CacheSHA + records[p[1]].CacheSHA))
+				digest := shaBytes([]byte(fmt.Sprintf("%s:heldout-onsets-v2:%t:%s:%s", researchmatch.DistributedVersion, forceOnset, records[p[0]].CacheSHA, records[p[1]].CacheSHA)))
 				path := filepath.Join(folder, digest+".json")
 				var result researchmatch.DistributedResult
 				if data, err := workspaceRead(ctx, path); err == nil {
@@ -269,6 +295,10 @@ func runNativeDistributed(ctx context.Context, records []MediaRecord, layout []N
 						continue
 					}
 					result, errs[i] = researchmatch.SearchDistributedScheduled(ref, query, -1, -1, schedule)
+					if errs[i] == nil && (forceOnset || shouldSearchOnsets(records[p[0]].Duration, records[p[1]].Duration, result.Peaks)) {
+						onset, err := researchmatch.SearchDistributedOnsets(ref, query, schedule)
+						result.OnsetPeaks, errs[i] = onset.Peaks, err
+					}
 					ref.Close()
 					query.Close()
 					if errs[i] == nil {
@@ -292,12 +322,54 @@ func runNativeDistributed(ctx context.Context, records []MediaRecord, layout []N
 			return nil, err
 		}
 	}
-	report := &NativeDistributedReport{researchmatch.DistributedVersion, identity, results, deferred, int(secondsBudget) + 18000, max(pairBudget+1, mediumBudget+2), 3, false, "cached_mono_first_pass", "DISCOVERY_ONLY", false}
-	if err := workspaceJSON(ctx, saved, report); err != nil {
-		return nil, err
+	return results, nil
+}
+
+func shouldSearchOnsets(reference, query float64, peaks []researchmatch.DistributedPeak) bool {
+	return query >= 8 && (reference > 3600 || (len(peaks) >= 2 && peaks[0].BackgroundZ >= 6 && peaks[0].Score >= 1.08*peaks[1].Score))
+}
+
+func neighboringOnsetSearches(records []MediaRecord, layout []NativeLayout, paths map[int]string, results []NativeDistributedPair) [][2]int {
+	ids := make(map[string]int, len(records))
+	for i, r := range records {
+		ids[r.ID] = i
 	}
-	fmt.Printf("DISTRIBUTED: %d blind searches\n", len(results))
-	return report, nil
+	neighbors := map[int][]int{}
+	for _, link := range continuityEvidence(records, layout) {
+		if link.Relation == "successor" && link.Status == "proposed" && link.MissingCounters == 0 {
+			a, b := ids[link.Before], ids[link.After]
+			neighbors[a] = append(neighbors[a], b)
+			neighbors[b] = append(neighbors[b], a)
+		}
+	}
+	targets := map[int]bool{}
+	for _, m := range layout {
+		targets[m.Recording] = m.Status == "unresolved_no_supported_relation"
+	}
+	searched := map[[2]int]bool{}
+	for _, pair := range results {
+		searched[[2]int{pair.Reference, pair.Query}] = true
+	}
+	var planned [][2]int
+	for _, pair := range results {
+		r := pair.Reference
+		if _, ok := researchmatch.DistinctOnsetPeak(pair.OnsetPeaks); !ok || records[r].Duration > 3600 {
+			continue
+		}
+		for _, q := range neighbors[pair.Query] {
+			key := [2]int{r, q}
+			if r == q || searched[key] || !targets[q] || paths[q] == "" || records[q].Duration < 8 || records[q].Duration > min(299, records[r].Duration) {
+				continue
+			}
+			planned = append(planned, key)
+			searched[key] = true
+			targets[q] = false
+			if len(planned) == 32 {
+				return planned
+			}
+		}
+	}
+	return planned
 }
 
 // Exhaust first useful long-anchor opportunities across queries before

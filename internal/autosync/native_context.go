@@ -4,6 +4,8 @@ import (
 	"math"
 	"sort"
 	"strings"
+
+	"opensync/internal/researchmatch"
 )
 
 func nativeComparisonPlacements(records []MediaRecord, layout []NativeLayout, profiles []NativeProfilePair, discovery *NativeDistributedReport) []map[string]any {
@@ -158,6 +160,48 @@ func nativeComparisonPlacements(records []MediaRecord, layout []NativeLayout, pr
 			"reference_recording_count": len(refs), "reference_start_spread_seconds": hi - lo,
 			"physical_capture_alignment": "not_independently_established",
 		})
+	}
+	// Large rooms can preserve changes in spectral energy even when the
+	// microphone waveforms differ. Retain these hypotheses for review with
+	// their reference's component, including components with no global anchor.
+	onsets := map[int][]map[string]any{}
+	if discovery != nil {
+		for _, pair := range discovery.Pairs {
+			r, q := models[pair.Reference], models[pair.Query]
+			if len(choices[pair.Query]) != 0 || q.Status != "unresolved_no_supported_relation" || len(r.Knots) < 2 {
+				continue
+			}
+			peak, ok := researchmatch.DistinctOnsetPeak(pair.OnsetPeaks)
+			duration := records[pair.Query].Duration
+			if !ok || peak.Offset < 0 || peak.Offset+duration > records[pair.Reference].Duration {
+				continue
+			}
+			start := MapTime(r.Knots, peak.Offset+duration/2) - duration/2
+			if math.Max(math.Abs(MapTime(r.Knots, peak.Offset)-start), math.Abs(MapTime(r.Knots, peak.Offset+duration)-(start+duration))) > .03 {
+				continue
+			}
+			basis := "onset_consensus"
+			if strings.HasPrefix(r.Status, "unresolved") {
+				basis = "local_onset_consensus"
+			}
+			onsets[pair.Query] = append(onsets[pair.Query], map[string]any{
+				"recording": pair.Query, "reference": pair.Reference, "component": r.Component,
+				"start_seconds": start, "rate": 1., "status": "provisional_onset_review_required",
+				"timing_basis": basis, "proposed_pair_offset_seconds": peak.Offset,
+				"onset_section_scores": peak.Sections, "onset_score": peak.Score,
+				"physical_capture_alignment": "not_independently_established",
+			})
+		}
+	}
+	for q, options := range onsets {
+		if len(options) != 1 {
+			continue
+		}
+		option := options[0]
+		ref := int(number(option["reference"]))
+		if len(choices[ref]) == 0 && len(onsets[ref]) == 0 {
+			choices[q] = options
+		}
 	}
 	ids := []int{}
 	for q := range choices {

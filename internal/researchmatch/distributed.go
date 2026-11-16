@@ -193,6 +193,7 @@ type DistributedResult struct {
 	GridSeconds     float64              `json:"grid_seconds"`
 	Sections        []DistributedSection `json:"sections"`
 	Peaks           []DistributedPeak    `json:"candidates"`
+	OnsetPeaks      []DistributedPeak    `json:"onset_candidates,omitempty"`
 	OffsetsExamined int                  `json:"offsets_examined"`
 	Certification   string               `json:"certification"`
 }
@@ -275,6 +276,34 @@ const MaxDistributedQueryFrames = 30000
 const distributedReferenceTile = 12000
 
 func SearchDistributedScheduled(ref, query *DistributedFile, omitBand, omitSection int, schedule func(int, func(int))) (DistributedResult, error) {
+	return searchDistributed(ref, query, omitBand, omitSection, schedule, false)
+}
+
+// SearchDistributedOnsets ranks offsets using three sections. The two
+// intervening sections are reserved for evaluating the proposed offset.
+func SearchDistributedOnsets(ref, query *DistributedFile, schedule func(int, func(int))) (DistributedResult, error) {
+	return searchDistributed(ref, query, -1, -1, schedule, true)
+}
+
+const onsetLag = 24
+
+func integrateOnsets(channels [][]float64) {
+	for _, band := range channels {
+		sum := 0.
+		for i := range band {
+			sum += band[i]
+			if i >= onsetLag {
+				band[i-onsetLag], sum = sum, sum-band[i-onsetLag]
+			}
+		}
+		for i := len(band) - 1; i >= onsetLag; i-- {
+			band[i] = band[i-onsetLag]
+		}
+		clear(band[:min(len(band), onsetLag)])
+	}
+}
+
+func searchDistributed(ref, query *DistributedFile, omitBand, omitSection int, schedule func(int, func(int)), onsets bool) (DistributedResult, error) {
 	result := DistributedResult{Version: DistributedVersion, Status: "DISCOVERY_ONLY", GridSeconds: .01, Certification: "not_assessed", Peaks: []DistributedPeak{}}
 	if query.Frames > MaxDistributedQueryFrames {
 		return result, fmt.Errorf("distributed short-query stage is bounded to 300 seconds")
@@ -284,6 +313,18 @@ func SearchDistributedScheduled(ref, query *DistributedFile, omitBand, omitSecti
 		return result, err
 	}
 	sections := DistributedSections(query.Frames)
+	if onsets {
+		if query.Frames < 800 {
+			return result, nil
+		}
+		integrateOnsets(q)
+		const guard = onsetLag + 8
+		width := min(350, (query.Frames-6*guard)/5)
+		sections = make([]DistributedSection, 5)
+		for i := range sections {
+			sections[i] = DistributedSection{guard + i*(query.Frames-2*guard-width)/4, width}
+		}
+	}
 	result.Sections = sections
 	if len(sections) < 3 {
 		return result, nil
@@ -306,6 +347,9 @@ func SearchDistributedScheduled(ref, query *DistributedFile, omitBand, omitSecti
 			output := &outputs[index]
 			last := min(base+tile, ref.Frames)
 			rstart := max(0, base)
+			if onsets {
+				rstart = max(0, rstart-onsetLag)
+			}
 			rend := min(ref.Frames, last+query.Frames)
 			if rend-rstart < 20 {
 				return nil
@@ -313,6 +357,9 @@ func SearchDistributedScheduled(ref, query *DistributedFile, omitBand, omitSecti
 			r, err := ref.Read(rstart, rend-rstart)
 			if err != nil {
 				return err
+			}
+			if onsets {
+				integrateOnsets(r)
 			}
 			curves := make([][]float64, len(sections))
 			available := make([][]bool, len(sections))
@@ -349,7 +396,7 @@ func SearchDistributedScheduled(ref, query *DistributedFile, omitBand, omitSecti
 				values := make([]float64, len(bands))
 				for i := range curves[si] {
 					index := base + i + section.First - rstart
-					if index < 0 || index >= len(bands[0]) {
+					if index < 0 || index >= len(bands[0]) || (onsets && index < onsetLag) {
 						continue
 					}
 					available[si][i] = true
@@ -368,11 +415,11 @@ func SearchDistributedScheduled(ref, query *DistributedFile, omitBand, omitSecti
 			for i := range all {
 				values = values[:0]
 				for si := range sections {
-					if available[si][i] {
+					if available[si][i] && (!onsets || si%2 == 0) {
 						values = append(values, curves[si][i])
 					}
 				}
-				if len(values) < max(2, (len(sections)+1)/2) {
+				if len(values) < max(2, (len(sections)+1)/2) || (onsets && (!available[1][i] || !available[3][i])) {
 					continue
 				}
 				sort.Float64s(values)
@@ -383,6 +430,10 @@ func SearchDistributedScheduled(ref, query *DistributedFile, omitBand, omitSecti
 				}
 				score /= float64(keep)
 				expected := len(sections)
+				if onsets {
+					expected = 3
+					score = (values[1] + values[2]) / 2
+				}
 				if omitSection >= 0 {
 					expected--
 				}
@@ -435,6 +486,26 @@ func SearchDistributedScheduled(ref, query *DistributedFile, omitBand, omitSecti
 		result.Peaks[i].BackgroundZ = (result.Peaks[i].Score - backgroundMean) / math.Max(sd, .001)
 	}
 	return result, nil
+}
+
+// DistinctOnsetPeak requires a useful blind rank margin and agreement in
+// both reserved sections at the same offset. It supplies discovery evidence.
+func DistinctOnsetPeak(peaks []DistributedPeak) (DistributedPeak, bool) {
+	if len(peaks) < 2 {
+		return DistributedPeak{}, false
+	}
+	top := peaks[0]
+	runner := peaks[1]
+	if len(top.Sections) != 5 || top.Available != 5 || top.Score < .42 ||
+		top.BackgroundZ < 6 || top.Score < 1.10*runner.Score ||
+		min(top.Sections[1], top.Sections[3]) < .18 ||
+		(top.Sections[1]+top.Sections[3])/2 < .28 {
+		return DistributedPeak{}, false
+	}
+	if len(runner.Sections) == 5 && (top.Sections[1]+top.Sections[3]-runner.Sections[1]-runner.Sections[3])/2 < .08 {
+		return DistributedPeak{}, false
+	}
+	return top, true
 }
 func distributedTop(candidates []DistributedPeak, count int) []DistributedPeak {
 	sort.Slice(candidates, func(i, j int) bool {

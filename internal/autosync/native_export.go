@@ -238,6 +238,9 @@ func nativePlacements(p *NativeProject, o NativeExportOptions) ([]NativePlacemen
 					m.PlacementUncertainty = number(a["placement_uncertainty_seconds"])
 					m.TimingBasis = stringValue(a["timing_basis"])
 					m.Component = 1
+					if m.TimingBasis == "local_onset_consensus" {
+						m.Component = int(number(a["component"]))
+					}
 					m.Resolved = true
 					m.Knots = []TimePoint{{0, m.Offset}, {p.Data.Records[idx].Duration, m.Offset + p.Data.Records[idx].Duration}}
 					models[j] = m
@@ -336,7 +339,7 @@ func nativePlacements(p *NativeProject, o NativeExportOptions) ([]NativePlacemen
 	if o.Unsynced == "remove" {
 		kept := result[:0]
 		for _, v := range result {
-			if !strings.HasPrefix(v.Status, "unresolved") {
+			if !v.isUnresolvedLayout() {
 				kept = append(kept, v)
 			}
 		}
@@ -345,7 +348,7 @@ func nativePlacements(p *NativeProject, o NativeExportOptions) ([]NativePlacemen
 	var synced []int
 	groups := map[int][]int{}
 	for i, v := range result {
-		if strings.HasPrefix(v.Status, "unresolved") {
+		if v.isUnresolvedLayout() {
 			groups[v.Component] = append(groups[v.Component], i)
 		} else {
 			synced = append(synced, i)
@@ -397,6 +400,10 @@ func nativePlacements(p *NativeProject, o NativeExportOptions) ([]NativePlacemen
 		cursor = move(groups[c], cursor, unseq) + roundFrame(seq.FPS())
 	}
 	return result, seq, nil
+}
+
+func (v NativePlacement) isUnresolvedLayout() bool {
+	return strings.HasPrefix(v.Status, "unresolved") || v.TimingBasis == "local_onset_consensus"
 }
 
 type nativeInstance struct {
@@ -731,6 +738,12 @@ func buildNativeXMLWithTracks(p *NativeProject, placements []NativePlacement, se
 				if v.Status == "provisional_spectral_consensus_review_required" {
 					description = "Spectral comparison placement; waveform timing is unverified"
 				}
+				if v.Status == "provisional_onset_review_required" {
+					description = "Provisional placement from matching audio energy changes; waveform timing is unverified"
+					if v.TimingBasis == "local_onset_consensus" {
+						description += ". The reference is unresolved relative to the main sequence."
+					}
+				}
 				if v.PlacementUncertainty > 0 {
 					description = fmt.Sprintf("Chronological estimate (%s), uncertainty +/- %.3f s; not acoustically verified", v.TimingBasis, v.PlacementUncertainty)
 				}
@@ -743,7 +756,7 @@ func buildNativeXMLWithTracks(p *NativeProject, placements []NativePlacement, se
 		unresolvedStart := int64(-1)
 		for _, i := range indices {
 			v := placements[i]
-			if strings.HasPrefix(v.Status, "unresolved") && (unresolvedStart < 0 || v.Start < unresolvedStart) {
+			if v.isUnresolvedLayout() && (unresolvedStart < 0 || v.Start < unresolvedStart) {
 				unresolvedStart = v.Start
 			}
 			if strings.HasPrefix(v.Status, "provisional") {

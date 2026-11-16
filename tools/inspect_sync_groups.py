@@ -21,6 +21,14 @@ def summarize(project, earlier=None, coverage=False):
         "recordings": len(records),
         "placement_statuses": dict(Counter(model["status"] for model in project["timing_models"])),
         "components": groups,
+        "provisional_placements": [
+            {"name": records[p["recording"]]["name"],
+             "reference": records[p["reference"]]["name"],
+             "status": p["status"],
+             "timing_basis": p.get("timing_basis"),
+             "pair_offset_seconds": p.get("proposed_pair_offset_seconds")}
+            for p in graph.get("provisional_placements") or []
+        ],
     }
     if coverage:
         result["long_reference_coverage"] = long_reference_coverage(project)

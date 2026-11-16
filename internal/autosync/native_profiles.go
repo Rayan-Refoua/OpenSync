@@ -10,6 +10,8 @@ import (
 	"sort"
 	"sync"
 	"sync/atomic"
+
+	"opensync/internal/researchmatch"
 )
 
 type NativePriorPair struct {
@@ -86,6 +88,7 @@ func nativeReservoir(ctx context.Context, records []MediaRecord, out string) ([]
 			Pairs []struct {
 				Reference, Query int
 				Candidates       []struct{ Offset, Score float64 }
+				OnsetPeaks       []researchmatch.DistributedPeak `json:"onset_candidates"`
 			}
 		}
 		if err = json.Unmarshal(data, &discovery); err != nil {
@@ -104,6 +107,15 @@ func nativeReservoir(ctx context.Context, records []MediaRecord, out string) ([]
 				}
 				if distinct {
 					existing = append(existing, NativePrior{Offset: c.Offset, Method: "distributed_spectral", Score: c.Score})
+				}
+			}
+			if peak, ok := researchmatch.DistinctOnsetPeak(p.OnsetPeaks); ok {
+				distinct := true
+				for _, prior := range existing {
+					distinct = distinct && math.Abs(peak.Offset-prior.Offset) >= .5
+				}
+				if distinct {
+					existing = append(existing, NativePrior{Offset: peak.Offset, Method: "distributed_onset", Score: peak.Score})
 				}
 			}
 			pairs[key] = existing

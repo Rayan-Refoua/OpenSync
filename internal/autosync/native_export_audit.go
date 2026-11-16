@@ -354,7 +354,7 @@ func ValidateNativeExport(data []byte, records []MediaRecord, placements []Nativ
 	syncedEnd := int64(0)
 	unStart := int64(math.MaxInt64)
 	for _, p := range placements {
-		if strings.HasPrefix(p.Status, "unresolved") {
+		if p.isUnresolvedLayout() {
 			unStart = min(unStart, p.Start)
 			if policy == "separate-sequence" && p.Sequence != "unresolved" {
 				return fmt.Errorf("unresolved sequence policy violated")

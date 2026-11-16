@@ -27,6 +27,43 @@ func TestCanonicalRateNeverInfersNTSCFromDenominatorAlone(t *testing.T) {
 		t.Fatal("unrepresentable source rate silently accepted")
 	}
 }
+
+func TestLocalOnsetPreviewStaysBesideItsReference(t *testing.T) {
+	p := &NativeProject{Data: NativePayload{Name: "local preview", Graph: map[string]any{
+		"provisional_placements": []any{map[string]any{
+			"recording": 2, "reference": 1, "component": 2, "start_seconds": 12.,
+			"status": "provisional_onset_review_required", "timing_basis": "local_onset_consensus",
+		}},
+	}}}
+	for i, status := range []string{"acoustically_supported_not_certified", "unresolved_no_supported_relation", "unresolved_no_supported_relation"} {
+		id := string(rune('a' + i))
+		p.Data.Records = append(p.Data.Records, MediaRecord{ID: id, Name: id + ".mp4", Source: "C:/media/" + id + ".mp4", Duration: 30,
+			Video: map[string]any{"avg_frame_rate": "50/1", "nb_frames": "1500", "width": 1920, "height": 1080}})
+		p.Data.Models = append(p.Data.Models, TimeModel{Recording: i, Component: i + 1, Rate: 1, Error: .001, Status: status})
+	}
+	for _, policy := range []string{"separate-sequence", "append"} {
+		o := NativeExportOptions{Unsynced: policy, MaxResidualMS: 150, IncludeProvisional: true}
+		placements, rate, err := nativePlacements(p, o)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(placements) != 3 || placements[2].Sequence != placements[1].Sequence || placements[2].Component != placements[1].Component ||
+			placements[2].Start-placements[1].Start != roundFrame(12*rate.FPS()) {
+			t.Fatalf("preview lost its reference component: %+v", placements)
+		}
+		xmlData, err := buildNativeXML(p, placements, rate)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = ValidateNativeExport(xmlData, p.Data.Records, placements, rate, policy); err != nil {
+			t.Fatal(err)
+		}
+	}
+	placements, _, err := nativePlacements(p, NativeExportOptions{Unsynced: "append", MaxResidualMS: 150})
+	if err != nil || placements[2].Component != 3 || placements[2].Status != "unresolved_no_supported_relation" {
+		t.Fatalf("default export accepted a preview placement: %v, %+v", err, placements)
+	}
+}
 func TestExactSixRecordingCCTVExportRegression(t *testing.T) {
 	data, err := os.ReadFile("testdata/zendegifakher-export.json")
 	if err != nil {

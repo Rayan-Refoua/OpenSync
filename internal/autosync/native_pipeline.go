@@ -486,7 +486,18 @@ func nativeFinish(records []MediaRecord, edges []*PairEvidence, profiles []Nativ
 		layout = applyChronology(records, layout, graph)
 	}
 	graph["acoustic_relationships"] = nativeRelationshipMap(records, profiles, graph)
-	graph["provisional_placements"] = nativeComparisonPlacements(records, layout, profiles, distributed)
+	comparisonDiscovery := distributed
+	if distributed != nil && (len(blocked) != 0 || len(rejected) != 0) {
+		filteredDiscovery := *distributed
+		filteredDiscovery.Pairs = nil
+		for _, pair := range distributed.Pairs {
+			if !blocked[pair.Reference] && !blocked[pair.Query] && !rejected[orderedReviewPair(records[pair.Reference].ID, records[pair.Query].ID)] {
+				filteredDiscovery.Pairs = append(filteredDiscovery.Pairs, pair)
+			}
+		}
+		comparisonDiscovery = &filteredDiscovery
+	}
+	graph["provisional_placements"] = nativeComparisonPlacements(records, layout, profiles, comparisonDiscovery)
 	if distributed != nil {
 		graph["candidate_discovery"] = distributed
 	}

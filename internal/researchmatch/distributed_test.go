@@ -46,6 +46,53 @@ func TestDistributedBucketsPreserveStatisticsAndPeaks(t *testing.T) {
 	}
 }
 
+func TestOnsetSearchRequiresReservedSections(t *testing.T) {
+	const offset = 4230
+	root := t.TempDir()
+	reference, query := make([][]float64, 5), make([][]float64, 5)
+	for b := range reference {
+		random := rand.New(rand.NewSource(int64(31 + b)))
+		reference[b] = make([]float64, 12000)
+		for i := range reference[b] {
+			reference[b][i] = random.NormFloat64()
+		}
+		query[b] = append([]float64(nil), reference[b][offset:offset+1600]...)
+	}
+	r := featureFixture(t, filepath.Join(root, "r.features"), 1, reference)
+	search := func(name string) DistributedResult {
+		t.Helper()
+		q := featureFixture(t, filepath.Join(root, name), 1, query)
+		result, err := SearchDistributedOnsets(r, q, func(n int, work func(int)) {
+			for i := 0; i < n; i++ {
+				work(i)
+			}
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return result
+	}
+	result := search("positive.features")
+	if top, ok := DistinctOnsetPeak(result.Peaks); !ok || math.Abs(top.Offset-float64(offset)*.01) > .001 {
+		t.Fatalf("known offset not recovered: %+v", result.Peaks)
+	}
+	for _, band := range query {
+		for _, index := range []int{1, 3} {
+			section := result.Sections[index]
+			for i := section.First - onsetLag; i < section.First+section.Count; i++ {
+				band[i] = 0
+			}
+		}
+	}
+	changed := search("bad-holdouts.features")
+	if changed.Peaks[0].Offset != result.Peaks[0].Offset || changed.Peaks[0].Score != result.Peaks[0].Score {
+		t.Fatalf("reserved sections leaked into candidate ranking: %+v", changed.Peaks[0])
+	}
+	if _, ok := DistinctOnsetPeak(changed.Peaks); ok {
+		t.Fatal("accepted an offset without evidence in reserved audio")
+	}
+}
+
 func featureFixture(t *testing.T, path string, channels int, values [][]float64) *DistributedFile {
 	t.Helper()
 	f, err := os.Create(path)
