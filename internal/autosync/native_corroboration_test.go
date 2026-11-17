@@ -161,16 +161,20 @@ func TestComponentCorroborationPreservesNonlinearClocks(t *testing.T) {
 // not independent labels for false-positive-rate claims.
 
 func TestComponentCorroborationCanAttachOneRecorder(t *testing.T) {
-	for _, variant := range []string{"compatible", "only_two", "duplicate_pcm", "inconsistent"} {
+	for _, variant := range []string{"compatible", "recorder_has_local_mate", "only_two", "duplicate_pcm", "inconsistent", "local_mate_with_conflicting_peer"} {
 		t.Run(variant, func(t *testing.T) {
 			r, _, fixture := componentFixture()
 			r[3].Duration = 350
 			base := []*PairEvidence{testRelation(0, 1, 10, 1), testRelation(1, 2, 10, 1)}
+			if variant == "recorder_has_local_mate" || variant == "local_mate_with_conflicting_peer" {
+				r = append(r, MediaRecord{ID: "local-mate", Duration: 40})
+				base = append(base, testRelation(3, len(r)-1, 160, 1))
+			}
 			var profiles []NativeProfilePair
 			for q := 0; q < 3; q++ {
 				p := *fixture[0].Profiles[0]
 				offset := 50 + float64(q*10)
-				if variant == "inconsistent" && q == 2 {
+				if (variant == "inconsistent" || variant == "local_mate_with_conflicting_peer") && q == 2 {
 					offset += .2
 				}
 				p.Model = &NativeRelationModel{Kind: "constant", Offset: offset}
@@ -195,13 +199,14 @@ func TestComponentCorroborationCanAttachOneRecorder(t *testing.T) {
 			}
 			got, report := corroborateComponents(r, base, profiles)
 			want := len(base)
-			if variant == "compatible" {
+			shouldAttach := variant == "compatible" || variant == "recorder_has_local_mate"
+			if shouldAttach {
 				want += 3
 			}
 			if len(got) != want {
 				t.Fatalf("got %d edges, want %d: %+v", len(got), want, report)
 			}
-			if variant == "compatible" {
+			if shouldAttach {
 				_, graph, err := nativeSolve(r, got)
 				if err != nil || len(graph["components"].([][]int)) != 1 {
 					t.Fatalf("recorder did not attach: %v", err)

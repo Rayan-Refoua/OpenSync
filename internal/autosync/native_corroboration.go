@@ -155,16 +155,45 @@ func corroborateComponents(records []MediaRecord, edges []*PairEvidence, profile
 		}
 		return keys[i][1] < keys[j][1]
 	})
-	// A singleton with audited hypotheses in multiple groups cannot serve
-	// as an automatic bridge between those independently placed groups.
+	identity := func(i int) string {
+		if records[i].CacheSHA != "" {
+			return records[i].CacheSHA
+		}
+		return "recording:" + stringValue(i)
+	}
+	// The recorder can already have local mates. Require three audited
+	// peers on the other side, and decline competing group attachments.
+	recorderByBucket := map[[2]int]int{}
+	recorderBuckets := map[int]int{}
 	singletonBuckets := map[int]int{}
 	for _, key := range keys {
-		c := buckets[key][0]
-		if c.leftSize == 1 {
+		first := buckets[key][0]
+		if first.leftSize == 1 {
 			singletonBuckets[key[0]]++
 		}
-		if c.rightSize == 1 {
+		if first.rightSize == 1 {
 			singletonBuckets[key[1]]++
+		}
+		for side := 0; side < 2; side++ {
+			recordings, peers := map[int]bool{}, map[string]bool{}
+			for _, c := range buckets[key] {
+				r, p := c.a, c.b
+				if side == 1 {
+					r, p = p, r
+				}
+				recordings[r] = true
+				if len(c.windows) != 0 {
+					peers[identity(p)] = true
+				}
+			}
+			if len(recordings) == 1 && len(peers) >= 3 {
+				for r := range recordings {
+					if records[r].Duration >= 120 || (r == first.a && first.leftSize == 1) || (r == first.b && first.rightSize == 1) {
+						recorderByBucket[key] = r
+						recorderBuckets[r]++
+					}
+				}
+			}
 		}
 	}
 	result := append([]*PairEvidence(nil), edges...)
@@ -173,12 +202,6 @@ func corroborateComponents(records []MediaRecord, edges []*PairEvidence, profile
 		cs := buckets[key]
 		status := "deferred_insufficient_distributed_evidence"
 		left, right := map[string]bool{}, map[string]bool{}
-		identity := func(i int) string {
-			if records[i].CacheSHA != "" {
-				return records[i].CacheSHA
-			}
-			return "recording:" + stringValue(i)
-		}
 		var windows []TimePoint
 		for _, c := range cs {
 			left[identity(c.a)] = true
@@ -189,17 +212,21 @@ func corroborateComponents(records []MediaRecord, edges []*PairEvidence, profile
 		// A single long recorder can corroborate an established group when
 		// at least three distinct group recordings agree on its clock.
 		established := len(left) >= 2 && len(right) >= 2
-		singleton := (len(left) == 1 && len(right) >= 3 && cs[0].leftSize == 1 && singletonBuckets[key[0]] == 1) ||
-			(len(right) == 1 && len(left) >= 3 && cs[0].rightSize == 1 && singletonBuckets[key[1]] == 1)
+		recorder, oneRecorder := recorderByBucket[key]
+		singleRecorder := oneRecorder && recorderBuckets[recorder] == 1 && singletonBuckets[byID[recorder].Component] <= 1
 		compatible := true
 		if len(cs) > 64 {
 			status = "deferred_component_hypothesis_budget"
 			compatible = false
-		} else if singleton {
+		} else if oneRecorder && !singleRecorder {
+			compatible = false
+			status = "deferred_competing_recorder_attachments"
+		} else if singleRecorder {
 			// Sample each candidate only within its own measured coverage.
 			// The shared recorder clock must explain all those intervals.
-			extents := make([][2]TimePoint, 0, len(cs))
-			for _, c := range cs {
+			extents := make([][2]TimePoint, len(cs))
+			active := make([]int, 0, len(cs))
+			for i, c := range cs {
 				if len(c.windows) == 0 {
 					continue
 				}
@@ -208,11 +235,8 @@ func corroborateComponents(records []MediaRecord, edges []*PairEvidence, profile
 					lo = min(lo, w[0])
 					hi = max(hi, w[1])
 				}
-				extents = append(extents, [2]TimePoint{{lo, MapTime(c.points, lo)}, {hi, MapTime(c.points, hi)}})
-			}
-			active := make([]int, len(cs))
-			for i := range active {
-				active[i] = i
+				extents[i] = [2]TimePoint{{lo, MapTime(c.points, lo)}, {hi, MapTime(c.points, hi)}}
+				active = append(active, i)
 			}
 			// A failed check on one camera should not erase a compatible
 			// majority. Keep the same timing tolerance and require three
@@ -250,7 +274,7 @@ func corroborateComponents(records []MediaRecord, edges []*PairEvidence, profile
 					c := cs[i]
 					kept = append(kept, c)
 					peer := c.a
-					if c.leftSize == 1 {
+					if c.a == recorder {
 						peer = c.b
 					}
 					peers[identity(peer)] = true
@@ -282,9 +306,9 @@ func corroborateComponents(records []MediaRecord, edges []*PairEvidence, profile
 			}
 		}
 
-		if compatible && (established || singleton) && regions >= 3 {
+		if compatible && (established || singleRecorder) && regions >= 3 {
 			status = "distributed_component_support_not_certified"
-			if singleton {
+			if singleRecorder {
 				status = "distributed_single_recorder_support_not_certified"
 			}
 			sort.SliceStable(cs, func(i, j int) bool {
