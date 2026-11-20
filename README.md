@@ -1,89 +1,500 @@
-<p align="center">
-  <img src="assets/logo.svg" alt="OpenSync logo" width="260">
-</p>
-
 # OpenSync
 
-**Synchronize audio and video recordings—openly, accurately, and without locking your work into one editor.**
+\<p align="center">
+&#x20; \<img src="assets/logo.svg" alt="OpenSync logo" width="260">
+\</p>
 
-OpenSync is a free, open-source project for aligning recordings from cameras, audio recorders, and other devices on a shared timeline. It is built for filmmakers, editors, event producers, researchers, and anyone working with multiple recordings of the same event.
+\<p align="center">   \<strong>Open-source audio and video synchronization for professional editing workflows.\</strong> \</p>
 
-The goal is simple: **spend less time lining up clips, and more time creating.**
+\<p align="center">   Native Go engine · Windows desktop workstation · Evidence-based synchronization · GPL-3.0-or-later \</p>
 
-> **Development status:** OpenSync currently has a native Go command-line synchronization engine. A desktop timeline and waveform interface are planned but **not yet available**. The Premiere XML export workflow is implemented; final hands-on import compatibility testing is still in progress. Downloads and packaged releases will be added as they become available.
+OpenSync is an independent, community-driven application for synchronizing recordings from multiple cameras, microphones, and audio recorders.
+
+It is designed for real-world production scenarios: recordings that start and stop at different times, partially overlap, exhibit clock drift, contain repeated sounds, or have significantly different acoustic characteristics.
+
+The project combines a native synchronization engine with a desktop timeline for inspecting results, reviewing evidence, and preparing synchronized media for editing applications.
+
+**Our goal is to build a reliable, high-performance, freely available alternative to proprietary synchronization tools, without compromising transparency or source-media integrity.**
+
+> **Project status — Public alpha development**
+>
+> OpenSync currently includes a native Go synchronization engine, an operational Windows desktop workstation, a waveform timeline, multicamera monitoring, review workflows, and Premiere-compatible XML export.
+>
+> The project remains under active development. Although substantial automated and real-media validation exists, synchronization reliability and NLE compatibility are not yet certified across all production scenarios.
+>
+> See [Releases](https://github.com/Rayan-Refoua/OpenSync/releases) for published builds.
+
+---
 
 ## Why OpenSync?
 
-- **Automatic synchronization** — discover relationships between recordings using their audio, even when cameras and microphones sound different.
-- **Designed for real-world recordings** — account for differing start times, partial overlaps, clock drift, and difficult acoustic conditions.
-- **No silent guesswork** — keep uncertain and unresolved recordings visible instead of pretending everything synchronized successfully.
-- **Non-destructive by design** — leave your original media untouched, with synchronization decisions saved in an OpenSync project.
-- **Editor-friendly output** — export a Premiere-compatible FCP7 XML timeline; additional editing workflows remain a future goal.
-- **Offline and independent** — run locally, inspect the implementation, and help shape the roadmap.
+Commercial synchronization software has demonstrated how valuable automatic multicamera alignment can be. OpenSync aims to provide these capabilities as an open, inspectable, independently developed engineering project.
 
-Not every recording can be synchronized reliably. OpenSync aims to make its evidence and limitations clear, not to promise a match where there isn't one.
+Our priorities are:
+
+- **Accurate acoustic alignment:** Find recording relationships despite differences in microphones, recording equipment, gain, noise, and room acoustics.
+- **Difficult-recording recovery:** Investigate short overlaps, weak signals, distant microphones, repeated content, and disconnected recording groups.
+- **Evidence instead of guesswork:** Preserve candidate offsets, alternative hypotheses, acoustic observations, confidence information, and unresolved results.
+- **Clock-drift handling:** Evaluate constant, affine, and piecewise timing relationships where justified by the available measurements.
+- **Non-destructive processing:** Keep original recordings unchanged and store synchronization decisions separately.
+- **Professional timeline inspection:** Navigate synchronized recordings, inspect waveforms, audition audio, and review multiple camera feeds.
+- **Editor interoperability:** Save OpenSync projects and export Premiere-compatible XML timelines.
+- **Offline-first architecture:** Run synchronization locally without a cloud service or subscription.
+- **Reproducible engineering:** Use deterministic tests, independent verification, performance measurements, and documented limitations.
+
+OpenSync does not assume that every recording can be synchronized. A result that remains unresolved is preferable to a confidently incorrect placement.
+
+## Current capabilities
+
+| Component                                                   | Implementation status                                |
+| ----------------------------------------------------------- | ---------------------------------------------------- |
+| Native Go synchronization engine                            | Implemented; reliability development ongoing         |
+| Acoustic fingerprint discovery                              | Implemented                                          |
+| Candidate offset verification and competing-offset controls | Implemented                                          |
+| Multiband envelope and distributed recovery                 | Implemented                                          |
+| Multi-observation timing and drift analysis                 | Implemented; coverage varies with available evidence |
+| Global temporal evidence graph                              | Implemented                                          |
+| Filename-based recording continuity analysis                | Available; not treated as acoustic proof             |
+| Native `.opensync` project format                           | Implemented                                          |
+| Windows desktop timeline                                    | Working alpha                                        |
+| Waveform rendering and navigation                           | Implemented                                          |
+| Synchronized audio audition                                 | Implemented                                          |
+| Multicamera preview monitor                                 | Implemented; bounded performance testing             |
+| Evidence inspection and review revisions                    | Implemented                                          |
+| Premiere-compatible FCP7 XML export                         | Implemented; real-editor validation ongoing          |
+| Additional NLE interchange formats                          | Planned                                              |
+| General-purpose manual timeline editing                     | Not yet implemented                                  |
+| Packaged public releases                                    | See GitHub Releases                                  |
+
+The available functionality is more extensive than this summary. Technical details and limitations are maintained in the [documentation directory](docs/).
+
+## Architecture
+
+OpenSync separates synchronization evidence, timing-model estimation, timeline presentation, and editor export.
+
+The core engine is implemented in **Go**, with FFmpeg and FFprobe used for media decoding and metadata inspection.
+
+The Windows desktop uses **Wails v2**, vanilla JavaScript, Canvas 2D, Web Audio, and Microsoft Edge WebView2.
+
+The GUI and CLI share the native Go engine. The desktop does not execute the CLI as a subprocess, and the production synchronization runtime does not require Python.
+
+### Synchronization pipeline
+
+The native synchronization pipeline combines:
+
+1. **Media discovery and preparation** — inspect sources, validate metadata, and prepare bounded audio access.
+2. **Acoustic feature extraction** — generate compact features for efficient candidate discovery.
+3. **Candidate discovery** — identify possible recording relationships and alternative offsets.
+4. **Acoustic verification** — measure candidate offsets using waveform and spectral evidence with competing-offset controls.
+5. **Recovery search** — investigate unresolved recordings using additional signal representations and search strategies.
+6. **Independent-region validation** — test selected hypotheses against acoustic regions not used by initial measurements.
+7. **Timing-model analysis** — evaluate supported offset and clock-rate relationships.
+8. **Global consistency solving** — compose temporal constraints, identify contradictions, and construct supported connected components.
+9. **Project finalization** — preserve evidence, mark unresolved placements, and produce an editable project representation.
+10. **Timeline export** — construct an editor-compatible timeline without modifying the source recordings.
+
+These are **logical responsibilities**, not a claim that every recording always requires exactly ten processing passes. The desktop currently reports eleven progress stages corresponding to its orchestration.
+
+Some recovery operations are computationally expensive and remain targets for adaptive scheduling and optimization.
+
+### Evidence model
+
+OpenSync does not treat a correlation maximum as sufficient proof of synchronization.
+
+Depending on the analysis path, hypotheses may be evaluated using:
+
+- Sparse acoustic fingerprints.
+- Waveform correlation.
+- Spectral flux and multiband features.
+- Competing incorrect-offset controls.
+- Measurements from multiple recording regions.
+- Held-out acoustic observations.
+- Timing-model residuals.
+- Global graph consistency.
+- Alternative event hypotheses.
+
+The engine distinguishes acoustically supported relationships from independently certified results. Current graph output does not claim independent physical-capture-time certification.
+
+Filename sequences and recording metadata can assist candidate prioritization or chronological presentation, but they are not sufficient to establish an acoustic timing edge.
+
+### Timing and drift
+
+A single constant offset may be insufficient when independent recording devices have slightly different clocks.
+
+OpenSync includes timing-model infrastructure for estimating how relative timing changes across a recording. Supported representations include affine relationships and monotonic piecewise mappings.
+
+Model selection and precision depend on the available evidence. The application must preserve uncertainty where a reliable timing model cannot be established.
+
+High numerical precision must not be confused with experimentally demonstrated accuracy.
+
+### Resource management
+
+The engine is designed around bounded workloads and controlled concurrency.
+
+Relevant mechanisms include:
+
+- Streaming and chunked audio processing.
+- RAM-first analysis and optional persistent caches.
+- Reusable acoustic features.
+- Bounded worker pools.
+- Controlled decoder concurrency.
+- Direct native sample access for compatible PCM sources.
+- FFmpeg fallback for formats requiring decoding or conversion.
+- Source-storage-aware I/O scheduling.
+- Cancellation of obsolete visualization work.
+
+Persistent analysis caching is disabled by default in the normal synchronization workflow. Use `--cache` and `--resume` when explicitly retaining and reusing analysis data.
+
+The application does not copy or modify original recordings as part of ordinary synchronization.
+
+For implementation details, see [Native Go migration](docs/NATIVE-GO-MIGRATION.md) and [Desktop architecture](docs/DESKTOP.md).
+
+## Windows desktop workstation
+
+The desktop provides a graphical environment for synchronization and review.
+
+Current functionality includes:
+
+- Add individual recordings or recursively import folders.
+- Synchronize recordings directly through the native Go engine.
+- Open saved `.opensync` projects.
+- Navigate a zoomable, scrollable timeline with waveforms.
+- Inspect media metadata and synchronization evidence.
+- Audition synchronized audio.
+- Monitor multiple camera feeds.
+- View provisional progress while synchronization is running.
+- Inspect unresolved recordings and conflicting placements.
+- Reject or restore selected synchronization relationships.
+- Re-evaluate saved evidence without repeating full acoustic analysis.
+- Maintain reversible project solution revisions.
+- Export the currently opened result to a Premiere-compatible XML timeline.
+
+### Multicamera monitoring
+
+The workstation supports configurable multicamera preview layouts, with up to 16 selectable feeds.
+
+Video previews use reduced-resolution H.264 segments generated through bounded media workers, while the browser handles playback and display. Source video is not re-encoded or modified in place.
+
+The playback system includes buffering, source-time mapping, coordinated refill behavior, and bounded clock correction.
+
+Four-camera playback has undergone controlled testing. Sixteen-camera performance and compatibility across all codecs, GPUs, and storage devices are not yet certified.
+
+### Timeline and visualization
+
+The application uses viewport-aware rendering rather than constructing all waveform detail at maximum resolution.
+
+A reusable peak hierarchy supports different zoom levels, while obsolete viewport requests can be cancelled to reduce unnecessary work.
+
+Project timing retains the precision of the engine's stored model; display-frame stepping does not quantize the underlying synchronization solution.
+
+The desktop is currently a **synchronization and review workstation**, not a complete nonlinear video editor.
+
+See [Desktop documentation](docs/DESKTOP.md) for controls, playback architecture, source-media handling, and tested limitations.
 
 ## Getting started
 
-**Prebuilt downloads:** Coming soon. For now, OpenSync can be built from source.
+### Windows — Prebuilt alpha
 
-You will need [Go](https://go.dev/dl/) **1.23 or newer**, [FFmpeg](https://ffmpeg.org/download.html), and FFprobe available on your PATH.
+Check the [Releases page](https://github.com/Rayan-Refoua/OpenSync/releases) for an available Windows build.
+
+For a packaged release:
+
+1. Download the Windows x64 archive.
+2. Extract the entire archive into a folder.
+3. Launch `opensync.exe` for the desktop workstation.
+4. Add recordings and run synchronization.
+5. Inspect uncertain or unresolved results before exporting.
+
+The package is designed to keep `ffmpeg.exe` and `ffprobe.exe` in `runtime/bin` beside the application executables.
+
+Microsoft Edge WebView2 Runtime is required for the desktop application. Windows may show a SmartScreen warning for unsigned or newly distributed binaries.
+
+Do not move the executables out of their package directory unless the required media tools remain accessible.
+
+### Command line
+
+The headless CLI is available as `opensync-cli.exe` in the Windows desktop package, or can be built independently.
+
+```bash
+# Synchronize recordings from folders.
+opensync-cli sync --folders CameraFolder AudioFolder --output MyProject
+
+# Synchronize selected recordings.
+opensync-cli sync --files camera.mp4 recorder.wav --output MyProject
+
+# Use a UTF-8 text or JSON file list.
+opensync-cli sync --file-list media-files.json --output MyProject
+
+# Re-export a saved project.
+opensync-cli export MyProject/OpenSync.opensync --output Export
+
+# Inspect available options.
+opensync-cli sync --help
+opensync-cli export --help
+```
+
+Folder scanning is recursive. The engine reports unusable or excluded inputs rather than silently treating them as synchronized recordings.
+
+### Chronological and review workflows
+
+The CLI supports acoustic clip placement and chronology-aware presentation.
+
+```bash
+opensync-cli sync \
+    --folders CameraFolder AudioFolder \
+    --mode chronological \
+    --output ChronologicalProject
+```
+
+Chronological mode can estimate bounded gaps from recording-order evidence. These estimates remain explicitly provisional and do not establish acoustic synchronization.
+
+A saved project can also be re-evaluated:
+
+```bash
+opensync-cli revise MyProject/OpenSync.opensync --mode chronological
+```
+
+Review actions retain explicit recording and relationship rejections in project revisions.
+
+For the complete behavior and available options, consult `--help` and [Desktop review documentation](docs/DESKTOP.md).
+
+## Building from source
+
+### Requirements
+
+- Go **1.23 or newer**.
+- FFmpeg and FFprobe.
+- Git.
+- Windows and Microsoft Edge WebView2 Runtime for the desktop build.
+- Node.js for frontend tests.
+- PowerShell for the packaged Windows build.
+
+The desktop is maintained as a separate Go module to keep Wails dependencies isolated from the native engine.
+
+### Clone the repository
 
 ```bash
 git clone https://github.com/Rayan-Refoua/OpenSync.git
 cd OpenSync
-go build -o opensync ./cmd/opensync
-
-# Synchronize media from one or more folders.
-./opensync sync --folders CameraFolder AudioFolder --output MyProject
-
-# Or supply individual recordings.
-./opensync sync --files camera.mp4 recorder.wav --output MyProject
-
-# Re-export a saved OpenSync project.
-./opensync export MyProject/OpenSync.opensync --output Export
 ```
 
-On Windows, name the built executable `opensync.exe` (for example, `go build -o opensync.exe ./cmd/opensync`) and invoke it as `./opensync.exe` or `.\opensync.exe` in your shell.
+### Build the native CLI
 
-The synchronization command saves an editable `.opensync` project and an XML editing timeline. Recordings without sufficient evidence remain identified as unresolved. Analysis caching is optional; use `--cache` when you want reusable analysis files and `--resume` for an explicitly cached interrupted run. Run `opensync --help` for current CLI options.
+```bash
+go build -o opensync ./cmd/opensync
+```
 
-## Where we're heading
+On Windows, choose an `.exe` output filename.
 
-OpenSync is being built step by step, with reliability taking priority over a polished screenshot.
+### Build the Windows desktop distribution
 
-| Area | Current direction |
-| --- | --- |
-| Native synchronization engine | Available for development and testing |
-| Evidence-based matching and drift handling | Implemented, with ongoing validation on difficult recordings |
-| Saved project and editor export | Available; practical round-trip acceptance ongoing |
-| Interactive audio waveform timeline | Planned next |
-| Video preview and synchronized playback | Planned |
-| Convenient desktop downloads | Planned |
+Use the repository's existing packaging script from PowerShell:
 
-This is an actively developed project, **not yet a finished replacement for every PluralEyes workflow**.
+```powershell
+.\tools\build_desktop_windows.ps1 -Output C:\OpenSync-Build
+```
 
-## Independent benchmarks
+The destination directory must be empty.
 
-We intend to evaluate **OpenSync, [Align](https://github.com/FedyaLight/align), Red Giant PluralEyes 4, and Syncaila** against shared datasets, measuring synchronization accuracy, unresolved/incorrect matches, drift, runtime, memory, and export usability.
+This script builds both the desktop and CLI, bundles FFmpeg/FFprobe, generates Windows resources, records dependency licenses, and produces package integrity metadata.
 
-**No comparable cross-application benchmark results have been published yet.** We won't present internal optimization numbers as evidence that OpenSync outperforms another product.
+### Build the desktop module directly
 
-We don't currently have a Syncaila license. **If you own Syncaila and can help run a reproducible benchmark, we'd love your help.** See the [benchmark plan, comparison table, and contribution instructions](docs/BENCHMARKS.md).
+From the repository's `desktop` directory:
 
-## Join the project
+```powershell
+go run ./tools/winresources
+go build -tags desktop,production -ldflags "-H windowsgui" -o opensync.exe .
+```
 
-OpenSync is intended to benefit everyone who needs dependable synchronization tools. You can help by testing difficult recordings, reporting bugs, improving documentation, validating exports in editing software, proposing enhancements, or contributing code.
+Direct builds require the relevant runtime dependencies to be available. The packaged build script is preferred for distribution.
 
-- [Report a bug or suggest a feature](https://github.com/Rayan-Refoua/OpenSync/issues)
-- [Explore the source code](https://github.com/Rayan-Refoua/OpenSync)
-- [Benchmark plan and volunteer opportunities](docs/BENCHMARKS.md)
-- [Technical documentation and validation](docs/ENGINE-ACCEPTANCE.md)
+## Testing and validation
 
-For development, run `go test ./...` and `go vet ./...`. More detailed design notes, research, test procedures, and performance measurements live in [docs/](docs/) rather than on this project homepage.
+OpenSync prioritizes measurable synchronization accuracy over merely successful program execution.
+
+Run the core Go tests and static analysis:
+
+```bash
+go test ./...
+go vet ./...
+```
+
+Run frontend tests:
+
+```bash
+cd desktop/frontend
+node --test
+```
+
+Run desktop Go checks separately from the nested module:
+
+```bash
+cd desktop
+go test ./...
+go vet ./...
+```
+
+For FFmpeg integration tests, enable the integration environment setting:
+
+```powershell
+$env:OPENSYNC_INTEGRATION = "1"
+go test ./...
+```
+
+### Engine acceptance benchmarks
+
+OpenSync includes a deterministic acceptance benchmark:
+
+```bash
+go run ./cmd/opensync benchmark --output acceptance --profile quick
+```
+
+The benchmark produces machine-readable and human-readable reports.
+
+It exercises acoustic matching, ambiguity handling, timing behavior, and reproducibility under controlled conditions.
+
+The full profile includes longer-duration timing fixtures and requires additional resources.
+
+**Important:** Passing unit tests does not establish synchronization accuracy, and synthetic benchmark success does not guarantee correct matching on arbitrary real-world recordings.
+
+Read [Engine acceptance](docs/ENGINE-ACCEPTANCE.md) for the benchmark contract, error thresholds, known limitations, and interpretation of readiness results.
+
+### Real-world validation
+
+Real recordings are necessary to expose failure modes that synthetic tests may not represent:
+
+- Distant microphone recordings.
+- Public-address-system delay and reverberation.
+- Repeated musical or acoustic events.
+- Partial and interrupted recordings.
+- Camera/recorder clock drift.
+- Very short recordings.
+- Weak or absent acoustic overlap.
+- Long reference recordings.
+- Segmented camera recordings.
+- Variable-frame-rate and complex media containers.
+
+The project records measured results and unresolved failures rather than treating every recovered candidate as correct.
+
+### Independent comparisons
+
+OpenSync intends to compare against:
+
+- [Align](https://github.com/FedyaLight/align)
+- Red Giant PluralEyes 4
+- Syncaila
+
+Comparisons should use identical source recordings, documented settings, reproducible procedures, and independently checked ground truth wherever possible.
+
+Relevant metrics include offset error, drift residual, match recall, false-positive rate, unresolved recordings, runtime, memory consumption, and successful NLE imports.
+
+**No general claim of superiority over these applications is established.**
+
+See [Benchmarks](docs/BENCHMARKS.md).
+
+## Project structure
+
+| Path                       | Responsibility                                                      |
+| -------------------------- | ------------------------------------------------------------------- |
+| `cmd/opensync/`            | Main native CLI and developer commands                              |
+| `desktop/`                 | Wails desktop application and frontend                              |
+| `internal/autosync/`       | Production synchronization orchestration and evidence handling      |
+| `internal/dsp/`            | Native signal-processing primitives                                 |
+| `internal/acousticverify/` | Acoustic measurement and verification                               |
+| `internal/syncgraph/`      | Temporal graph solving                                              |
+| `internal/measuredgraph/`  | Measured relationship handling                                      |
+| `internal/sourcetracks/`   | Source-track and sequencing logic                                   |
+| `internal/premierexml/`    | Premiere timeline interchange and validation                        |
+| `internal/projectstate/`   | Project model and persisted state                                   |
+| `internal/desktop/`        | Desktop media and project services                                  |
+| `internal/storageio/`      | Storage-aware scheduling and media I/O                              |
+| `internal/syntheticbench/` | Deterministic synthetic acceptance tests                            |
+| `docs/`                    | Architecture, investigations, benchmarks, and engineering contracts |
+| `tools/`                   | Build, validation, and developer utilities                          |
+
+The historical Python research implementation remains in the repository for reference and regression testing. It is not a runtime dependency of the production Go engine.
+
+## Engineering principles
+
+OpenSync development follows these requirements:
+
+1. **Independent implementation.** No copied proprietary code or unauthorized redistribution of competitor implementations.
+2. **Evidence-based synchronization.** A hypothesis must retain its observations, alternatives, limitations, and provenance.
+3. **Original-media integrity.** Source recordings remain unchanged by synchronization, correction, and export operations.
+4. **Precision with accountability.** Numerical precision and measured accuracy are separate quantities.
+5. **Independent verification.** A candidate's discovery score is not equivalent to certification.
+6. **No silent failures.** Unmatched or contradicted recordings remain visible.
+7. **Deterministic behavior.** Identical inputs and policies should produce reproducible results.
+8. **Bounded computation.** Resource consumption, recovery effort, and concurrency must be measurable and controlled.
+9. **Modular architecture.** Media ingestion, DSP, synchronization evidence, timeline layout, UI, and export have separate responsibilities.
+10. **Maintainability.** Prefer small, understandable, well-tested components over unnecessary dependencies.
+11. **Editor independence.** Avoid tying the core synchronization representation to one NLE or GUI framework.
+12. **Transparent engineering.** Publish useful benchmarks, limitations, and reproducible failure cases.
+
+The project must never equate the absence of a match with proof that two recordings cannot be synchronized.
+
+## Roadmap
+
+Near-term priorities include:
+
+- Improving recall and reliability on difficult real-world recordings.
+- Reducing redundant recovery work through adaptive evidence-based scheduling.
+- Better recording-continuity and chronology-aware placement.
+- More precise independent validation and drift handling.
+- Further desktop reliability and usability testing.
+- Professional export-layout policies and additional NLE formats.
+- Consistent, reproducible release packaging and compatibility testing.
+
+Longer-term goals include broader platform support, more capable manual timeline intervention, and professional-grade interoperability across editing applications.
+
+These are development goals, not guarantees that the features are available in the current alpha.
+
+## Contributing
+
+Contributions are welcome from software developers, audio engineers, filmmakers, editors, researchers, and testers.
+
+Useful areas include:
+
+- Acoustic fingerprinting and DSP.
+- Clock-drift estimation.
+- Global graph consistency.
+- Difficult recording recovery.
+- FFmpeg/media-container compatibility.
+- High-performance Go programming.
+- Multicamera playback.
+- Timeline interaction and interface design.
+- NLE interchange formats.
+- Automated tests and independent benchmarks.
+- Documentation and reproducible bug reports.
+
+Start by reviewing the existing issues and technical documentation.
+
+When reporting synchronization problems, include enough information to reproduce the behavior: source formats, recording durations, acoustic environment, expected relationship, observed result, and applicable logs.
+
+Do not publish private or copyrighted recordings without permission.
+
+Useful links:
+
+- [GitHub Issues](https://github.com/Rayan-Refoua/OpenSync/issues)
+- [Project documentation](docs/)
+- [Engineering acceptance](docs/ENGINE-ACCEPTANCE.md)
+- [Desktop technical notes](docs/DESKTOP.md)
+- [Development milestones](docs/MILESTONES.md)
+- [Research and benchmarks](docs/BENCHMARKS.md)
+
+Contributors should preserve existing behavior, add regression tests for changes, and document meaningful measurement results.
 
 ## License
 
-OpenSync is released under the **GNU General Public License v3.0 or later** ([GPL-3.0-or-later](LICENSE)). You are welcome to use, study, modify, and redistribute it under the terms of that license.
+OpenSync is licensed under the **GNU General Public License version 3 or, at your option, any later version** (`GPL-3.0-or-later`).
 
-OpenSync is an independent project and is not affiliated with or endorsed by the makers of PluralEyes, Syncaila, or Align.
+See [LICENSE](LICENSE) for the complete terms.
+
+Contributions and redistribution must comply with this license. Bundled third-party components retain their own applicable license conditions.
+
+OpenSync is an independent project and is not affiliated with or endorsed by Red Giant, Maxon, Syncaila, Align, Adobe, Apple, or Blackmagic Design.
+
+---
+
+**OpenSync is built on a simple principle: reliable synchronization should be transparent, verifiable, and available to everyone.**
