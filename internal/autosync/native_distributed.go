@@ -18,7 +18,8 @@ type NativeDistributedPair struct {
 	Reference int `json:"reference"`
 	Query     int `json:"query"`
 	researchmatch.DistributedResult
-	Digest string `json:"input_digest"`
+	Digest     string `json:"input_digest"`
+	ReviewOnly bool   `json:"review_only,omitempty"`
 }
 type NativeDistributedReport struct {
 	Version                string                  `json:"version"`
@@ -74,13 +75,13 @@ func distributedFeatures(ctx context.Context, source, path string) error {
 	}
 	return os.Rename(temp.Name(), path)
 }
-func runNativeDistributed(ctx context.Context, records []MediaRecord, layout []NativeLayout, envelope []NativePair, out string, schedule func(int, func(int))) (*NativeDistributedReport, error) {
+func runNativeDistributed(ctx context.Context, records []MediaRecord, layout []NativeLayout, envelope []NativePair, out string, schedule func(int, func(int)), profiles []NativeProfilePair) (*NativeDistributedReport, error) {
 	settings := analysisSettings(ctx)
 	identities := []any{}
 	for _, r := range records {
 		identities = append(identities, []any{r.ID, r.CacheSHA})
 	}
-	raw, _ := pythonJSON([]any{researchmatch.DistributedVersion, "heldout-onsets-v2", settings.Recovery, settings.LongReferenceHours, identities})
+	raw, _ := pythonJSON([]any{researchmatch.DistributedVersion, "heldout-onsets-v3", settings.Recovery, settings.LongReferenceHours, identities})
 	identity := shaBytes(raw)
 	saved := filepath.Join(out, "distributed-discovery.json")
 	if data, err := workspaceRead(ctx, saved); err == nil {
@@ -181,6 +182,16 @@ func runNativeDistributed(ctx context.Context, records []MediaRecord, layout []N
 		pairs = append(pairs, pair)
 		anchors[pair] = true
 		needed[pair[0]], needed[pair[1]] = true, true
+		longBudget -= records[pair[0]].Duration
+	}
+	reviewPairs := map[[2]int]bool{}
+	if settings.Recovery != "quick" {
+		for _, pair := range longReviewSearches(records, layout, profiles, anchors, longBudget) {
+			pairs = append(pairs, pair)
+			anchors[pair] = true
+			reviewPairs[pair] = true
+			needed[pair[0]], needed[pair[1]] = true, true
+		}
 	}
 	for _, q := range targets {
 		refs := refsByQuery[q]
@@ -243,6 +254,9 @@ func runNativeDistributed(ctx context.Context, records []MediaRecord, layout []N
 	if err != nil {
 		return nil, err
 	}
+	for i, p := range results {
+		results[i].ReviewOnly = reviewPairs[[2]int{p.Reference, p.Query}]
+	}
 	var nearby [][2]int
 	if settings.Recovery != "quick" {
 		nearby = neighboringOnsetSearches(records, layout, paths, results)
@@ -261,6 +275,58 @@ func runNativeDistributed(ctx context.Context, records []MediaRecord, layout []N
 	}
 	fmt.Printf("DISTRIBUTED: %d blind searches\n", len(results))
 	return report, nil
+}
+
+// Use spare long-reference capacity on acoustically promising pairs that
+// did not get a search because their recorder belongs to a local group.
+func longReviewSearches(records []MediaRecord, layout []NativeLayout, profiles []NativeProfilePair, searched map[[2]int]bool, budget float64) [][2]int {
+	models := make(map[int]NativeLayout, len(layout))
+	for _, m := range layout {
+		models[m.Recording] = m
+	}
+	type hint struct {
+		pair  [2]int
+		score float64
+	}
+	var hints []hint
+	count := func(windows []*Measurement, precise bool) int {
+		n := 0
+		for _, w := range windows {
+			if w.Supported && (!precise || w.Precise) {
+				n++
+			}
+		}
+		return n
+	}
+	for _, p := range profiles {
+		r, q := p.Reference, p.Query
+		key := [2]int{r, q}
+		if searched[key] || models[q].Status != "unresolved_no_supported_relation" || models[r].Status != "unresolved_disconnected_group" ||
+			records[q].Duration < 8 || records[q].Duration > 60 || records[r].Duration <= 3600 || records[r].Duration > min(9000, budget) {
+			continue
+		}
+		for _, h := range p.Profiles {
+			if count(h.Training, true) >= 2 && count(h.Selection, false) >= 2 && count(h.Audit, false) >= 3 && count(h.Audit, true) >= 1 {
+				hints = append(hints, hint{key, h.Prior.Strength})
+				break
+			}
+		}
+	}
+	sort.SliceStable(hints, func(i, j int) bool { return hints[i].score > hints[j].score })
+	var pairs [][2]int
+	used := map[int]bool{}
+	for _, h := range hints {
+		r, q := h.pair[0], h.pair[1]
+		if !used[q] && records[r].Duration <= budget {
+			pairs = append(pairs, h.pair)
+			used[q] = true
+			budget -= records[r].Duration
+			if len(pairs) == 12 {
+				break
+			}
+		}
+	}
+	return pairs
 }
 
 func runDistributedPairs(ctx context.Context, records []MediaRecord, pairs [][2]int, paths map[int]string, folder string, schedule func(int, func(int)), forceOnset bool) ([]NativeDistributedPair, error) {
@@ -305,7 +371,7 @@ func runDistributedPairs(ctx context.Context, records []MediaRecord, pairs [][2]
 						errs[i] = workspaceJSON(ctx, path, result)
 					}
 				}
-				results[i] = NativeDistributedPair{p[0], p[1], result, digest}
+				results[i] = NativeDistributedPair{Reference: p[0], Query: p[1], DistributedResult: result, Digest: digest}
 			}
 		}()
 	}
@@ -353,7 +419,7 @@ func neighboringOnsetSearches(records []MediaRecord, layout []NativeLayout, path
 	var planned [][2]int
 	for _, pair := range results {
 		r := pair.Reference
-		if _, ok := researchmatch.DistinctOnsetPeak(pair.OnsetPeaks); !ok || records[r].Duration > 3600 {
+		if _, ok := researchmatch.DistinctOnsetPeak(pair.OnsetPeaks); !ok || pair.ReviewOnly || records[r].Duration > 3600 {
 			continue
 		}
 		for _, q := range neighbors[pair.Query] {

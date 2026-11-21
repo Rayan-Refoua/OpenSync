@@ -24,7 +24,7 @@ test("running reports known stage and next step without time estimates", () => {
     stageSeconds: 12,
   });
   assert.equal(r.value, 3);
-  assert.match(r.detail, /Stage 4\/10 · 7\/20/);
+  assert.match(r.detail, /Stage 4\/11 · 7\/20/);
   assert.equal(r.next, stages[4]);
 });
 test("failed run cannot show old project as successful completion", () => {

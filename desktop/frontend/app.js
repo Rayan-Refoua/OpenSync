@@ -203,9 +203,10 @@ function setProject(p, fitView = true) {
   $("projectName").textContent = p.name;
   $("projectName").title = p.path || "Live, provisional view";
   const unresolved = p.clips.filter((c) => c.state === "unresolved").length,
+    review = p.clips.filter((c) => c.state === "provisional").length,
     missing = p.clips.filter((c) => c.missing).length;
   $("counts").textContent =
-    `${p.clips.length} recordings · ${p.tracks.length} lanes · ${unresolved} unresolved${missing ? ` · ${missing} missing` : ""}`;
+    `${p.clips.length} recordings · ${p.tracks.length} lanes · ${unresolved} unresolved${review ? ` · ${review} to review` : ""}${missing ? ` · ${missing} missing` : ""}`;
   $("inspector").replaceChildren();
   const hint = document.createElement("p");
   hint.className = "muted";
@@ -329,12 +330,21 @@ function drawClip(c, row) {
       ? "MISSING SOURCE"
       : c.status === "unresolved_disconnected_group"
         ? `GROUP ${c.component} · LOCAL SYNC`
+        : c.state === "provisional"
+          ? (c.timingBasis?.startsWith("local_") ? `GROUP ${c.component} · REVIEW` : "REVIEW")
         : c.state.toUpperCase();
     const tw = ctx.measureText(label).width;
     ctx.fillStyle = fill;
     ctx.fillRect(end - tw - 12, y + 2, tw + 10, 16);
     ctx.fillStyle = ink;
     ctx.fillText(label, end - tw - 6, y + 13);
+  } else if (c.state === "provisional" && width >= 12 && !c.missing) {
+    ctx.fillStyle = ink;
+    ctx.beginPath();
+    ctx.moveTo(end - 11, y + 3);
+    ctx.lineTo(end - 3, y + 3);
+    ctx.lineTo(end - 3, y + 11);
+    ctx.fill();
   }
   let waveTop = y + 24,
     waveH = height - 28;
@@ -555,7 +565,7 @@ function inspect(c) {
     ["Clock difference", `${((c.rate - 1) * 1e6).toFixed(3)} ppm`],
     [
       "Fit residual",
-      c.placementUncertainty
+      c.placementUncertainty || (c.state === "provisional" && !c.residual)
         ? "Not acoustically measured"
         : `${(c.residual * 1000).toFixed(3)} ms`,
     ],
@@ -594,6 +604,10 @@ function inspect(c) {
       ? "This recording has supported timing within its group. The group has no established offset to the main timeline, so it is presented separately."
       : c.state === "unresolved"
         ? "No supported placement relative to the main group. This recording is preserved at the timeline end."
+        : c.status.startsWith("provisional_") && c.status.endsWith("review_required")
+          ? (c.timingBasis?.startsWith("local_")
+            ? "Candidate placement beside its reference in a local group. The group's offset to the main timeline is unresolved. Check the clip's timing before using it."
+            : "Candidate placement from acoustic evidence. Check the clip's timing before using it.")
       : c.placementUncertainty
         ? "Provisional chronological estimate from recording order or calibrated timestamps. Its uncertainty is conditional on that metadata; this is not an acoustic match."
         : c.state === "supported"
@@ -1124,6 +1138,9 @@ const workstation = setupWorkstation({
     rate: playRate,
   }),
 });
+window.runtime?.OnFileDrop?.((_x, _y, paths) => {
+  action(async () => setProject(await api().OpenDroppedProject(paths)));
+}, false);
 setInterval(poll, 750);
 poll();
 resize();

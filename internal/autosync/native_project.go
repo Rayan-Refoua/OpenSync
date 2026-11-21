@@ -61,6 +61,59 @@ type NativeProject struct {
 	Data    NativePayload   `json:"-"`
 }
 
+// ReviewTimingModels overlays qualified comparison placements for presentation.
+// The saved acoustic graph and its timing models remain the source of truth.
+func ReviewTimingModels(p NativePayload) []TimeModel {
+	models := append([]TimeModel(nil), p.Models...)
+	byRecording := make(map[int]int, len(models))
+	for i, m := range models {
+		byRecording[m.Recording] = i
+	}
+	var candidates []map[string]any
+	switch raw := p.Graph["provisional_placements"].(type) {
+	case []map[string]any:
+		candidates = raw
+	case []any:
+		for _, v := range raw {
+			if entry, ok := v.(map[string]any); ok {
+				candidates = append(candidates, entry)
+			}
+		}
+	}
+	for _, c := range candidates {
+		idx, ref := int(number(c["recording"])), int(number(c["reference"]))
+		model, found := byRecording[idx]
+		anchor, anchored := byRecording[ref]
+		status := stringValue(c["status"])
+		start := number(c["start_seconds"])
+		if c["recording"] == nil || c["reference"] == nil || c["start_seconds"] == nil || math.IsNaN(start) || math.IsInf(start, 0) ||
+			!found || !anchored || idx == ref || idx < 0 || idx >= len(p.Records) ||
+			models[model].Status != "unresolved_no_supported_relation" || !strings.HasPrefix(status, "provisional_") {
+			continue
+		}
+		m := models[model]
+		m.Status = status
+		m.Offset = start - m.AudioOrigin
+		m.Rate = 1
+		m.Error = number(c["fit_residual_seconds"])
+		m.PlacementUncertainty = number(c["placement_uncertainty_seconds"])
+		m.TimingBasis = stringValue(c["timing_basis"])
+		m.Component = p.Models[anchor].Component
+		m.ComponentSize = p.Models[anchor].ComponentSize
+		m.Resolved = !strings.HasPrefix(p.Models[anchor].Status, "unresolved")
+		if !m.Resolved && !strings.HasPrefix(m.TimingBasis, "local_") {
+			m.TimingBasis = "local_acoustic_review"
+		}
+		if m.Resolved && strings.HasPrefix(m.TimingBasis, "local_") {
+			continue
+		}
+		duration := p.Records[idx].Duration
+		m.Knots = []TimePoint{{0, m.Offset}, {duration, m.Offset + duration}}
+		models[model] = m
+	}
+	return models
+}
+
 func number(v any) float64 {
 	switch x := v.(type) {
 	case json.Number:

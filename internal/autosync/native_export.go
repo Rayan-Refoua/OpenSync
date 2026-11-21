@@ -218,35 +218,9 @@ func nativePlacements(p *NativeProject, o NativeExportOptions) ([]NativePlacemen
 			best = n
 		}
 	}
-	models := append([]TimeModel(nil), p.Data.Models...)
+	models := p.Data.Models
 	if o.IncludeProvisional {
-		if list, ok := p.Data.Graph["provisional_placements"].([]any); ok {
-			for _, raw := range list {
-				a, ok := raw.(map[string]any)
-				if !ok {
-					continue
-				}
-				idx := int(number(a["recording"]))
-				for j, m := range models {
-					if m.Recording != idx || !strings.HasPrefix(m.Status, "unresolved") {
-						continue
-					}
-					m.Status = stringValue(a["status"])
-					m.Offset = number(a["start_seconds"]) - m.AudioOrigin
-					m.Rate = 1
-					m.Error = number(a["fit_residual_seconds"])
-					m.PlacementUncertainty = number(a["placement_uncertainty_seconds"])
-					m.TimingBasis = stringValue(a["timing_basis"])
-					m.Component = 1
-					if m.TimingBasis == "local_onset_consensus" {
-						m.Component = int(number(a["component"]))
-					}
-					m.Resolved = true
-					m.Knots = []TimePoint{{0, m.Offset}, {p.Data.Records[idx].Duration, m.Offset + p.Data.Records[idx].Duration}}
-					models[j] = m
-				}
-			}
-		}
+		models = ReviewTimingModels(p.Data)
 	}
 	var result []NativePlacement
 	for _, m := range models {
@@ -273,12 +247,12 @@ func nativePlacements(p *NativeProject, o NativeExportOptions) ([]NativePlacemen
 		}
 		budget := o.MaxResidualMS/1000 - m.Error - .5/seq.FPS()
 		resolved := !strings.HasPrefix(m.Status, "unresolved")
-		if resolved && budget <= 0 {
+		if resolved && budget <= 0 && !strings.HasPrefix(m.Status, "provisional_acoustic_") {
 			m.Status = "unresolved_timing_uncertainty"
 			resolved = false
 		}
 		parts := []FrameSegment{{0, total, (lo + hi) / 2, (hi - lo) / 2}}
-		if resolved && r.Video != nil {
+		if resolved && r.Video != nil && !strings.HasPrefix(m.Status, "provisional_acoustic_") {
 			parts, err = SegmentVideo(points, total, rate.FPS(), budget)
 			if err != nil {
 				return nil, seq, fmt.Errorf("%s: %w", r.Name, err)
@@ -403,7 +377,7 @@ func nativePlacements(p *NativeProject, o NativeExportOptions) ([]NativePlacemen
 }
 
 func (v NativePlacement) isUnresolvedLayout() bool {
-	return strings.HasPrefix(v.Status, "unresolved") || v.TimingBasis == "local_onset_consensus"
+	return strings.HasPrefix(v.Status, "unresolved") || (strings.HasPrefix(v.Status, "provisional_") && strings.HasPrefix(v.TimingBasis, "local_"))
 }
 
 type nativeInstance struct {

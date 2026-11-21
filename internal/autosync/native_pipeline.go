@@ -420,7 +420,7 @@ func NativeSync(ctx context.Context, o NativeSyncOptions) error {
 	stages["preliminary_anchor_graph_seconds"] = time.Since(graphStarted).Seconds()
 	progress.set("Distributed acoustic search")
 	observe(ctx, ProgressEvent{Kind: "layout", Records: records, Layout: layout, Detail: "Preliminary timing; final graph validation pending"})
-	distributed, err := runNativeDistributed(ctx, records, layout, recovery, out, analyzer.computeTasks)
+	distributed, err := runNativeDistributed(ctx, records, layout, recovery, out, analyzer.computeTasks, profiles)
 	if err != nil {
 		return err
 	}

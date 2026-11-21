@@ -111,6 +111,40 @@ func (a *App) ChooseProject() (*desktop.Project, error) {
 	}
 	return a.OpenProject(path)
 }
+
+func (a *App) OpenDroppedProject(paths []string) (*desktop.Project, error) {
+	path, err := droppedProjectPath(paths)
+	if err != nil {
+		return nil, err
+	}
+	return a.OpenProject(path)
+}
+
+func droppedProjectPath(paths []string) (string, error) {
+	if len(paths) != 1 || paths[0] == "" {
+		return "", errors.New("drop one .opensync file or one OpenSync project folder")
+	}
+	path := paths[0]
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", fmt.Errorf("cannot access dropped item: %w", err)
+	}
+	if info.IsDir() {
+		project := filepath.Join(path, "OpenSync.opensync")
+		info, err = os.Stat(project)
+		if errors.Is(err, os.ErrNotExist) || (err == nil && !info.Mode().IsRegular()) {
+			return "", fmt.Errorf("%s does not contain an OpenSync.opensync project file", filepath.Base(path))
+		}
+		if err != nil {
+			return "", fmt.Errorf("cannot access OpenSync.opensync: %w", err)
+		}
+		return project, nil
+	}
+	if !info.Mode().IsRegular() || !strings.EqualFold(filepath.Ext(path), ".opensync") {
+		return "", errors.New("drop a .opensync file or a folder containing OpenSync.opensync")
+	}
+	return path, nil
+}
 func (a *App) LocateMedia() (*desktop.Project, error) {
 	root, e := wr.OpenDirectoryDialog(a.ctx, wr.OpenDialogOptions{Title: "Locate original media folder (includes subfolders)"})
 	if e != nil || root == "" {

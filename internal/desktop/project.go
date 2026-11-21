@@ -74,7 +74,7 @@ func LoadProject(path string) (*Project, error) {
 func BuildProject(p autosync.NativePayload) *Project {
 	v := &Project{Name: p.Name, FPS: 50, Clips: []Clip{}, Tracks: []Track{}, Graph: p.Graph}
 	models := map[int]autosync.TimeModel{}
-	for _, m := range p.Models {
+	for _, m := range autosync.ReviewTimingModels(p) {
 		models[m.Recording] = m
 	}
 	groups := map[int][]int{}
@@ -89,10 +89,10 @@ func BuildProject(p autosync.NativePayload) *Project {
 			points = []autosync.TimePoint{{0, m.Offset}, {r.Duration, m.Offset + m.Rate*r.Duration}}
 		}
 		state := "supported"
-		if strings.HasPrefix(m.Status, "unresolved") || !m.Resolved {
-			state = "unresolved"
-		} else if strings.Contains(m.Status, "provisional") {
+		if strings.HasPrefix(m.Status, "provisional_") {
 			state = "provisional"
+		} else if strings.HasPrefix(m.Status, "unresolved") || !m.Resolved {
+			state = "unresolved"
 		} else if m.Status == "certified" || m.Status == "validated" {
 			state = "validated"
 		}
@@ -104,7 +104,7 @@ func BuildProject(p autosync.NativePayload) *Project {
 		v.Clips = append(v.Clips, c)
 		v.Clips[len(v.Clips)-1].PlacementUncertainty = m.PlacementUncertainty
 		v.Clips[len(v.Clips)-1].TimingBasis = m.TimingBasis
-		if state == "unresolved" {
+		if state == "unresolved" || (state == "provisional" && !m.Resolved) {
 			groups[m.Component] = append(groups[m.Component], i)
 		} else {
 			synced = append(synced, i)

@@ -89,12 +89,16 @@ func nativeReservoir(ctx context.Context, records []MediaRecord, out string) ([]
 				Reference, Query int
 				Candidates       []struct{ Offset, Score float64 }
 				OnsetPeaks       []researchmatch.DistributedPeak `json:"onset_candidates"`
+				ReviewOnly       bool                            `json:"review_only"`
 			}
 		}
 		if err = json.Unmarshal(data, &discovery); err != nil {
 			return nil, err
 		}
 		for _, p := range discovery.Pairs {
+			if p.ReviewOnly {
+				continue
+			}
 			key := [2]int{p.Reference, p.Query}
 			existing := pairs[key]
 			for _, c := range p.Candidates[:min(3, len(p.Candidates))] {
