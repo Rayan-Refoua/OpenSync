@@ -424,3 +424,15 @@ func TestDateGuidedPlannerUsesOverlappingRecorder(t *testing.T) {
 		t.Fatal(v)
 	}
 }
+
+func TestPhoneVFRNominalPresentation(t *testing.T) {
+	r := MediaRecord{Video: map[string]any{"avg_frame_rate": "745200/24797", "r_frame_rate": "30/1", "duration": "8.27", "nb_frames": "249"}}
+	rate, err := recordRate(r, FrameRate{})
+	if err != nil || rate.FPS() != 30 || sourceFrames(r, rate) != 248 {
+		t.Fatal(rate, sourceFrames(r, rate), err)
+	}
+	r.Video["r_frame_rate"] = "60/1"
+	if _, err := recordRate(r, FrameRate{}); err == nil {
+		t.Fatal("accepted incompatible nominal rate")
+	}
+}

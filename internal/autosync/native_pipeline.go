@@ -475,13 +475,13 @@ func NativeSync(ctx context.Context, o NativeSyncOptions) error {
 		}
 	}
 	progress.set("Building project and Premiere XML")
-	if err = nativeFinish(records, edges, profiles, distributed, o); err != nil {
+	if err = nativeFinish(records, edges, profiles, distributed, o, analyzer); err != nil {
 		return err
 	}
 	stages["graph_and_export_seconds"] = time.Since(stage).Seconds()
 	return profile()
 }
-func nativeFinish(records []MediaRecord, edges []*PairEvidence, profiles []NativeProfilePair, distributed *NativeDistributedReport, o NativeSyncOptions) error {
+func nativeFinish(records []MediaRecord, edges []*PairEvidence, profiles []NativeProfilePair, distributed *NativeDistributedReport, o NativeSyncOptions, analyzers ...*NativeAnalyzer) error {
 	var ledger ReviewLedger
 	var err error
 	if o.reviewLedger != nil {
@@ -505,6 +505,29 @@ func nativeFinish(records []MediaRecord, edges []*PairEvidence, profiles []Nativ
 	}
 	profiles = filtered
 	edges, decisions := selectNativeEdges(records, edges, profiles)
+	var predictions map[int]recorderPrediction
+	var conflicts []map[string]any
+	if o.Mode == "chronological" && (o.FileTimePlacement == nil || *o.FileTimePlacement) && len(analyzers) > 0 && len(ledger.Pairs)+len(ledger.Recordings) == 0 {
+		predictions, err = timestampRecovery(analyzers[0], records, edges)
+		if err != nil {
+			return err
+		}
+		kept := make([]*PairEvidence, 0, len(edges))
+		for _, e := range edges {
+			q, qok := predictions[e.Query]
+			r, rok := predictions[e.Reference]
+			if qok && e.Reference == q.ref {
+				r = recorderPrediction{ref: q.ref}
+				rok = true
+			}
+			if qok && rok && q.ref == r.ref && (q.basis != "filename_clock_consensus" || (e.Reference != q.ref && r.basis != "filename_clock_consensus")) && math.Abs(q.offset-r.offset-e.Selected.Offset) > 3 {
+				conflicts = append(conflicts, map[string]any{"reference": e.Reference, "query": e.Query, "observed": e.Selected.Offset, "predicted": q.offset - r.offset})
+				continue
+			}
+			kept = append(kept, e)
+		}
+		edges = kept
+	}
 	layout, graph, err := nativeSolve(records, edges)
 	if err != nil {
 		return err
@@ -521,6 +544,26 @@ func nativeFinish(records []MediaRecord, edges []*PairEvidence, profiles []Nativ
 	graph["file_time_placement"] = enabled
 	if mode == "chronological" && enabled {
 		layout = applyChronology(records, layout, graph)
+		existing, _ := graph["chronological_placements"].([]ChronologicalPlacement)
+		byID := map[int]NativeLayout{}
+		for _, m := range layout {
+			byID[m.Recording] = m
+		}
+		var extra []ChronologicalPlacement
+		for _, m := range layout {
+			p, ok := predictions[m.Recording]
+			ref := byID[p.ref]
+			if !ok || ref.Component != 1 || m.ComponentSize != 1 || !strings.HasPrefix(m.Status, "unresolved") {
+				continue
+			}
+			start := MapTime(ref.Knots, p.offset) - sourceOrigin(records[m.Recording])
+			extra = append(extra, ChronologicalPlacement{m.Recording, start, 1.5, p.basis, p.anchors, "provisional_chronological_estimate"})
+		}
+		if len(extra) > 0 {
+			layout = placeChronological(layout, records, graph, extra)
+			graph["chronological_placements"] = append(existing, extra...)
+		}
+		graph["recorder_clock_conflicts"] = conflicts
 	}
 	graph["acoustic_relationships"] = nativeRelationshipMap(records, profiles, graph)
 	comparisonDiscovery := distributed

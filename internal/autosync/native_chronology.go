@@ -419,6 +419,9 @@ func applyChronology(records []MediaRecord, layout []NativeLayout, graph map[str
 	}
 	placements := chronologicalPlacements(records, layout, blocked)
 	graph["chronological_placements"] = placements
+	return placeChronological(layout, records, graph, placements)
+}
+func placeChronological(layout []NativeLayout, records []MediaRecord, graph map[string]any, placements []ChronologicalPlacement) []NativeLayout {
 	if len(placements) == 0 {
 		return layout
 	}

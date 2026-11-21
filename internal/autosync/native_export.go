@@ -86,6 +86,11 @@ func mediaURL(path string) (string, error) {
 	return (&url.URL{Scheme: "file", Host: "localhost", Path: filepath.ToSlash(a)}).String(), nil
 }
 func sourceFrames(r MediaRecord, rate FrameRate) int64 {
+	if avg := stringValue(r.Video["avg_frame_rate"]); parseRatio(avg) > 0 {
+		if _, err := canonicalRate(avg); err != nil && number(r.Video["duration"]) > 0 {
+			return roundFrame(number(r.Video["duration"]) * rate.FPS())
+		}
+	}
 	if n := int64(number(r.Video["nb_frames"])); n > 0 {
 		return n
 	}

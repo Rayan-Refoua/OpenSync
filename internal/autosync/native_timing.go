@@ -169,6 +169,13 @@ func recordRate(r MediaRecord, fallback FrameRate) (FrameRate, error) {
 	if parseRatio(avg) <= 0 {
 		avg = stringValue(r.Video["r_frame_rate"])
 	}
-	return canonicalRate(avg)
+	rate, err := canonicalRate(avg)
+	if err != nil {
+		nominal, e := canonicalRate(stringValue(r.Video["r_frame_rate"]))
+		if e == nil && math.Abs(parseRatio(avg)-nominal.FPS()) < nominal.FPS()*.02 && number(r.Video["duration"]) > 0 {
+			return nominal, nil
+		}
+	}
+	return rate, err
 }
 func roundFrame(x float64) int64 { return int64(math.RoundToEven(x)) }
