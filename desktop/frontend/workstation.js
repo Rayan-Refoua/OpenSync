@@ -67,6 +67,8 @@ export function setupWorkstation(h) {
   function apply() {
     config.mode ||= "clips";
     $("syncMode").value = config.mode;
+    $("fileTimePlacement").checked = config.mode === "chronological" && config.fileTimePlacement !== false;
+    $("fileTimePlacement").disabled = config.mode !== "chronological" || $("syncMode").disabled;
     config.layout = { ...defaultLayout, ...config.layout };
     monitor.rows = config.layout.rows;
     monitor.columns = config.layout.columns;
@@ -150,6 +152,7 @@ export function setupWorkstation(h) {
     try {
       const next = {
         mode: config.mode,
+        fileTimePlacement: config.fileTimePlacement !== false,
         analysis: {
           recovery: e.target.elements.recovery.value,
           readMode: e.target.elements.readMode.value,
@@ -255,7 +258,7 @@ export function setupWorkstation(h) {
     h.seek(c.start, false);
   };
   $("rebuildSolution").onclick = () =>
-    h.action(() => h.reviewSolution({ kind: "mode", mode: config.mode }));
+    h.action(() => h.reviewSolution({ kind: "mode", mode: config.mode, fileTimePlacement: config.fileTimePlacement !== false }));
   $("undoReview").onclick = () =>
     h.action(async () => {
       h.stop();
@@ -292,9 +295,10 @@ export function setupWorkstation(h) {
       h.setProject(await h.api().OpenProject($("historyList").value), false);
       $("historyDialog").close();
     });
-  $("syncMode").onchange = () =>
+  $("fileTimePlacement").onchange = $("syncMode").onchange = () =>
     h.action(async () => {
       const next = { ...config, mode: $("syncMode").value };
+      if (next.mode === config.mode) next.fileTimePlacement = $("fileTimePlacement").checked;
       try {
         await h.api().UpdateSettings(next);
         config = next;
@@ -499,6 +503,7 @@ export function setupWorkstation(h) {
       if (s.running) { h.stop(); monitor.reset(); }
     }
     $("syncMode").disabled = !!s.running;
+    $("fileTimePlacement").disabled = !!s.running || config.mode !== "chronological";
     for (const id of [
       "rebuildSolution",
       "solutionHistory",

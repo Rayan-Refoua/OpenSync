@@ -115,7 +115,7 @@ func chronologyFixture() ([]MediaRecord, []NativeLayout, map[string]any) {
 }
 
 func TestChronologicalPlacementIsBoundedAndProvisional(t *testing.T) {
-	for _, name := range []string{"wrong_clock", "identical_dates_small_gap", "identical_dates_large_gap", "clock_reset", "ambiguous", "take_order", "different_series", "missing_number", "audio_less"} {
+	for _, name := range []string{"wrong_clock", "identical_dates_small_gap", "identical_dates_large_gap", "clock_reset", "missing_distant_date", "bracket_reset", "ambiguous", "take_order", "different_series", "missing_number", "audio_less"} {
 		t.Run(name, func(t *testing.T) {
 			r, l, g := chronologyFixture()
 			blocked := map[int]bool{}
@@ -133,6 +133,10 @@ func TestChronologicalPlacementIsBoundedAndProvisional(t *testing.T) {
 				for i := range r {
 					r[i].SourceMtime = 100000e9
 				}
+			case "missing_distant_date":
+				r[3].SourceMtime = 0
+			case "bracket_reset":
+				r[2].SourceMtime += int64(time.Hour)
 			case "clock_reset":
 				r[3].SourceMtime += int64(time.Hour)
 			case "ambiguous":
@@ -146,7 +150,7 @@ func TestChronologicalPlacementIsBoundedAndProvisional(t *testing.T) {
 				r[1].Audio = nil
 			}
 			p := chronologicalPlacements(r, l, blocked)
-			want := name == "wrong_clock" || name == "identical_dates_small_gap" || name == "audio_less"
+			want := name == "clock_reset" || name == "missing_distant_date" || name == "wrong_clock" || name == "identical_dates_small_gap" || name == "audio_less"
 			if (len(p) == 1) != want {
 				t.Fatalf("unexpected proposals %+v", p)
 			}

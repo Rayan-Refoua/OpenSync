@@ -13,6 +13,7 @@ import (
 )
 
 type WorkstationSettings struct {
+	FileTimePlacement  *bool                     `json:"fileTimePlacement,omitempty"`
 	Analysis           autosync.AnalysisSettings `json:"analysis"`
 	TrackLayout        string                    `json:"trackLayout"`
 	MaxResidualMS      float64                   `json:"maxResidualMS"`

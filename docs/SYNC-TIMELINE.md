@@ -79,3 +79,20 @@ In **Workstation Settings**, expand **Engine and Premiere export**. The recovery
 | Include provisional placements | `--include-provisional` | Exports marked comparison candidates for review. The precise project retains their original uncertainty and evidence. |
 
 Run `opensync-cli.exe sync -h` for all sync options or `opensync-cli.exe export -h` for export options. A broader search can find more candidates for verification. It does not reduce the evidence required to accept them.
+
+### File time Based placement
+
+In **Chronological event**, enable **File time Based placement** before syncing. For an open project, choose **Project actions → Re-evaluate saved evidence** to create a revision using the switch. Magenta clips marked **CHRONOLOGICAL ESTIMATE** are candidates for editorial review. The inspector carries the timing basis and estimated uncertainty. Clips / takes always skips this pass. The CLI equivalent is `sync --mode chronological --file-time-placement=true`. Set it to `false` for an acoustic-only comparison.
+
+For a missing B between acoustically placed A and C, the engine combines these strategies:
+
+1. Identify the recorder by source folder and filename counter pattern. Duplicate counters make the order ambiguous.
+2. Calibrate sidecar recording dates against acoustic anchors. A camera clock may be hours or years off while its elapsed times remain useful.
+3. Independently calibrate embedded creation dates when available.
+4. Test filesystem modification dates against both recording start and recording completion. The latter accounts for differing clip lengths.
+5. For consecutive A, B, C, use A and C when another anchor lacks a date. Both anchors must agree within the timestamp and measurement tolerance.
+6. If a distant anchor D reveals a clock reset, retry with the clocks immediately bracketing B. Disagreement across that bracket prevents the local placement.
+7. Intersect plausible clock estimates and constrain the result to the space after A and before C, reserving B's full duration.
+8. If dates are missing or identical and B nearly fills the gap, center B in the remaining space. This fallback requires consecutive counters and at most two seconds of slack.
+
+Manual rejections, competing acoustic events and internally synchronized groups take precedence. This version requires an acoustic neighbor on both sides of B.

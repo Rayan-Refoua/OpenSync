@@ -312,6 +312,7 @@ func (a *App) startSync(override []string, corrections string) error {
 		defer cancel()
 		o := autosync.NativeSyncOptions{Output: out, Name: "OpenSync", Stage: "all", Unsynced: "append", MaxResidualMS: 150}
 		o.Mode = settings.Mode
+		o.FileTimePlacement = settings.FileTimePlacement
 		o.Analysis = settings.Analysis
 		o.TrackLayout = settings.TrackLayout
 		o.IncludeProvisional = settings.IncludeProvisional

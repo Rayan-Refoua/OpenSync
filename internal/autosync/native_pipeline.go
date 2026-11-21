@@ -46,6 +46,7 @@ func NativeSyncCommand(ctx context.Context, args []string) error {
 		f.PrintDefaults()
 	}
 	var sources repeatedStrings
+	o.FileTimePlacement = f.Bool("file-time-placement", true, "use file dates and order in chronological mode")
 	var workers int
 	f.StringVar(&o.Input, "input", "", "recursively scan this input root (optionally restrict with --source)")
 	f.Var(&sources, "source", "source folder (repeatable)")
@@ -482,7 +483,9 @@ func nativeFinish(records []MediaRecord, edges []*PairEvidence, profiles []Nativ
 	}
 	graph["placement_mode"] = mode
 	graph["recording_continuity"] = continuityEvidence(records, layout)
-	if mode == "chronological" {
+	enabled := o.FileTimePlacement == nil || *o.FileTimePlacement
+	graph["file_time_placement"] = enabled
+	if mode == "chronological" && enabled {
 		layout = applyChronology(records, layout, graph)
 	}
 	graph["acoustic_relationships"] = nativeRelationshipMap(records, profiles, graph)

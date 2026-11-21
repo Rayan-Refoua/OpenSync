@@ -26,6 +26,7 @@ type NativeSyncOptions struct {
 	// Zero preserves the CLI's adaptive defaults; temporary DSP allocations are
 	// additionally governed by the embedding application's Go memory target.
 	ManagedMemoryMiB                                    int
+	FileTimePlacement                                   *bool
 	Mode                                                string
 	Corrections                                         string
 	reviewLedger                                        *ReviewLedger

@@ -20,11 +20,12 @@ type ReviewLedger struct {
 	Pairs      []ReviewPair `json:"rejected_pairs"`
 }
 type ReviewChange struct {
-	Kind      string `json:"kind"`
-	Recording string `json:"recording"`
-	Reference string `json:"reference"`
-	Query     string `json:"query"`
-	Mode      string `json:"mode"`
+	FileTimePlacement *bool  `json:"fileTimePlacement,omitempty"`
+	Kind              string `json:"kind"`
+	Recording         string `json:"recording"`
+	Reference         string `json:"reference"`
+	Query             string `json:"query"`
+	Mode              string `json:"mode"`
 }
 type SolutionDelta struct {
 	Base     string           `json:"base_project"`
@@ -333,7 +334,15 @@ func CreateSolution(path string, change ReviewChange) (string, error) {
 	// Conservative: old provisional proposals are not automatically reinstated
 	// after a manual correction changes their supporting graph.
 	graph["provisional_placements"] = []any{}
-	if mode == "chronological" {
+	enabled, known := current.Data.Graph["file_time_placement"].(bool)
+	if !known {
+		enabled = true
+	}
+	if change.Kind == "mode" && change.FileTimePlacement != nil {
+		enabled = *change.FileTimePlacement
+	}
+	graph["file_time_placement"] = enabled
+	if mode == "chronological" && enabled {
 		layout = applyChronology(base.Data.Records, layout, graph)
 	}
 	models, _ := nativeModelMaps(base.Data.Records, layout, graph)

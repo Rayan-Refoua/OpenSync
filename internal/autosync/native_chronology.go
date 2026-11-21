@@ -236,7 +236,17 @@ func chronologicalPlacements(records []MediaRecord, layout []NativeLayout, block
 					}
 					times = append(times, v)
 				}
-				if !available || len(times) < 2 {
+				clockAnchors := anchors
+				if !available {
+					clockAnchors = []int{before.id, after.id}
+					a, oka := recordingStamp(records[before.id], kind)
+					b, okb := recordingStamp(records[after.id], kind)
+					if !oka || !okb {
+						continue
+					}
+					times = []float64{a, b}
+				}
+				if len(times) < 2 {
 					continue
 				}
 				allSame := true
@@ -249,7 +259,7 @@ func chronologicalPlacements(records []MediaRecord, layout []NativeLayout, block
 					continue
 				}
 				usableVaryingDates = true
-				if len(anchors) < 3 {
+				if len(clockAnchors) == 2 && (before.sequence+1 != e.sequence || e.sequence+1 != after.sequence) {
 					continue
 				}
 				// Modification times can denote completion rather than start.
@@ -260,7 +270,7 @@ func chronologicalPlacements(records []MediaRecord, layout []NativeLayout, block
 					}
 					var offsets []float64
 					maxError := 0.
-					for j, a := range anchors {
+					for j, a := range clockAnchors {
 						actual := start(a)
 						if atEnd {
 							actual = end(a)
@@ -275,8 +285,30 @@ func chronologicalPlacements(records []MediaRecord, layout []NativeLayout, block
 					}
 					// Leave-one-out constant clock error cannot exceed one
 					// timestamp tick plus the measured anchor residual.
+					used := clockAnchors
+					local := false
 					if high-low > 1+maxError {
-						continue
+						if before.sequence+1 != e.sequence || e.sequence+1 != after.sequence {
+							continue
+						}
+						// A reset outside the bracket need not invalidate the local clock.
+						used = []int{before.id, after.id}
+						low, high = math.Inf(1), math.Inf(-1)
+						maxError = 0
+						for _, a := range used {
+							stampA, _ := recordingStamp(records[a], kind)
+							t := start(a)
+							if atEnd {
+								t = end(a)
+							}
+							low = math.Min(low, t-stampA)
+							high = math.Max(high, t-stampA)
+							maxError = math.Max(maxError, byID[a].Error)
+						}
+						if high-low > 1+maxError {
+							continue
+						}
+						local = true
 					}
 					predicted := stamp + (low+high)/2
 					if atEnd {
@@ -288,10 +320,13 @@ func chronologicalPlacements(records []MediaRecord, layout []NativeLayout, block
 					}
 					left, right := math.Max(lo, predicted-uncertainty), math.Min(hi, predicted+uncertainty)
 					basis := "calibrated_" + kind
+					if local {
+						basis += "_local"
+					}
 					if atEnd {
 						basis += "_end"
 					}
-					proposals = append(proposals, ChronologicalPlacement{e.id, (left + right) / 2, math.Max(1, (right-left)/2+maxError), basis, append([]int(nil), anchors...), "provisional_chronological_estimate"})
+					proposals = append(proposals, ChronologicalPlacement{e.id, (left + right) / 2, math.Max(1, (right-left)/2+maxError), basis, append([]int(nil), used...), "provisional_chronological_estimate"})
 				}
 			}
 			if len(proposals) > 0 {

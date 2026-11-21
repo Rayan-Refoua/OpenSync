@@ -305,7 +305,8 @@ function drawClip(c, row) {
     y = row + 5,
     height = ROW - 10;
   if (width <= 0) return;
-  const [fill, ink] = colors[c.state] || colors.provisional;
+  const chronological = c.status === "provisional_chronological_estimate";
+  const [fill, ink] = chronological ? ["#64164e", "#ff95db"] : colors[c.state] || colors.provisional;
   // At overview scale a clip may occupy only two pixels. Its waveform and
   // status remain visible; expensive text clipping has no useful pixels there.
   const clipped = width > 24;
@@ -328,6 +329,7 @@ function drawClip(c, row) {
   if (width > 170) {
     const label = c.missing
       ? "MISSING SOURCE"
+      : chronological ? "CHRONOLOGICAL ESTIMATE"
       : c.status === "unresolved_disconnected_group"
         ? `GROUP ${c.component} · LOCAL SYNC`
         : c.state === "provisional"
