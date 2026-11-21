@@ -65,6 +65,13 @@ func selectNativeEdges(records []MediaRecord, base []*PairEvidence, profiles []N
 		qs = append(qs, q)
 	}
 	sort.Ints(qs)
+	// Removing a recording with no incident anchor cannot change its independent
+	// layout. Reuse the original solve for these queries.
+	incident := make([]bool, len(records))
+	for _, e := range anchors {
+		incident[e.Query] = true
+		incident[e.Reference] = true
+	}
 	contextResults := make([]map[int]NativeLayout, len(qs))
 	jobs := make(chan int)
 	var wg sync.WaitGroup
@@ -74,7 +81,7 @@ func selectNativeEdges(records []MediaRecord, base []*PairEvidence, profiles []N
 			defer wg.Done()
 			for index := range jobs {
 				q := qs[index]
-				if records[q].Duration >= 30 && counts[q] > 1 {
+				if incident[q] && records[q].Duration >= 30 && counts[q] > 1 {
 					independent := []*PairEvidence{}
 					for _, e := range anchors {
 						if e.Query != q && e.Reference != q {
@@ -114,17 +121,14 @@ func selectNativeEdges(records []MediaRecord, base []*PairEvidence, profiles []N
 			}
 			mid := records[pair.Query].Duration / 2
 			offset := p.Prior.Offset + p.Prior.Slope*mid
+			if p.Model != nil {
+				offset = p.Model.predict(mid)
+			}
 			position := anchor.Start + anchor.Rate*(mid+offset) - mid
 			candidates[pair.Query] = append(candidates[pair.Query], eventEntry{pair.Reference, anchor.Component, position, p})
 		}
 	}
-	uniqueRefs := func(group []eventEntry) int {
-		seen := map[int]bool{}
-		for _, e := range group {
-			seen[e.reference] = true
-		}
-		return len(seen)
-	}
+	uniqueRefs := func(group []eventEntry) int { return corroboratingReferences(group, records) }
 	strength := func(group []eventEntry) float64 {
 		v := 0.
 		for _, e := range group {
@@ -282,6 +286,8 @@ func selectNativeEdges(records []MediaRecord, base []*PairEvidence, profiles []N
 		return keys[i][1] < keys[j][1]
 	})
 	result := []*PairEvidence{}
+	var local []*PairEvidence
+	occupied := make([]bool, len(records))
 	for _, k := range keys {
 		e := selected[k]
 		blocked := false
@@ -292,6 +298,17 @@ func selectNativeEdges(records []MediaRecord, base []*PairEvidence, profiles []N
 		}
 		if !blocked {
 			result = append(result, e)
+			occupied[e.Reference], occupied[e.Query] = true, true
+		} else if e.Profile != nil && e.Profile.Status == "validated_relation" {
+			local = append(local, e)
+		}
+	}
+	// Keep an audited relation between otherwise isolated recordings.
+	// An ambiguous recorder must not move an already established component.
+	for _, e := range local {
+		if !occupied[e.Reference] && !occupied[e.Query] {
+			result = append(result, e)
+			report = append(report, map[string]any{"reference": e.Reference, "query": e.Query, "status": "audited_local_alignment_global_position_unresolved"})
 		}
 	}
 	result, more := rejectExcerptBridges(records, result)
@@ -303,5 +320,7 @@ func selectNativeEdges(records []MediaRecord, base []*PairEvidence, profiles []N
 			seen[key] = true
 		}
 	}
+	result, componentDecisions := corroborateComponents(records, result, profiles)
+	report = append(report, componentDecisions...)
 	return result, report
 }

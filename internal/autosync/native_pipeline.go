@@ -8,6 +8,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -45,15 +46,27 @@ func NativeSyncCommand(ctx context.Context, args []string) error {
 		f.PrintDefaults()
 	}
 	var sources repeatedStrings
+	var workers int
 	f.StringVar(&o.Input, "input", "", "recursively scan this input root (optionally restrict with --source)")
 	f.Var(&sources, "source", "source folder (repeatable)")
 	f.StringVar(&o.FileList, "file-list", "", "UTF-8 text or JSON list of media paths")
 	f.StringVar(&o.Output, "output", "OpenSync-Output", "project output directory")
 	f.StringVar(&o.CacheIndex, "cache-index", "", "existing guarded PCM cache index")
 	f.StringVar(&o.Name, "name", "OpenSync", "project name")
-	f.StringVar(&o.Unsynced, "unsynced", "append", "append or separate-sequence")
+	f.StringVar(&o.Mode, "mode", "clips", "clips (acoustic placement) or chronological (also estimate bounded gaps from calibrated recording order)")
+	f.StringVar(&o.Corrections, "corrections", "", "saved project/revision whose explicit rejected recordings and pairs must remain rejected")
+	f.StringVar(&o.Unsynced, "unsynced", "append", "append, separate-sequence, order_only, disabled, remove, or local-tracks")
 	f.StringVar(&o.Stage, "stage", "all", "cache, discover, verify, or all")
+	f.Float64Var(&o.AudioEarlyMS, "audio-early-ms", 50, "allowed audio lead in milliseconds")
+	f.Float64Var(&o.AudioLateMS, "audio-late-ms", 70, "allowed audio lag in milliseconds")
 	f.Float64Var(&o.MaxResidualMS, "max-residual-ms", 150, "maximum export presentation residual")
+	f.StringVar(&o.Analysis.Recovery, "recovery", "balanced", "distributed recovery: off, quick, balanced, or deep; verification rules stay the same")
+	f.StringVar(&o.Analysis.ReadMode, "read-mode", "auto", "auto uses direct MP4/MOV reads on confirmed SSDs; buffered overrides them")
+	f.StringVar(&o.Analysis.Readers, "readers", "auto", "fingerprint readers: adaptive (auto), serial, or parallel (up to two; disk scheduling still applies)")
+	f.Float64Var(&o.Analysis.LongReferenceHours, "long-reference-hours", 0, "total long-reference search budget in hours; 0 uses the recovery preset")
+	f.IntVar(&workers, "workers", 0, "Go CPU concurrency ceiling (0 uses the runtime default)")
+	f.IntVar(&o.ManagedMemoryMiB, "memory-mib", 0, "in-memory analysis budget in MiB (0 uses automatic sizing)")
+	f.StringVar(&o.TrackLayout, "track-layout", "family", "Premiere track grouping: family or folder")
 	f.BoolVar(&o.CacheEnabled, "cache", false, "explicitly retain analysis cache for reuse; never copy originals")
 	f.BoolVar(&o.Resume, "resume", false, "resume compatible cached work")
 	f.BoolVar(&o.IncludeProvisional, "include-provisional", false, "include marked review candidates")
@@ -66,25 +79,60 @@ func NativeSyncCommand(ctx context.Context, args []string) error {
 	if f.NArg() > 0 {
 		return fmt.Errorf("unexpected sync arguments")
 	}
+	if workers < 0 || workers > 1024 {
+		return fmt.Errorf("workers must be 0..1024")
+	}
+	if workers > 0 {
+		previous := runtime.GOMAXPROCS(workers)
+		defer runtime.GOMAXPROCS(previous)
+	}
 	o.Sources = sources
 	return NativeSync(ctx, o)
 }
 func NativeSync(ctx context.Context, o NativeSyncOptions) error {
+	if err := o.Analysis.Normalize(); err != nil {
+		return err
+	}
+	if o.ManagedMemoryMiB != 0 && (o.ManagedMemoryMiB < 256 || o.ManagedMemoryMiB > 131072) {
+		return fmt.Errorf("memory-mib must be 0 or 256..131072")
+	}
+	if !validTrackLayout(o.TrackLayout) {
+		return fmt.Errorf("track-layout must be family or folder")
+	}
+	ctx = context.WithValue(ctx, analysisSettingsKey{}, o.Analysis)
+	if o.Mode == "" {
+		o.Mode = "clips"
+	}
+	if o.Mode != "clips" && o.Mode != "chronological" {
+		return fmt.Errorf("mode must be clips or chronological")
+	}
 	fmt.Printf("OpenSync %s\n", BuildVersion)
+	for _, tolerance := range []float64{o.AudioEarlyMS, o.AudioLateMS} {
+		if tolerance < 0 || math.IsNaN(tolerance) || math.IsInf(tolerance, 0) {
+			return fmt.Errorf("invalid audio drift tolerance")
+		}
+	}
+	fmt.Printf("POLICY recovery=%s read-mode=%s readers=%s\n", o.Analysis.Recovery, o.Analysis.ReadMode, o.Analysis.Readers)
 	// These switches are explicit requests to persist/reuse analysis.
 	o.CacheEnabled = o.CacheEnabled || o.CacheIndex != "" || o.Resume || o.Stage == "cache"
 	if !o.CacheEnabled {
 		if o.Stage != "all" {
 			return fmt.Errorf("partial analysis stages require explicit --cache; normal sync runs all stages without caching")
 		}
-		ctx = context.WithValue(ctx, workspaceKey{}, &nativeWorkspace{data: map[string][]byte{}, limit: 512 << 20, audio: newDirectAudio()})
+		workspace := &nativeWorkspace{data: map[string][]byte{}, limit: 512 << 20, audio: newDirectAudio()}
+		if o.ManagedMemoryMiB > 0 {
+			budget := int64(o.ManagedMemoryMiB) << 20
+			workspace.limit = min(workspace.limit, max(int64(16<<20), budget/8))
+			workspace.audio.limit = min(workspace.audio.limit, max(int64(32<<20), budget/2))
+		}
+		ctx = context.WithValue(ctx, workspaceKey{}, workspace)
 		defer memoryWorkspace(ctx).audio.Close()
 		fmt.Printf("MEMORY audio working-set limit %d MiB; disk cache disabled\n", memoryWorkspace(ctx).audio.limit>>20)
 	}
-	if o.MaxResidualMS < 1 || o.MaxResidualMS > 150 {
+	if !(o.MaxResidualMS >= 1 && o.MaxResidualMS <= 150) {
 		return fmt.Errorf("residual limit must be 1..150ms")
 	}
-	if o.Unsynced != "append" && o.Unsynced != "separate-sequence" {
+	if !validUnmatchedPolicy(o.Unsynced) {
 		return fmt.Errorf("invalid unresolved policy")
 	}
 	if o.Stage != "cache" && o.Stage != "discover" && o.Stage != "verify" && o.Stage != "all" {
@@ -176,7 +224,7 @@ func NativeSync(ctx context.Context, o NativeSyncOptions) error {
 			return err
 		}
 	}
-	progress := startNativeProgress()
+	progress := startNativeProgress(ctx)
 	if w := memoryWorkspace(ctx); w != nil {
 		progress.monitor(func() string {
 			return fmt.Sprintf(" | fingerprint buckets %d/%d active, %d done", w.indexActive.Load(), w.indexWorkers.Load(), w.indexCompleted.Load())
@@ -192,6 +240,12 @@ func NativeSync(ctx context.Context, o NativeSyncOptions) error {
 		return err
 	}
 	stages["prepare_seconds"] = time.Since(stage).Seconds()
+	ledger, err := correctionsForRecords(o.Corrections, records)
+	if err != nil {
+		return err
+	}
+	o.reviewLedger = &ledger
+	observe(ctx, ProgressEvent{Kind: "inventory", Records: records, Total: len(records)})
 	if o.Stage == "cache" {
 		return writeJSON(filepath.Join(out, "native-run-profile.json"), map[string]any{"stages": stages, "total_seconds": time.Since(start).Seconds()})
 	}
@@ -229,7 +283,7 @@ func NativeSync(ctx context.Context, o NativeSyncOptions) error {
 	stages["candidate_discovery_seconds"] = time.Since(stage).Seconds()
 	var analyzer *NativeAnalyzer
 	profile := func() error {
-		report := map[string]any{"build": BuildVersion, "stages": stages, "total_seconds": time.Since(start).Seconds(), "recordings": len(records), "python_runtime": false}
+		report := map[string]any{"analysis_policy": o.Analysis, "managed_memory_mib": o.ManagedMemoryMiB, "cpu_concurrency": runtime.GOMAXPROCS(0), "build": BuildVersion, "stages": stages, "total_seconds": time.Since(start).Seconds(), "recordings": len(records), "python_runtime": false}
 		if w := memoryWorkspace(ctx); w != nil {
 			fmt.Printf("AUDIO additional window decodes %d; decoder starts %d\n", w.audio.misses.Load(), w.audio.starts.Load())
 			report["additional_audio_window_decodes"] = w.audio.misses.Load()
@@ -266,6 +320,7 @@ func NativeSync(ctx context.Context, o NativeSyncOptions) error {
 		return err
 	}
 	stages["initial_verification_seconds"] = time.Since(stage).Seconds()
+	observe(ctx, ProgressEvent{Kind: "evidence", Stage: "Initial acoustic support", Completed: len(edges), Total: len(pairs)})
 	stage = time.Now()
 	progress.set("Searching unresolved recordings")
 	recovery, err := analyzer.recover(ctx, edges, out)
@@ -354,13 +409,18 @@ func NativeSync(ctx context.Context, o NativeSyncOptions) error {
 	if err != nil {
 		return err
 	}
+	stages["initial_timing_profiles_seconds"] = time.Since(stage).Seconds()
+	graphStarted := time.Now()
+	progress.set("Solving independent timing anchors")
 	preliminary, _ := selectNativeEdges(records, edges, profiles)
 	layout, _, err := nativeSolve(records, preliminary)
 	if err != nil {
 		return err
 	}
+	stages["preliminary_anchor_graph_seconds"] = time.Since(graphStarted).Seconds()
 	progress.set("Distributed acoustic search")
-	distributed, err := runNativeDistributed(ctx, records, layout, recovery, out, analyzer.computeTasks)
+	observe(ctx, ProgressEvent{Kind: "layout", Records: records, Layout: layout, Detail: "Preliminary timing; final graph validation pending"})
+	distributed, err := runNativeDistributed(ctx, records, layout, recovery, out, analyzer.computeTasks, profiles)
 	if err != nil {
 		return err
 	}
@@ -387,14 +447,57 @@ func NativeSync(ctx context.Context, o NativeSyncOptions) error {
 	return profile()
 }
 func nativeFinish(records []MediaRecord, edges []*PairEvidence, profiles []NativeProfilePair, distributed *NativeDistributedReport, o NativeSyncOptions) error {
+	var ledger ReviewLedger
+	var err error
+	if o.reviewLedger != nil {
+		ledger = *o.reviewLedger
+	} else {
+		ledger, err = correctionsForRecords(o.Corrections, records)
+	}
+	if err != nil {
+		return err
+	}
+	edges, err = filterReviewedEdges(records, edges, ledger)
+	if err != nil {
+		return err
+	}
+	blocked, rejected, _ := reviewBlocked(records, ledger)
+	filtered := make([]NativeProfilePair, 0, len(profiles))
+	for _, p := range profiles {
+		if !blocked[p.Reference] && !blocked[p.Query] && !rejected[orderedReviewPair(records[p.Reference].ID, records[p.Query].ID)] {
+			filtered = append(filtered, p)
+		}
+	}
+	profiles = filtered
 	edges, decisions := selectNativeEdges(records, edges, profiles)
 	layout, graph, err := nativeSolve(records, edges)
 	if err != nil {
 		return err
 	}
 	graph["event_decisions"] = decisions
+	graph["review_ledger"] = ledger
+	mode := o.Mode
+	if mode == "" {
+		mode = "clips"
+	}
+	graph["placement_mode"] = mode
+	graph["recording_continuity"] = continuityEvidence(records, layout)
+	if mode == "chronological" {
+		layout = applyChronology(records, layout, graph)
+	}
 	graph["acoustic_relationships"] = nativeRelationshipMap(records, profiles, graph)
-	graph["provisional_placements"] = nativeComparisonPlacements(records, layout, profiles, distributed)
+	comparisonDiscovery := distributed
+	if distributed != nil && (len(blocked) != 0 || len(rejected) != 0) {
+		filteredDiscovery := *distributed
+		filteredDiscovery.Pairs = nil
+		for _, pair := range distributed.Pairs {
+			if !blocked[pair.Reference] && !blocked[pair.Query] && !rejected[orderedReviewPair(records[pair.Reference].ID, records[pair.Query].ID)] {
+				filteredDiscovery.Pairs = append(filteredDiscovery.Pairs, pair)
+			}
+		}
+		comparisonDiscovery = &filteredDiscovery
+	}
+	graph["provisional_placements"] = nativeComparisonPlacements(records, layout, profiles, comparisonDiscovery)
 	if distributed != nil {
 		graph["candidate_discovery"] = distributed
 	}
@@ -428,5 +531,5 @@ func nativeFinish(records []MediaRecord, edges []*PairEvidence, profiles []Nativ
 	if err = saveNativeProject(path, o.Name, records, edges, layout, graph); err != nil {
 		return err
 	}
-	return ExportNative(path, NativeExportOptions{Output: o.Output, Unsynced: o.Unsynced, MaxResidualMS: o.MaxResidualMS, IncludeProvisional: o.IncludeProvisional})
+	return ExportNative(path, NativeExportOptions{TrackLayout: o.TrackLayout, AudioEarlyMS: o.AudioEarlyMS, AudioLateMS: o.AudioLateMS, Output: o.Output, Unsynced: o.Unsynced, MaxResidualMS: o.MaxResidualMS, IncludeProvisional: o.IncludeProvisional})
 }

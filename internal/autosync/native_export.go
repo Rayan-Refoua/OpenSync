@@ -103,43 +103,74 @@ func channelType(n int) string {
 }
 
 type NativePlacement struct {
-	Recording          int     `json:"recording"`
-	ID                 string  `json:"id"`
-	Status             string  `json:"status"`
-	Component          int     `json:"component"`
-	HasVideo           bool    `json:"has_video"`
-	Start              int64   `json:"start"`
-	End                int64   `json:"end"`
-	In                 int64   `json:"source_in"`
-	Out                int64   `json:"source_out"`
-	Rate               string  `json:"source_fps"`
-	Segment            int     `json:"segment"`
-	Segments           int     `json:"segments"`
-	Sequence           string  `json:"sequence"`
-	Error              float64 `json:"presentation_error_seconds"`
-	Derivative         *string `json:"derivative"`
-	DerivativeDuration float64 `json:"derivative_duration_seconds,omitempty"`
-	rate               FrameRate
+	Disabled             bool    `json:"disabled,omitempty"`
+	LayoutBasis          string  `json:"layout_basis,omitempty"`
+	PlacementUncertainty float64 `json:"placement_uncertainty_seconds,omitempty"`
+	TimingBasis          string  `json:"timing_basis,omitempty"`
+	Recording            int     `json:"recording"`
+	ID                   string  `json:"id"`
+	Status               string  `json:"status"`
+	Component            int     `json:"component"`
+	HasVideo             bool    `json:"has_video"`
+	Start                int64   `json:"start"`
+	End                  int64   `json:"end"`
+	In                   int64   `json:"source_in"`
+	Out                  int64   `json:"source_out"`
+	Rate                 string  `json:"source_fps"`
+	Segment              int     `json:"segment"`
+	Segments             int     `json:"segments"`
+	Sequence             string  `json:"sequence"`
+	Error                float64 `json:"presentation_error_seconds"`
+	Derivative           *string `json:"derivative"`
+	DerivativeDuration   float64 `json:"derivative_duration_seconds,omitempty"`
+	rate                 FrameRate
 }
 type NativeExportOptions struct {
-	Output, Unsynced   string
-	MaxResidualMS      float64
-	IncludeProvisional bool
+	TrackLayout               string
+	AudioEarlyMS, AudioLateMS float64
+	Output, Unsynced          string
+	MaxResidualMS             float64
+	IncludeProvisional        bool
+}
+
+func validTrackLayout(value string) bool {
+	return value == "" || value == "family" || value == "folder"
+}
+
+func validUnmatchedPolicy(policy string) bool {
+	switch policy {
+	case "append", "separate-sequence", "order_only", "disabled", "remove", "local-tracks":
+		return true
+	}
+	return false
 }
 
 func NativeExportCommand(args []string) error {
+	if len(args) == 1 && (args[0] == "-h" || args[0] == "--help") {
+		args = []string{"project.opensync", args[0]}
+	}
 	// Match the public positional-project interface, followed by options.
 	if len(args) == 0 {
 		return fmt.Errorf("export requires a saved .opensync project")
 	}
 	project := args[0]
 	f := flag.NewFlagSet("export", flag.ContinueOnError)
+	f.Usage = func() {
+		fmt.Fprintln(f.Output(), "Usage: opensync export <project.opensync> [options]")
+		f.PrintDefaults()
+	}
 	o := NativeExportOptions{}
+	f.StringVar(&o.TrackLayout, "track-layout", "family", "Premiere track grouping: family or folder")
 	f.StringVar(&o.Output, "output", filepath.Dir(project), "output directory")
-	f.StringVar(&o.Unsynced, "unsynced", "append", "append or separate-sequence")
+	f.StringVar(&o.Unsynced, "unsynced", "append", "append, separate-sequence, order_only, disabled, remove, or local-tracks")
 	f.Float64Var(&o.MaxResidualMS, "max-residual-ms", 150, "maximum presentation residual")
 	f.BoolVar(&o.IncludeProvisional, "include-provisional", false, "include marked comparison candidates")
+	f.Float64Var(&o.AudioEarlyMS, "audio-early-ms", 50, "allowed audio lead in milliseconds")
+	f.Float64Var(&o.AudioLateMS, "audio-late-ms", 70, "allowed audio lag in milliseconds")
 	if err := f.Parse(args[1:]); err != nil {
+		if err == flag.ErrHelp {
+			return nil
+		}
 		return err
 	}
 	if f.NArg() != 0 {
@@ -148,11 +179,26 @@ func NativeExportCommand(args []string) error {
 	return ExportNative(project, o)
 }
 func nativePlacements(p *NativeProject, o NativeExportOptions) ([]NativePlacement, FrameRate, error) {
-	if o.Unsynced != "append" && o.Unsynced != "separate-sequence" {
+	if !validTrackLayout(o.TrackLayout) {
+		return nil, FrameRate{}, fmt.Errorf("track-layout must be family or folder")
+	}
+	if !validUnmatchedPolicy(o.Unsynced) {
 		return nil, FrameRate{}, fmt.Errorf("invalid unresolved policy")
 	}
-	if o.MaxResidualMS < 1 || o.MaxResidualMS > 150 {
+	if !(o.MaxResidualMS >= 1 && o.MaxResidualMS <= 150) {
 		return nil, FrameRate{}, fmt.Errorf("residual limit must be 1..150ms")
+	}
+	early, late := o.AudioEarlyMS, o.AudioLateMS
+	if early == 0 {
+		early = 50
+	}
+	if late == 0 {
+		late = 70
+	}
+	for _, v := range []float64{early, late} {
+		if math.IsNaN(v) || math.IsInf(v, 0) || v < 0 {
+			return nil, FrameRate{}, fmt.Errorf("invalid audio drift tolerance")
+		}
 	}
 	counts := map[FrameRate]int{}
 	for _, r := range p.Data.Records {
@@ -172,30 +218,9 @@ func nativePlacements(p *NativeProject, o NativeExportOptions) ([]NativePlacemen
 			best = n
 		}
 	}
-	models := append([]TimeModel(nil), p.Data.Models...)
+	models := p.Data.Models
 	if o.IncludeProvisional {
-		if list, ok := p.Data.Graph["provisional_placements"].([]any); ok {
-			for _, raw := range list {
-				a, ok := raw.(map[string]any)
-				if !ok {
-					continue
-				}
-				idx := int(number(a["recording"]))
-				for j, m := range models {
-					if m.Recording != idx || !strings.HasPrefix(m.Status, "unresolved") {
-						continue
-					}
-					m.Status = stringValue(a["status"])
-					m.Offset = number(a["start_seconds"]) - m.AudioOrigin
-					m.Rate = 1
-					m.Error = number(a["fit_residual_seconds"])
-					m.Component = 1
-					m.Resolved = true
-					m.Knots = []TimePoint{{0, m.Offset}, {p.Data.Records[idx].Duration, m.Offset + p.Data.Records[idx].Duration}}
-					models[j] = m
-				}
-			}
-		}
+		models = ReviewTimingModels(p.Data)
 	}
 	var result []NativePlacement
 	for _, m := range models {
@@ -222,22 +247,22 @@ func nativePlacements(p *NativeProject, o NativeExportOptions) ([]NativePlacemen
 		}
 		budget := o.MaxResidualMS/1000 - m.Error - .5/seq.FPS()
 		resolved := !strings.HasPrefix(m.Status, "unresolved")
-		if resolved && budget <= 0 {
+		if resolved && budget <= 0 && !strings.HasPrefix(m.Status, "provisional_acoustic_") {
 			m.Status = "unresolved_timing_uncertainty"
 			resolved = false
 		}
 		parts := []FrameSegment{{0, total, (lo + hi) / 2, (hi - lo) / 2}}
-		if resolved && r.Video != nil {
+		if resolved && r.Video != nil && !strings.HasPrefix(m.Status, "provisional_acoustic_") {
 			parts, err = SegmentVideo(points, total, rate.FPS(), budget)
 			if err != nil {
 				return nil, seq, fmt.Errorf("%s: %w", r.Name, err)
 			}
-		} else if resolved && (hi-lo)/2 > budget {
+		} else if resolved && r.Audio != nil && !strings.HasPrefix(m.Status, "provisional") && (MapTime(points, 0)-lo > late/1000+1e-9 || hi-MapTime(points, 0) > early/1000+1e-9) {
 			if budget < .03 {
 				m.Status = "unresolved_timing_uncertainty"
 			} else {
-				keyData, _ := json.Marshal(map[string]any{"id": r.ID, "mapping": points, "source": r.CacheSHA, "renderer": "mapped-audio-native-v1"})
-				target, _ := filepath.Abs(filepath.Join(o.Output, "Audio Derivatives", shaBytes(keyData)[:16]+".wav"))
+				keyData, _ := json.Marshal([]any{r.ID, r.SourceBytes, r.SourceMtime, r.CacheSHA, points})
+				target := strings.TrimSuffix(r.Source, filepath.Ext(r.Source)) + "_" + shaBytes(keyData)[:12] + "_driftCorrection.wav"
 				if _, err := os.Stat(target); os.IsNotExist(err) {
 					if err = renderMappedAudio(context.Background(), r, points, target); err != nil {
 						return nil, seq, err
@@ -252,15 +277,20 @@ func nativePlacements(p *NativeProject, o NativeExportOptions) ([]NativePlacemen
 				if math.Abs(actual-(MapTime(points, r.Duration)-MapTime(points, 0))) > .001 {
 					return nil, seq, fmt.Errorf("audio derivative duration mismatch")
 				}
-				start := roundFrame(m.Offset * seq.FPS())
-				result = append(result, NativePlacement{Recording: m.Recording, ID: fmt.Sprintf("recording-%s-part-1", r.ID), Status: m.Status, Component: m.Component, Start: start, End: start + roundFrame(actual*seq.FPS()), In: 0, Out: roundFrame(actual * rate.FPS()), Rate: rate.String(), Segment: 1, Segments: 1, Error: .03 + m.Error + .5/seq.FPS(), Derivative: &target, DerivativeDuration: actual, rate: rate})
+				start := roundFrame(MapTime(points, 0) * seq.FPS())
+				result = append(result, NativePlacement{PlacementUncertainty: m.PlacementUncertainty, TimingBasis: m.TimingBasis, Recording: m.Recording, ID: fmt.Sprintf("recording-%s-part-1", r.ID), Status: m.Status, Component: m.Component, Start: start, End: start + roundFrame(actual*seq.FPS()), In: 0, Out: roundFrame(actual * rate.FPS()), Rate: rate.String(), Segment: 1, Segments: 1, Error: .03 + m.Error + .5/seq.FPS(), Derivative: &target, DerivativeDuration: actual, rate: rate})
 				continue
 			}
+		}
+		if resolved && r.Video == nil && m.Status != "unresolved_timing_uncertainty" {
+			origin := MapTime(points, 0)
+			parts[0].Offset = origin
+			parts[0].Error = math.Max(origin-lo, hi-origin)
 		}
 		for j, v := range parts {
 			start := roundFrame((float64(v.First)/rate.FPS() + v.Offset) * seq.FPS())
 			end := start + roundFrame(float64(v.Last-v.First)/rate.FPS()*seq.FPS())
-			result = append(result, NativePlacement{Recording: m.Recording, ID: fmt.Sprintf("recording-%s-part-%d", r.ID, j+1), Status: m.Status, Component: m.Component, HasVideo: r.Video != nil, Start: start, End: end, In: v.First, Out: v.Last, Rate: rate.String(), Segment: j + 1, Segments: len(parts), Error: v.Error + m.Error + .5/seq.FPS(), rate: rate})
+			result = append(result, NativePlacement{PlacementUncertainty: m.PlacementUncertainty, TimingBasis: m.TimingBasis, Recording: m.Recording, ID: fmt.Sprintf("recording-%s-part-%d", r.ID, j+1), Status: m.Status, Component: m.Component, HasVideo: r.Video != nil, Start: start, End: end, In: v.First, Out: v.Last, Rate: rate.String(), Segment: j + 1, Segments: len(parts), Error: v.Error + m.Error + .5/seq.FPS(), rate: rate})
 		}
 	}
 	move := func(indices []int, start int64, sequence string) int64 {
@@ -280,10 +310,19 @@ func nativePlacements(p *NativeProject, o NativeExportOptions) ([]NativePlacemen
 		}
 		return last
 	}
+	if o.Unsynced == "remove" {
+		kept := result[:0]
+		for _, v := range result {
+			if !v.isUnresolvedLayout() {
+				kept = append(kept, v)
+			}
+		}
+		result = kept
+	}
 	var synced []int
 	groups := map[int][]int{}
 	for i, v := range result {
-		if strings.HasPrefix(v.Status, "unresolved") {
+		if v.isUnresolvedLayout() {
 			groups[v.Component] = append(groups[v.Component], i)
 		} else {
 			synced = append(synced, i)
@@ -292,7 +331,7 @@ func nativePlacements(p *NativeProject, o NativeExportOptions) ([]NativePlacemen
 	end := move(synced, 0, "synced")
 	cursor := int64(0)
 	unseq := "unresolved"
-	if o.Unsynced == "append" {
+	if o.Unsynced != "separate-sequence" {
 		unseq = "synced"
 		if len(synced) > 0 && len(groups) > 0 {
 			cursor = end + roundFrame(10*seq.FPS())
@@ -319,10 +358,26 @@ func nativePlacements(p *NativeProject, o NativeExportOptions) ([]NativePlacemen
 		}
 		return ai < bi
 	})
+	if o.Unsynced == "order_only" {
+		components = orderUnmatchedComponents(p.Data.Records, result, components)
+	}
 	for _, c := range components {
+		for _, i := range groups[c] {
+			result[i].Disabled = o.Unsynced == "disabled"
+			if o.Unsynced == "local-tracks" && result[i].Status == "unresolved_disconnected_group" {
+				result[i].LayoutBasis = "dedicated_local_sync_tracks"
+			}
+			if o.Unsynced == "order_only" {
+				result[i].LayoutBasis = "ordered_without_reliable_timing"
+			}
+		}
 		cursor = move(groups[c], cursor, unseq) + roundFrame(seq.FPS())
 	}
 	return result, seq, nil
+}
+
+func (v NativePlacement) isUnresolvedLayout() bool {
+	return strings.HasPrefix(v.Status, "unresolved") || (strings.HasPrefix(v.Status, "provisional_") && strings.HasPrefix(v.TimingBasis, "local_"))
 }
 
 type nativeInstance struct {
@@ -417,6 +472,9 @@ func addFile(n *xnode, r MediaRecord, rate FrameRate, defined map[string]bool) e
 	return nil
 }
 func buildNativeXML(p *NativeProject, placements []NativePlacement, seqRate FrameRate) ([]byte, error) {
+	return buildNativeXMLWithTracks(p, placements, seqRate, "family")
+}
+func buildNativeXMLWithTracks(p *NativeProject, placements []NativePlacement, seqRate FrameRate, trackLayout string) ([]byte, error) {
 	root := xn("xmeml", nil).attr("version", "4")
 	project := root.add("project", nil)
 	project.add("name", p.Data.Name)
@@ -562,7 +620,14 @@ func buildNativeXML(p *NativeProject, placements []NativePlacement, seqRate Fram
 			}
 			byPlacement[i] = entries
 			for _, in := range entries {
-				k := fmt.Sprintf("%s|%s|%04d|%04d", in.Kind, recordGroup[v.Recording], in.Channel, channelCount(r))
+				group := recordGroup[v.Recording]
+				if trackLayout != "folder" {
+					group += "|" + TrackFamily(r.Name)
+				}
+				k := fmt.Sprintf("%s|%s|%04d|%04d", in.Kind, group, in.Channel, channelCount(r))
+				if v.LayoutBasis == "dedicated_local_sync_tracks" {
+					k = fmt.Sprintf("%s|~local-sync-%08d|%s", in.Kind, v.Component, k)
+				}
 				choice := -1
 				for j, lane := range lanes[k] {
 					if placements[lane[len(lane)-1].Placement].End <= v.Start {
@@ -619,6 +684,9 @@ func buildNativeXML(p *NativeProject, placements []NativePlacement, seqRate Fram
 				rateXML(c, v.rate)
 				c.add("in", v.In)
 				c.add("out", v.Out)
+				if v.Disabled {
+					c.add("enabled", "FALSE")
+				}
 				c.add("start", v.Start)
 				c.add("end", v.End)
 				c.add("masterclipid", "master-"+r.ID)
@@ -634,9 +702,24 @@ func buildNativeXML(p *NativeProject, placements []NativePlacement, seqRate Fram
 				if strings.HasPrefix(v.Status, "unresolved") {
 					label = "Rose"
 					description = "Unresolved relative to the main sequence"
+					if v.LayoutBasis == "dedicated_local_sync_tracks" {
+						description = fmt.Sprintf("Local sync group %d; its offset to the main sequence is unresolved", v.Component)
+					}
 				} else if strings.HasPrefix(v.Status, "provisional") {
 					label = "Mango"
 					description = "Provisional acoustic placement for comparison, not certified"
+				}
+				if v.Status == "provisional_spectral_consensus_review_required" {
+					description = "Spectral comparison placement; waveform timing is unverified"
+				}
+				if v.Status == "provisional_onset_review_required" {
+					description = "Provisional placement from matching audio energy changes; waveform timing is unverified"
+					if v.TimingBasis == "local_onset_consensus" {
+						description += ". The reference is unresolved relative to the main sequence."
+					}
+				}
+				if v.PlacementUncertainty > 0 {
+					description = fmt.Sprintf("Chronological estimate (%s), uncertainty +/- %.3f s; not acoustically verified", v.TimingBasis, v.PlacementUncertainty)
 				}
 				c.add("labels", nil).add("label2", label)
 				c.add("logginginfo", nil).add("description", description)
@@ -647,7 +730,7 @@ func buildNativeXML(p *NativeProject, placements []NativePlacement, seqRate Fram
 		unresolvedStart := int64(-1)
 		for _, i := range indices {
 			v := placements[i]
-			if strings.HasPrefix(v.Status, "unresolved") && (unresolvedStart < 0 || v.Start < unresolvedStart) {
+			if v.isUnresolvedLayout() && (unresolvedStart < 0 || v.Start < unresolvedStart) {
 				unresolvedStart = v.Start
 			}
 			if strings.HasPrefix(v.Status, "provisional") {
@@ -674,6 +757,9 @@ func buildNativeXML(p *NativeProject, placements []NativePlacement, seqRate Fram
 	return b.Bytes(), nil
 }
 func ExportNative(projectPath string, o NativeExportOptions) error {
+	if o.TrackLayout == "" {
+		o.TrackLayout = "family"
+	}
 	p, err := LoadNativeProject(projectPath)
 	if err != nil {
 		return err
@@ -691,7 +777,7 @@ func ExportNative(projectPath string, o NativeExportOptions) error {
 	if err != nil {
 		return err
 	}
-	data, err := buildNativeXML(p, placements, seq)
+	data, err := buildNativeXMLWithTracks(p, placements, seq, o.TrackLayout)
 	if err != nil {
 		return err
 	}
@@ -726,6 +812,18 @@ func ExportNative(projectPath string, o NativeExportOptions) error {
 			provisional = append(provisional, r.Name)
 		}
 	}
+	omitted := []string{}
+	if o.Unsynced == "remove" {
+		present := map[int]bool{}
+		for _, v := range placements {
+			present[v.Recording] = true
+		}
+		for i, r := range p.Data.Records {
+			if !present[i] {
+				omitted = append(omitted, r.ID)
+			}
+		}
+	}
 	derivatives := []map[string]any{}
 	for _, v := range placements {
 		if v.Derivative != nil {
@@ -737,7 +835,7 @@ func ExportNative(projectPath string, o NativeExportOptions) error {
 			derivatives = append(derivatives, map[string]any{"recording_id": r.ID, "original": r.Source, "derivative": *v.Derivative, "sha256": digest, "actual_duration_seconds": v.DerivativeDuration})
 		}
 	}
-	manifest := map[string]any{"status": "EXPORTED_REQUIRES_PREMIERE_AND_ACCURACY_REVIEW", "project": projectPath, "project_content_sha256": p.Hash, "xml": path, "xml_sha256": hex.EncodeToString(sum[:]), "recordings": len(p.Data.Records), "sequence_fps": seq.String(), "unsynced_policy": o.Unsynced, "include_provisional": o.IncludeProvisional, "placements": placements, "derivatives": derivatives, "unresolved_recordings": unresolved, "provisional_recordings": provisional, "source_media_modified": false, "engine": "native_go"}
+	manifest := map[string]any{"status": "EXPORTED_REQUIRES_PREMIERE_AND_ACCURACY_REVIEW", "project": projectPath, "project_content_sha256": p.Hash, "xml": path, "xml_sha256": hex.EncodeToString(sum[:]), "recordings": len(p.Data.Records), "sequence_fps": seq.String(), "unsynced_policy": o.Unsynced, "track_layout": o.TrackLayout, "include_provisional": o.IncludeProvisional, "placements": placements, "omitted_recording_ids": omitted, "derivatives": derivatives, "unresolved_recordings": unresolved, "provisional_recordings": provisional, "source_media_modified": false, "engine": "native_go"}
 	if err = writeJSON(filepath.Join(out, "timeline-manifest.json"), manifest); err != nil {
 		return err
 	}

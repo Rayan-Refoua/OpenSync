@@ -58,7 +58,7 @@ func TestShortMediaDiagnostic(t *testing.T) {
 	for i := range records {
 		layout[i] = NativeLayout{Recording: i, Status: "unresolved"}
 	}
-	distributed, err := runNativeDistributed(ctx, records, layout, recovery, out, a.computeTasks)
+	distributed, err := runNativeDistributed(ctx, records, layout, recovery, out, a.computeTasks, profiles)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -5,8 +5,9 @@ import (
 	"fmt"
 	"io"
 	"opensync/internal/audio"
+	"opensync/internal/storageio"
 	"os"
-	"os/exec"
+
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -25,6 +26,7 @@ type directAudio struct {
 	starts, misses                atomic.Int64
 	pcmReaders                    map[string]*audio.Reader
 	pcmChecked                    map[string]bool
+	pcmOpening                    map[string]chan struct{}
 	readSlots                     chan struct{}
 	waiting, reading, nativeReads atomic.Int64
 }
@@ -50,25 +52,54 @@ func (d *directAudio) Close() {
 }
 
 func (d *directAudio) nativePCM(r MediaRecord) *audio.Reader {
+	return d.nativePCMContext(context.Background(), r)
+}
+func (d *directAudio) nativePCMContext(ctx context.Context, r MediaRecord) *audio.Reader {
+	d.mu.Lock()
+	if d.pcmChecked[r.ID] {
+		reader := d.pcmReaders[r.ID]
+		d.mu.Unlock()
+		return reader
+	}
+	if wait := d.pcmOpening[r.ID]; wait != nil {
+		d.mu.Unlock()
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-wait:
+		}
+		d.mu.Lock()
+		reader := d.pcmReaders[r.ID]
+		d.mu.Unlock()
+		return reader
+	}
+	if d.pcmOpening == nil {
+		d.pcmOpening = map[string]chan struct{}{}
+	}
+	wait := make(chan struct{})
+	d.pcmOpening[r.ID] = wait
+	d.mu.Unlock()
+	// Do not hold the PCM/cache mutex while waiting for a mechanical disk.
+	reader, err := audio.OpenContext(ctx, r.Source)
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if !d.pcmChecked[r.ID] {
-		d.pcmChecked[r.ID] = true
-		if reader, err := audio.Open(r.Source); err == nil {
-			d.pcmReaders[r.ID] = reader
-		}
+	if err == nil {
+		d.pcmReaders[r.ID] = reader
 	}
-	return d.pcmReaders[r.ID]
+	d.pcmChecked[r.ID] = ctx.Err() == nil
+	delete(d.pcmOpening, r.ID)
+	close(wait)
+	return reader
 }
 func (d *directAudio) stream(ctx context.Context, r MediaRecord, consume func(io.Reader) error) error {
-	if reader := d.nativePCM(r); reader != nil {
+	if reader := d.nativePCMContext(ctx, r); reader != nil {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		if err := checkSource(r); err != nil {
 			return err
 		}
-		if err := consume(reader.PCMStream()); err != nil {
+		if err := reader.WithPCMStream(ctx, consume); err != nil {
 			return err
 		}
 		return checkSource(r)
@@ -116,7 +147,20 @@ func checkSource(r MediaRecord) error {
 	}
 	return nil
 }
+
+// Direct AVIO skips video-only spans in indexed containers. Restrict the
+// seek-heavy path to confirmed SSDs, where the source is opened locally.
+func analysisAudioArgs(ctx context.Context, source string) []string {
+	args := []string{"-nostdin", "-v", "error", "-threads", "1"}
+	if analysisSettings(ctx).ReadMode != "buffered" {
+		args = append(args, storageio.DirectMediaArgs(source)...)
+	}
+	return append(args, "-i", source, "-map", "0:a:0", "-vn", "-ac", "1", "-ar", "16000")
+}
+
 func decodedStream(ctx context.Context, r MediaRecord, first, count int64, consume func(io.Reader) error) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	if err := checkSource(r); err != nil {
 		return err
 	}
@@ -124,14 +168,14 @@ func decodedStream(ctx context.Context, r MediaRecord, first, count int64, consu
 	if err != nil {
 		return err
 	}
-	args := []string{"-nostdin", "-v", "error", "-threads", "1", "-i", r.Source, "-map", "0:a:0", "-vn", "-ac", "1", "-ar", "16000"}
+	args := analysisAudioArgs(ctx, r.Source)
 	// Trim AFTER resampling, with an unchanged decoder/resampler origin. Input
 	// seeking can change PCM phase or codec priming and is not used as a shortcut.
 	if count >= 0 {
 		args = append(args, "-af", fmt.Sprintf("aresample=16000,aformat=sample_fmts=s16:channel_layouts=mono,atrim=start_sample=%d:end_sample=%d", first, first+count))
 	}
 	args = append(args, "-f", "s16le", "-")
-	cmd := exec.CommandContext(ctx, tool, args...)
+	cmd := mediaCommandContext(ctx, tool, args...)
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	pipe, err := cmd.StdoutPipe()
@@ -182,7 +226,7 @@ func (d *directAudio) read(ctx context.Context, r MediaRecord, first, count int6
 	if r.Audio == nil {
 		return make([]int16, count), nil
 	}
-	if reader := d.nativePCM(r); reader != nil {
+	if reader := d.nativePCMContext(ctx, r); reader != nil {
 		d.waiting.Add(1)
 		select {
 		case d.readSlots <- struct{}{}:
@@ -192,7 +236,7 @@ func (d *directAudio) read(ctx context.Context, r MediaRecord, first, count int6
 		}
 		d.waiting.Add(-1)
 		d.reading.Add(1)
-		pcm, err := reader.ReadFrames(first, count)
+		pcm, err := reader.ReadFramesContext(ctx, first, count)
 		d.reading.Add(-1)
 		<-d.readSlots
 		d.nativeReads.Add(1)

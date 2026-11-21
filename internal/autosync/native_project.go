@@ -26,22 +26,25 @@ type MediaRecord struct {
 	Video          map[string]any `json:"video"`
 	Audio          map[string]any `json:"audio"`
 	SourceTimecode map[string]any `json:"source_timecode"`
+	FormatTags     map[string]any `json:"format_tags,omitempty"`
 	SourceGroup    string         `json:"source_group,omitempty"`
 	AnalysisAudio  string         `json:"analysis_audio,omitempty"`
 	CacheReused    bool           `json:"cache_reused"`
 }
 type TimeModel struct {
-	Recording      int         `json:"recording"`
-	Component      int         `json:"component"`
-	ComponentSize  int         `json:"component_size"`
-	Offset         float64     `json:"component_offset_seconds"`
-	AnalysisOffset float64     `json:"analysis_component_offset_seconds"`
-	AudioOrigin    float64     `json:"analysis_audio_origin_seconds"`
-	Rate           float64     `json:"rate"`
-	Error          float64     `json:"fit_residual_seconds"`
-	Status         string      `json:"status"`
-	Knots          []TimePoint `json:"timing_knots"`
-	Resolved       bool        `json:"globally_resolved"`
+	PlacementUncertainty float64     `json:"placement_uncertainty_seconds,omitempty"`
+	TimingBasis          string      `json:"timing_basis,omitempty"`
+	Recording            int         `json:"recording"`
+	Component            int         `json:"component"`
+	ComponentSize        int         `json:"component_size"`
+	Offset               float64     `json:"component_offset_seconds"`
+	AnalysisOffset       float64     `json:"analysis_component_offset_seconds"`
+	AudioOrigin          float64     `json:"analysis_audio_origin_seconds"`
+	Rate                 float64     `json:"rate"`
+	Error                float64     `json:"fit_residual_seconds"`
+	Status               string      `json:"status"`
+	Knots                []TimePoint `json:"timing_knots"`
+	Resolved             bool        `json:"globally_resolved"`
 }
 type NativePayload struct {
 	Name    string         `json:"name"`
@@ -56,6 +59,59 @@ type NativeProject struct {
 	Payload json.RawMessage `json:"payload"`
 	Hash    string          `json:"content_sha256"`
 	Data    NativePayload   `json:"-"`
+}
+
+// ReviewTimingModels overlays qualified comparison placements for presentation.
+// The saved acoustic graph and its timing models remain the source of truth.
+func ReviewTimingModels(p NativePayload) []TimeModel {
+	models := append([]TimeModel(nil), p.Models...)
+	byRecording := make(map[int]int, len(models))
+	for i, m := range models {
+		byRecording[m.Recording] = i
+	}
+	var candidates []map[string]any
+	switch raw := p.Graph["provisional_placements"].(type) {
+	case []map[string]any:
+		candidates = raw
+	case []any:
+		for _, v := range raw {
+			if entry, ok := v.(map[string]any); ok {
+				candidates = append(candidates, entry)
+			}
+		}
+	}
+	for _, c := range candidates {
+		idx, ref := int(number(c["recording"])), int(number(c["reference"]))
+		model, found := byRecording[idx]
+		anchor, anchored := byRecording[ref]
+		status := stringValue(c["status"])
+		start := number(c["start_seconds"])
+		if c["recording"] == nil || c["reference"] == nil || c["start_seconds"] == nil || math.IsNaN(start) || math.IsInf(start, 0) ||
+			!found || !anchored || idx == ref || idx < 0 || idx >= len(p.Records) ||
+			models[model].Status != "unresolved_no_supported_relation" || !strings.HasPrefix(status, "provisional_") {
+			continue
+		}
+		m := models[model]
+		m.Status = status
+		m.Offset = start - m.AudioOrigin
+		m.Rate = 1
+		m.Error = number(c["fit_residual_seconds"])
+		m.PlacementUncertainty = number(c["placement_uncertainty_seconds"])
+		m.TimingBasis = stringValue(c["timing_basis"])
+		m.Component = p.Models[anchor].Component
+		m.ComponentSize = p.Models[anchor].ComponentSize
+		m.Resolved = !strings.HasPrefix(p.Models[anchor].Status, "unresolved")
+		if !m.Resolved && !strings.HasPrefix(m.TimingBasis, "local_") {
+			m.TimingBasis = "local_acoustic_review"
+		}
+		if m.Resolved && strings.HasPrefix(m.TimingBasis, "local_") {
+			continue
+		}
+		duration := p.Records[idx].Duration
+		m.Knots = []TimePoint{{0, m.Offset}, {duration, m.Offset + duration}}
+		models[model] = m
+	}
+	return models
 }
 
 func number(v any) float64 {
@@ -175,9 +231,16 @@ func LoadNativeProject(path string) (*NativeProject, error) {
 	if err != nil {
 		return nil, err
 	}
+	return decodeNativeProject(path, data)
+}
+func decodeNativeProject(path string, data []byte) (*NativeProject, error) {
+	var err error
 	var p NativeProject
 	if err = json.Unmarshal(data, &p); err != nil {
 		return nil, err
+	}
+	if p.Format == "opensync.solution" {
+		return loadSolution(path, data)
 	}
 	if p.Format != "opensync.project" || (p.Schema != 1 && p.Schema != 2) {
 		return nil, fmt.Errorf("unsupported project format/version")
@@ -214,6 +277,12 @@ func LoadNativeProject(path string) (*NativeProject, error) {
 		return nil, fmt.Errorf("missing project component identities")
 	}
 	for _, m := range p.Data.Models {
+		if m.PlacementUncertainty < 0 || math.IsNaN(m.PlacementUncertainty) || math.IsInf(m.PlacementUncertainty, 0) {
+			return nil, fmt.Errorf("invalid placement uncertainty")
+		}
+		if m.Status == "provisional_chronological_estimate" && (m.PlacementUncertainty < 1 || m.TimingBasis == "" || m.TimingBasis == "acoustic_arrival") {
+			return nil, fmt.Errorf("chronological estimate lacks explicit uncertainty or provenance")
+		}
 		if m.Recording < 0 || m.Recording >= len(p.Data.Records) || seen[m.Recording] || m.Rate <= 0 || math.IsNaN(m.Rate) || math.IsInf(m.Rate, 0) || math.IsNaN(m.Offset) || math.IsInf(m.Offset, 0) {
 			return nil, fmt.Errorf("invalid timing model")
 		}
@@ -243,7 +312,13 @@ func LoadNativeProject(path string) (*NativeProject, error) {
 	return &p, nil
 }
 
-func saveNativeProject(path, name string, records []MediaRecord, edges []*PairEvidence, layout []NativeLayout, graph map[string]any) error {
+func nativeModelMaps(records []MediaRecord, layout []NativeLayout, graph map[string]any) ([]map[string]any, int) {
+	chronology := map[int]ChronologicalPlacement{}
+	if placements, ok := graph["chronological_placements"].([]ChronologicalPlacement); ok {
+		for _, p := range placements {
+			chronology[p.Recording] = p
+		}
+	}
 	models := []map[string]any{}
 	schema := 1
 	for _, item := range layout {
@@ -264,7 +339,17 @@ func saveNativeProject(path, name string, records []MediaRecord, edges []*PairEv
 			m["component_offset_seconds"] = MapTime(points, 0)
 		}
 		models = append(models, m)
+		if p, ok := chronology[item.Recording]; ok {
+			m["timing_basis"] = p.Basis
+			m["placement_uncertainty_seconds"] = p.Uncertainty
+			m["acoustic_verification"] = "not_established_for_this_placement"
+			m["uncertainty_interpretation"] = "conditional_estimate_not_statistical_confidence_bound"
+		}
 	}
+	return models, schema
+}
+func saveNativeProject(path, name string, records []MediaRecord, edges []*PairEvidence, layout []NativeLayout, graph map[string]any) error {
+	models, schema := nativeModelMaps(records, layout, graph)
 	payload := map[string]any{"name": name, "engine_version": "opensync-autonomous-v1", "implementation": "native-go-v1", "recordings": records, "timing_models": models, "validated_relations": edges, "graph": graph, "timing_precision": "IEEE-754 binary64 seconds, affine rates and monotonic timing knots; no timeline frame quantization", "verification_status": "acoustic_and_graph_evidence_supported; production_import_review_pending", "acoustic_environment_policy": map[string]any{"constant_path_delay": "absorbed_in_measured_offset_not_clock_drift", "changing_path_or_echo": "requires_timing_evidence_not_blanket_tolerance", "physical_event_time": "not_identifiable_from_unreferenced_audio_alone"}, "source_media_modified": false}
 	data, err := json.Marshal(payload)
 	if err != nil {

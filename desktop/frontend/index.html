@@ -1,0 +1,482 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OpenSync</title>
+    <link rel="stylesheet" href="style.css" />
+    <link rel="icon" href="brand/mark.svg" type="image/svg+xml" />
+  </head>
+  <body>
+    <header>
+      <div class="brand">
+        <img class="brand-symbol" src="brand/mark.svg" alt="" />
+        <div>
+          <img
+            class="brand-name"
+            src="brand/wordmark.svg"
+            alt="OpenSync"
+          /><small>SYNCHRONIZATION WORKSTATION</small>
+        </div>
+      </div>
+      <div class="tools">
+        <select
+          id="syncMode"
+          aria-label="Synchronization mode"
+          title="Clips: acoustic placement for repeated takes. Chronological: also estimate bounded gaps using calibrated recording dates and order."
+        >
+          <option value="clips">Clips / takes</option>
+          <option value="chronological">Chronological event</option>
+        </select>
+        <button id="open" class="ui-icon" title="Open a .opensync project · Ctrl+O · You can also drop the project file or folder anywhere in the window">
+          Open project</button
+        ><button id="add" class="ui-icon" title="Select source recordings for a new sync">
+          Add files</button
+        ><button
+          id="folder" class="ui-icon"
+          title="Select media folders with Ctrl or Shift; subfolders are included"
+        >
+          Add folders</button
+        ><button id="clear" class="ui-icon" title="Clear the input selection">
+          Clear</button
+        ><button
+          id="sync"
+          class="primary ui-icon"
+          title="Run the native Go engine; media caching is disabled"
+        >
+          Synchronize</button
+        ><button
+          id="cancel" class="ui-icon"
+          disabled
+          title="Cancel the current synchronization"
+        >
+          Cancel
+        </button>
+      </div>
+      <div id="build">NATIVE GO</div>
+      <button
+        id="settingsButton" class="ui-icon"
+        title="Resource limits and keyboard shortcuts · Ctrl+Alt+K"
+      >
+        Settings
+      </button>
+    </header>
+      <section
+        id="currentState"
+        data-tone="ready"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+      >
+        <div>
+          <strong id="stateTitle">Ready</strong
+          ><span id="stateDetail">Native Go engine</span>
+        </div>
+        <div id="stateNext">Next: add recordings or open a project</div>
+        <progress
+          id="stageProgress"
+          value="0"
+          max="10"
+          aria-label="Synchronization pipeline stage"
+        ></progress>
+      </section>
+
+    <section class="projectbar">
+      <strong id="projectName">No project open</strong
+      ><span id="counts">Open a project to inspect its synchronization</span
+      ><span class="legend"
+        ><i class="supported"></i>Supported <i class="validated"></i>Validated
+        <i class="provisional"></i>Provisional
+        <i class="unresolved"></i>Unresolved</span
+      ><button
+        id="locate" class="ui-icon"
+        title="Find missing originals by filename and byte size; session only"
+      >
+        Locate media
+      </button>
+      <button
+        id="outputFolder" class="ui-icon"
+        title="Open the saved project's output directory in Explorer"
+      >
+        Open output folder
+      </button>
+      <button
+        id="nextAttention" class="ui-icon"
+        title="Jump to the next unresolved or provisional recording"
+      >
+        Next attention
+      </button>
+      <button id="exportXML" class="ui-icon" title="Export the current solution to Premiere XML">Export XML</button>
+      <button id="findClip" title="Find a recording by filename · Ctrl+F">Find clip</button>
+      <details class="projectActions">
+        <summary
+          title="Review revisions, rerun synchronization, or export the current result"
+        >
+          Project actions
+        </summary>
+        <div>
+          <button
+            id="rebuildSolution"
+            title="Re-evaluate saved evidence in the selected mode; retain manual rejections; no audio extraction"
+          >
+            Re-evaluate saved evidence
+          </button>
+          <button
+            id="undoReview"
+            title="Return to this revision's parent; keep both versions"
+          >
+            Undo review change
+          </button>
+          <button
+            id="solutionHistory"
+            title="Open an earlier solution without duplicating or recomputing acoustic evidence"
+          >
+            Solution history
+          </button>
+          <button
+            id="resyncProject"
+            title="Run synchronization again on this project's originals; carry forward explicit manual rejections"
+          >
+            Re-sync current sources
+          </button>
+
+        </div>
+      </details>
+    </section>
+    <dialog id="findClipDialog">
+      <h3>Find recording</h3>
+      <input id="findClipInput" type="search" aria-label="Recording filename" placeholder="Type part of a filename" autofocus />
+      <select id="findClipResults" size="10" aria-label="Matching recordings"></select>
+      <div class="dialogActions"><button id="jumpToClip">Jump to clip</button><button id="cancelFindClip">Close</button></div>
+    </dialog>
+    <dialog id="historyDialog">
+      <h3>Solution history</h3>
+      <p class="muted">
+        Revisions share the original project's evidence. Keep the original
+        .opensync file with its Solutions folder.
+      </p>
+      <select
+        id="historyList"
+        size="10"
+        aria-label="Saved solution revisions"
+      ></select>
+      <div class="dialogActions">
+        <button id="openHistory">Open selected revision</button
+        ><button id="closeHistory">Close</button>
+      </div>
+    </dialog>
+    <main>
+      <section id="workspace">
+        <section id="monitorPanel">
+          <div class="paneltitle">
+            <strong>MULTICAMERA MONITOR</strong
+            ><span id="monitorCount">4-feed limit · common timeline clock</span
+            ><button
+              id="monitorToggle"
+              title="Collapse monitor and release its video decoders"
+            >
+              Collapse
+            </button>
+          </div>
+          <div id="cameraGrid"></div>
+        </section>
+        <div
+          id="monitorResize"
+          class="resizeHorizontal"
+          title="Resize multicamera monitor"
+        ></div>
+        <div class="transport">
+          <button id="selectTool" title="Selection tool · V">V</button
+          ><button id="handTool" title="Hand tool · H">H</button>
+          <button id="play" title="Audition selected lanes · Space">▶</button
+          ><button id="stop" title="Stop playback · Esc">■</button
+          ><output
+            id="time"
+            title="Timeline time; milliseconds shown without quantizing the saved timing"
+            >00:00:00.000</output
+          ><span id="playState">STOPPED</span
+          ><progress
+            id="playbackBuffer"
+            max="8"
+            value="0"
+            title="Playable audio/video reserve; waits for 8 seconds before starting"
+            aria-label="Playback buffer reserve"
+          ></progress
+          ><span id="bufferDetail" class="muted"></span
+          ><span class="divider"></span
+          ><button id="fit" title="Fit the entire project · \">Fit</button>
+          <button id="zoomOut" title="Zoom out · −">−</button
+          ><input
+            id="zoom"
+            type="range"
+            min="-3"
+            max="12"
+            step="0.02"
+            value="3"
+            aria-label="Timeline zoom"
+          /><button id="zoomIn" title="Zoom in · +">+</button
+          ><span id="scale">—</span
+          ><label title="Display representative video frames"
+            ><input id="thumbs" type="checkbox" checked /> Frames</label
+          ><label title="Follow the playhead during audition"
+            ><input id="follow" type="checkbox" checked /> Follow</label
+          ><select
+            id="fps"
+            title="Frame-step grid only; project timing remains precise"
+          >
+            <option value="50">50 fps</option>
+            <option value="25">25 fps</option>
+            <option value="24">24 fps</option>
+            <option value="23.976023976">23.976 fps</option>
+            <option value="29.97002997">29.97 fps</option>
+            <option value="30">30 fps</option>
+            <option value="60">60 fps</option>
+          </select>
+        </div>
+        <div id="timeline">
+          <div id="trackCorner">
+            TRACK / AUDITION <small>up to 2 lanes</small>
+          </div>
+          <canvas id="ruler"></canvas>
+          <div id="scroller"><div id="spacer"></div></div>
+          <canvas
+            id="canvas"
+            tabindex="0"
+            aria-label="Multitrack timeline; Ctrl+wheel zooms, wheel scrolls tracks, Shift+wheel pans"
+          ></canvas>
+          <div id="headers"></div>
+          <div id="playhead"><span></span></div>
+          <div id="empty">
+            <strong>Inspect the synchronization.</strong>
+            <p>
+              Open an existing <b>.opensync</b> project, or add recordings and
+              synchronize.
+            </p>
+            <p>Source waveforms and frames load only where you look.</p>
+            <small
+              >Ctrl+O Open · Ctrl+wheel Zoom · Shift+wheel Pan · Space
+              Play</small
+            >
+          </div>
+        </div>
+        <div class="scrollbar">
+          <span id="visibleRange">—</span>
+          <div id="hscroll"><div></div></div>
+        </div>
+        <div
+          id="activityResize"
+          class="resizeHorizontal"
+          title="Resize diagnostics"
+        ></div>
+        <section id="activity">
+          <div class="paneltitle">
+            <strong>ENGINE / MEDIA ACTIVITY</strong
+            ><span id="engineStage">Ready</span
+            ><span id="activityDetail"></span><span id="ioFiles" aria-label="Active file reading progress"></span>
+            <select id="logFilter" title="Filter diagnostics by severity">
+              <option value="all">All events</option>
+              <option value="stage">Stages</option>
+              <option value="pair">Evidence</option>
+              <option value="warning">Warnings + errors</option>
+              <option value="error">Errors</option></select
+            ><button id="activityToggle" title="Collapse diagnostics">−</button>
+          </div>
+          <div id="log" role="log" aria-live="polite"></div>
+        </section>
+      </section>
+      <div
+        id="inspectorResize"
+        class="resizeVertical"
+        title="Resize inspector"
+      ></div>
+      <aside id="inspectorPanel">
+        <div class="paneltitle">
+          <span>RECORDING INSPECTOR</span
+          ><button id="inspectorToggle" title="Collapse inspector">›</button>
+        </div>
+        <div id="inspector">
+          <p class="muted">
+            Select a clip to inspect exact timing, source metadata, and
+            synchronization evidence.
+          </p>
+        </div>
+        <div class="paneltitle">NAVIGATION</div>
+        <dl class="shortcuts" id="shortcutReference">
+          <dt>Ctrl + wheel</dt>
+          <dd>Zoom at pointer</dd>
+          <dt>Shift + wheel</dt>
+          <dd>Pan timeline</dd>
+          <dt>Middle / Alt + drag</dt>
+          <dd>Pan freely</dd>
+          <dt>Space / Esc</dt>
+          <dd>Play / stop</dd>
+          <dt>← / →</dt>
+          <dd>Step one frame</dd>
+          <dt>Shift + ← / →</dt>
+          <dd>Step one second</dd>
+          <dt>F / + / −</dt>
+          <dd>Fit / zoom</dd>
+          <dt>Home / End</dt>
+          <dd>Timeline bounds</dd>
+          <dt>Double-click clip</dt>
+          <dd>Focus recording</dd>
+        </dl>
+      </aside>
+    </main>
+    <footer>
+      <span class="statusdot"></span><span id="status">Ready</span
+      ><span id="performance">Canvas 2D</span
+      ><span id="memory">Visualization cache: 0 MB · disk cache OFF</span>
+      <span id="storageState" title="Source storage policy">I/O —</span>
+      <canvas
+        id="resourceGraph"
+        width="100"
+        height="20"
+        title="OpenSync process-tree CPU history"
+      ></canvas
+      ><span
+        id="resources"
+        title="OpenSync + WebView2 + live media workers; not overall system usage"
+        >CPU — · RAM —</span
+      >
+    </footer>
+    <div id="tooltip" hidden></div>
+    <div id="toast" hidden role="alert"></div>
+    <dialog id="settingsDialog">
+      <form id="settingsForm">
+        <h2>Workstation settings</h2>
+        <details class="engineSettings">
+          <summary>Engine and Premiere export</summary>
+          <div class="settingsGrid">
+            <label title="Controls the extra search pass for unresolved recordings">Acoustic recovery
+              <select name="recovery">
+                <option value="balanced">Balanced (default)</option>
+                <option value="quick">Quick</option>
+                <option value="deep">Deep search</option>
+                <option value="off">Skip distributed search</option>
+              </select>
+            </label>
+            <label title="Auto enables direct MP4/MOV input on confirmed SSDs">Analysis input
+              <select name="readMode"><option value="auto">Automatic</option><option value="buffered">Buffered</option></select>
+            </label>
+            <label title="Applies to no-cache fingerprint reads. HDD block scheduling still applies.">Fingerprint readers
+              <select name="readers"><option value="auto">Measure and adapt</option><option value="serial">One reader</option><option value="parallel">Up to two readers</option></select>
+            </label>
+            <label title="Total reference audio hours examined by the extra long-reference search; zero uses the preset">Long-reference search budget (hours)
+              <input name="longReferenceHours" type="number" min="0" max="600" step="0.1" required />
+            </label>
+            <label title="Changes Premiere track grouping without changing clip placement">Premiere track grouping
+              <select name="trackLayout"><option value="family">Folder and filename family</option><option value="folder">Folder only</option></select>
+            </label>
+            <label title="Maximum export presentation error budget; does not change acoustic verification">Export residual limit (ms)
+              <input name="maxResidualMS" type="number" min="1" max="150" step="0.1" required />
+            </label>
+            <label title="Include clearly marked timing hypotheses in Premiere for review">
+              <span>Include provisional placements in XML</span><input name="includeProvisional" type="checkbox" />
+            </label>
+          <label
+            >Unmatched media in Premiere<select name="unmatchedPolicy">
+<option value="append">Append</option><option value="local-tracks">Keep local sync groups on dedicated tracks</option><option value="separate-sequence">Separate sequence</option><option value="order_only">Append in recording order</option><option value="disabled">Append disabled</option><option value="remove">Omit from timeline</option></select></label>
+          <label>Allowed audio lead (ms)<input name="audioEarlyMS" type="number" min="0.1" step="0.1" required /></label>
+          <label>Allowed audio lag (ms)<input name="audioLateMS" type="number" min="0.1" step="0.1" required /></label>
+          </div>
+        </details>
+        <div class="settingsGrid">
+          <label
+            >Managed RAM budget (MiB)<input
+              name="memoryMiB"
+              type="number"
+              min="256"
+              max="131072"
+              required
+          /></label>
+          <label
+            >Engine CPU workers<input
+              name="workers"
+              type="number"
+              min="1"
+              required
+          /></label>
+          <label
+            >Background intensity<select name="background">
+              <option value="off">Foreground only</option>
+              <option value="low">Low</option>
+              <option value="balanced">Balanced</option>
+            </select></label
+          >
+          <label
+            >Media workers per pool<input
+              name="decodeWorkers"
+              type="number"
+              min="1"
+              max="8"
+              required
+          /></label>
+          <label
+            >Thumbnail workers<input
+              name="thumbnailWorkers"
+              type="number"
+              min="1"
+              max="4"
+              required
+          /></label>
+          <label
+            >Maximum video feeds<input
+              name="maxVideoFeeds"
+              type="number"
+              min="1"
+              max="16"
+              required
+          /></label>
+          <label
+            >Monitor position<select name="monitorPosition">
+              <option value="right">Right of timeline</option>
+              <option value="top">Above timeline</option>
+            </select></label
+          >
+          <label
+            >Monitor rows<input
+              name="monitorRows"
+              type="number"
+              min="1"
+              max="16"
+              required
+          /></label>
+          <label
+            >Monitor columns<select name="monitorColumns">
+              <option value="0">Auto (expand with active feeds)</option>
+              <option value="1">1</option>
+              <option value="2">2</option>
+              <option value="3">3</option>
+              <option value="4">4</option>
+            </select></label
+          >
+        </div>
+        <p class="muted">
+          RAM controls set hard visualization/analysis cache budgets and a soft
+          Go heap target. Browser, GPU and decoder allocations cannot be capped
+          exactly here. Buffered 640×360 video previews retain source frame
+          timing. Playback fills eight seconds first and maintains a five-second
+          reserve. Preview segments stay in RAM; original files and exports are
+          unchanged.
+        </p>
+        <h3>
+          Keyboard shortcuts
+          <small
+            >Click a field and press a key combination. Backspace clears
+            it.</small
+          >
+        </h3>
+        <div id="shortcutSettings"></div>
+        <div class="dialogActions">
+          <button type="button" id="resetShortcuts">
+            Premiere-style defaults</button
+          ><span id="settingsError"></span
+          ><button type="button" id="closeSettings">Cancel</button
+          ><button type="submit" class="primary">Apply</button>
+        </div>
+      </form>
+    </dialog>
+    <script type="module" src="app.js"></script>
+  </body>
+</html>

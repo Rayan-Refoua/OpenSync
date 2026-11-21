@@ -7,10 +7,20 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"opensync/internal/storageio"
 	"path/filepath"
 	"sort"
 	"sync"
+	"time"
 )
+
+type fingerprintPCMKey struct{}
+
+// WithFingerprintPCM attaches a streaming visualization consumer. The returned
+// writer receives borrowed little-endian mono PCM; nil marks successful EOF.
+func WithFingerprintPCM(ctx context.Context, open func(MediaRecord) func([]byte)) context.Context {
+	return context.WithValue(ctx, fingerprintPCMKey{}, open)
+}
 
 // Decode sequentially with two source readers, then dispatch bounded overlapping
 // windows to CPU workers. A large video is never copied or fully loaded into RAM.
@@ -28,9 +38,16 @@ func directFingerprintIndex(ctx context.Context, records []MediaRecord, out stri
 		metrics              FingerprintMetrics
 	}
 	estimatedChunks := 0
+	var readTotal int
+	var readDuration float64
 	for _, r := range records {
+		if r.Audio != nil {
+			readTotal++
+			readDuration += finiteDuration(r.Duration)
+		}
 		estimatedChunks += max(1, int(r.Duration/50)+1)
 	}
+	progress := newIOReadProgress(ctx, readTotal, readDuration)
 	workers := nativeWorkers(estimatedChunks)
 	stats := memoryWorkspace(ctx)
 	stats.indexWorkers.Store(int64(workers))
@@ -63,7 +80,27 @@ func directFingerprintIndex(ctx context.Context, records []MediaRecord, out stri
 			}
 		}()
 	}
-	for w := 0; w < min(2, len(records)); w++ {
+	probes := make([]*storageio.IOProbe, len(records))
+	byDevice := map[string]*storageio.IOProbe{}
+	readerMode := analysisSettings(ctx).Readers
+	for i, r := range records {
+		if r.Audio == nil || readerMode != "auto" {
+			continue
+		}
+		key := storageio.IOProbeKey(r.Source)
+		if key == "" {
+			continue
+		}
+		if byDevice[key] == nil {
+			byDevice[key] = storageio.NewIOProbe()
+		}
+		probes[i] = byDevice[key]
+	}
+	readerLimit := 2
+	if readerMode == "serial" {
+		readerLimit = 1
+	}
+	for w := 0; w < min(readerLimit, len(records)); w++ {
 		decoders.Add(1)
 		go func() {
 			defer decoders.Done()
@@ -75,9 +112,25 @@ func directFingerprintIndex(ctx context.Context, records []MediaRecord, out stri
 				if r.Audio == nil {
 					continue
 				}
+				probe := probes[index]
+				release := func() {}
+				if probe != nil {
+					var err error
+					release, err = probe.Acquire(ctx)
+					if err != nil {
+						continue
+					}
+				}
+				var preview func([]byte)
+				if open, ok := ctx.Value(fingerprintPCMKey{}).(func(MediaRecord) func([]byte)); ok {
+					preview = open(r)
+				}
+				began := time.Now()
+				expected := finiteDuration(r.Duration)
+				progress.report(index, r.Name, began, 0, expected, 0, false)
 				digest := sha256.New()
 				var frames int64
-				direct := memoryWorkspace(ctx).audio.nativePCM(r) != nil
+				direct := memoryWorkspace(ctx).audio.nativePCMContext(ctx, r) != nil
 				err := memoryWorkspace(ctx).audio.stream(ctx, r, func(reader io.Reader) error {
 					source := io.TeeReader(reader, digest)
 					var overlap []int16
@@ -86,17 +139,24 @@ func directFingerprintIndex(ctx context.Context, records []MediaRecord, out stri
 						need := 60*16000 - len(overlap)
 						raw := make([]byte, need*2)
 						n, err := io.ReadFull(source, raw)
+						if probe != nil && n > 0 {
+							probe.Observe(n)
+						}
 						if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
 							return err
 						}
 						if n%2 != 0 {
 							return fmt.Errorf("partial PCM sample in %s", r.Name)
 						}
+						if preview != nil && n > 0 {
+							preview(raw[:n])
+						}
 						fresh := make([]int16, n/2)
 						for i := range fresh {
 							fresh[i] = int16(binary.LittleEndian.Uint16(raw[i*2:]))
 						}
 						frames += int64(len(fresh))
+						progress.report(index, r.Name, began, float64(frames)/16000, expected, float64(len(fresh))/16000, false)
 						samples := append(overlap, fresh...)
 						if !direct {
 							memoryWorkspace(ctx).audio.retain(audioWindowKey(r.ID, first), samples)
@@ -124,12 +184,16 @@ func directFingerprintIndex(ctx context.Context, records []MediaRecord, out stri
 						if err != nil {
 							return err
 						}
+						if preview != nil {
+							preview(next[:])
+						}
 						v := int16(binary.LittleEndian.Uint16(next[:]))
 						frames++
 						overlap = append(overlap, v)
 					}
 					return nil
 				})
+				release()
 				if err != nil {
 					errs[index] = err
 					cancel()
@@ -140,7 +204,11 @@ func directFingerprintIndex(ctx context.Context, records []MediaRecord, out stri
 					cancel()
 					continue
 				}
+				if preview != nil {
+					preview(nil)
+				}
 				records[index].Duration = float64(frames) / 16000
+				progress.report(index, r.Name, began, records[index].Duration, expected, 0, true)
 				records[index].CacheSHA = hex.EncodeToString(digest.Sum(nil))
 				fmt.Printf("READ %s (%.2fs), source streamed; no disk cache\n", r.Name, records[index].Duration)
 			}

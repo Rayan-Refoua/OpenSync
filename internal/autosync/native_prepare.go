@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"opensync/internal/audio"
+	"opensync/internal/storageio"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,6 +19,16 @@ import (
 )
 
 type NativeSyncOptions struct {
+	Analysis                  AnalysisSettings
+	TrackLayout               string
+	AudioEarlyMS, AudioLateMS float64
+	// ManagedMemoryMiB bounds persistent in-memory analysis/audio working sets.
+	// Zero preserves the CLI's adaptive defaults; temporary DSP allocations are
+	// additionally governed by the embedding application's Go memory target.
+	ManagedMemoryMiB                                    int
+	Mode                                                string
+	Corrections                                         string
+	reviewLedger                                        *ReviewLedger
 	Input                                               string
 	Sources, Files, Folders                             []string
 	FileList, Output, CacheIndex, Name, Unsynced, Stage string
@@ -48,11 +59,13 @@ func mediaTool(name string) (string, error) {
 	return exec.LookPath(name)
 }
 func runMediaTool(ctx context.Context, name string, args ...string) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	tool, err := mediaTool(name)
 	if err != nil {
 		return err
 	}
-	cmd := exec.CommandContext(ctx, tool, args...)
+	cmd := mediaCommandContext(ctx, tool, args...)
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	if err = cmd.Run(); err != nil {
@@ -67,14 +80,18 @@ func probeNative(ctx context.Context, path string) (map[string]any, error) {
 	}
 	limited, cancel := context.WithTimeout(ctx, 120*time.Second)
 	defer cancel()
-	data, err := exec.CommandContext(limited, tool, "-v", "error", "-show_format", "-show_streams", "-of", "json", path).Output()
+	data, err := mediaCommandContext(limited, tool, "-v", "error", "-show_format", "-show_streams", "-of", "json", path).Output()
 	if err != nil {
 		return nil, err
 	}
-	return rawObject(data)
+	object, err := rawObject(data)
+	if format, ok := object["format"].(map[string]any); ok {
+		format["filename"] = path
+	}
+	return object, err
 }
 func hashFile(path string) (string, error) {
-	f, err := os.Open(path)
+	f, err := storageio.Open(context.Background(), path)
 	if err != nil {
 		return "", err
 	}
@@ -166,6 +183,9 @@ func nativeInputFiles(o NativeSyncOptions) ([]string, []map[string]any, error) {
 			}
 			if d.Type()&os.ModeSymlink != 0 {
 				excluded = append(excluded, map[string]any{"path": path, "reason": "symbolic link skipped to avoid duplicate media or directory cycles"})
+				return nil
+			}
+			if !d.IsDir() && strings.HasSuffix(strings.ToLower(d.Name()), "_driftcorrection.wav") {
 				return nil
 			}
 			if d.IsDir() {
@@ -266,6 +286,9 @@ func nativePrepare(ctx context.Context, o NativeSyncOptions, files []string, exc
 					}
 				}
 				streams, _ := info["streams"].([]any)
+				if format, ok := info["format"].(map[string]any); ok {
+					r.FormatTags, _ = format["tags"].(map[string]any)
+				}
 				for _, raw := range streams {
 					s, ok := raw.(map[string]any)
 					if !ok {
@@ -376,6 +399,7 @@ func nativePrepare(ctx context.Context, o NativeSyncOptions, files []string, exc
 			r.Audio = p.Audio
 			r.Duration = p.Duration
 			r.SourceTimecode = p.SourceTimecode
+			r.FormatTags = p.FormatTags
 		}
 		if o.Input != "" {
 			root, _ := filepath.Abs(o.Input)
@@ -388,6 +412,7 @@ func nativePrepare(ctx context.Context, o NativeSyncOptions, files []string, exc
 				r.Video = prior.Video
 				r.Audio = prior.Audio
 				r.SourceTimecode = prior.SourceTimecode
+				r.FormatTags = prior.FormatTags
 				r.CacheSHA = prior.CacheSHA
 				r.AnalysisAudio = prior.AnalysisAudio
 				if _, err = os.Stat(prior.LocalSource); err == nil {

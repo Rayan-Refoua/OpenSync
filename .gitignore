@@ -5,6 +5,10 @@
 *.exe
 *.dll
 *.pdb
+*.syso
+/desktop/build/
+/desktop/frontend/wailsjs/
+node_modules/
 
 # Local research and generated data
 /scratch/
@@ -47,3 +51,4 @@ Thumbs.db
 .env.*
 *.key
 *.pem
+/.dev-build/

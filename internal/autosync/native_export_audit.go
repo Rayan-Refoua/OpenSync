@@ -273,6 +273,9 @@ func ValidateNativeExport(data []byte, records []MediaRecord, placements []Nativ
 					if tc != int64(number(r.SourceTimecode["frame"])) {
 						return fmt.Errorf("source timecode changed")
 					}
+					if (c.text("enabled") == "FALSE") != p.Disabled {
+						return fmt.Errorf("clip enabled state differs from export placement")
+					}
 					channel, e := xmlInt(c, "sourcetrack/trackindex")
 					if e != nil {
 						return e
@@ -331,6 +334,9 @@ func ValidateNativeExport(data []byte, records []MediaRecord, placements []Nativ
 			}
 		}
 		if len(parts) == 0 {
+			if policy == "remove" {
+				continue
+			}
 			return fmt.Errorf("missing recording %s", r.Name)
 		}
 		sort.Slice(parts, func(i, j int) bool { return parts[i].In < parts[j].In })
@@ -348,7 +354,7 @@ func ValidateNativeExport(data []byte, records []MediaRecord, placements []Nativ
 	syncedEnd := int64(0)
 	unStart := int64(math.MaxInt64)
 	for _, p := range placements {
-		if strings.HasPrefix(p.Status, "unresolved") {
+		if p.isUnresolvedLayout() {
 			unStart = min(unStart, p.Start)
 			if policy == "separate-sequence" && p.Sequence != "unresolved" {
 				return fmt.Errorf("unresolved sequence policy violated")
@@ -357,7 +363,7 @@ func ValidateNativeExport(data []byte, records []MediaRecord, placements []Nativ
 			syncedEnd = max(syncedEnd, p.End)
 		}
 	}
-	if policy == "append" && unStart < syncedEnd {
+	if (policy == "append" || policy == "disabled" || policy == "order_only" || policy == "local-tracks") && unStart < syncedEnd {
 		return fmt.Errorf("unresolved section overlaps synchronized section")
 	}
 	return nil

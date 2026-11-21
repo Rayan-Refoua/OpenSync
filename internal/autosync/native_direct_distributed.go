@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"io"
 	"opensync/internal/researchmatch"
-	"os/exec"
+
 	"strings"
 )
 
@@ -45,7 +45,7 @@ func distributedFeaturesForRecord(ctx context.Context, r MediaRecord, path strin
 	}
 	// Preserve the original two-stage conversion: source -> mono PCM16/16k ->
 	// float32/8k. Collapsing the conversion would change quantization and peaks.
-	cmd := exec.CommandContext(ctx, tool, "-nostdin", "-v", "error", "-threads", "1", "-f", "s16le", "-ar", "16000", "-ac", "1", "-i", "pipe:0", "-ar", "8000", "-ac", "1", "-f", "f32le", "-")
+	cmd := mediaCommandContext(ctx, tool, "-nostdin", "-v", "error", "-threads", "1", "-f", "s16le", "-ar", "16000", "-ac", "1", "-i", "pipe:0", "-ar", "8000", "-ac", "1", "-f", "f32le", "-")
 	input, writer := io.Pipe()
 	defer input.Close()
 	cmd.Stdin = input

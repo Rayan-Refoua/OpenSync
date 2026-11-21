@@ -7,19 +7,11 @@ import (
 
 // leastSquares uses column-pivoted Householder QR. Normal equations would
 // square the conditioning of mixed seconds / clock-rate observations.
-func leastSquares(rows [][]float64, targets []float64) ([]float64, bool) {
-	if len(rows) == 0 || len(rows) != len(targets) {
-		return nil, false
-	}
-	m, n := len(rows), len(rows[0])
+func leastSquaresColumns(a [][]float64, b, work []float64) ([]float64, bool) {
+	m, n := len(b), len(a)
 	if m < n {
 		return nil, false
 	}
-	a := make([][]float64, m)
-	for i := range a {
-		a[i] = append([]float64(nil), rows[i]...)
-	}
-	b := append([]float64(nil), targets...)
 	perm := make([]int, n)
 	for i := range perm {
 		perm[i] = i
@@ -29,7 +21,9 @@ func leastSquares(rows [][]float64, targets []float64) ([]float64, bool) {
 		for j := k; j < n; j++ {
 			v := 0.
 			for i := k; i < m; i++ {
-				v = math.Hypot(v, a[i][j])
+				if x := a[j][i]; x != 0 {
+					v = math.Hypot(v, x)
+				}
 			}
 			if v > norm {
 				norm = v
@@ -40,16 +34,12 @@ func leastSquares(rows [][]float64, targets []float64) ([]float64, bool) {
 			return nil, false
 		}
 		if best != k {
-			for i := range a {
-				a[i][k], a[i][best] = a[i][best], a[i][k]
-			}
+			a[k], a[best] = a[best], a[k]
 			perm[k], perm[best] = perm[best], perm[k]
 		}
 		alpha := -math.Copysign(norm, a[k][k])
-		v := make([]float64, m-k)
-		for i := k; i < m; i++ {
-			v[i-k] = a[i][k]
-		}
+		v := work[:m-k]
+		copy(v, a[k][k:])
 		v[0] -= alpha
 		vn := 0.
 		for _, x := range v {
@@ -59,12 +49,13 @@ func leastSquares(rows [][]float64, targets []float64) ([]float64, bool) {
 			v[i] /= vn
 		}
 		for j := k; j < n; j++ {
+			col := a[j][k:]
 			dot := 0.
 			for i, x := range v {
-				dot += x * a[k+i][j]
+				dot += x * col[i]
 			}
 			for i, x := range v {
-				a[k+i][j] -= 2 * x * dot
+				col[i] -= 2 * x * dot
 			}
 		}
 		dot := 0.
@@ -79,7 +70,7 @@ func leastSquares(rows [][]float64, targets []float64) ([]float64, bool) {
 	for i := n - 1; i >= 0; i-- {
 		v := b[i]
 		for j := i + 1; j < n; j++ {
-			v -= a[i][j] * z[j]
+			v -= a[j][i] * z[j]
 		}
 		z[i] = v / a[i][i]
 	}
@@ -293,28 +284,38 @@ func nativeAnchorLayout(records []MediaRecord, edges []*PairEvidence) []NativeLa
 				}
 				return v
 			}
+			driftColumns := []int{}
+			for j, v := range vars {
+				if v.drift {
+					driftColumns = append(driftColumns, j)
+				}
+			}
+			m := len(rows) + len(driftColumns)
+			columnStorage := make([]float64, m*len(vars))
+			aa := make([][]float64, len(vars))
+			bb, work := make([]float64, m), make([]float64, m)
 			valid := true
 			for iteration := 0; iteration < 8; iteration++ {
-				aa := make([][]float64, len(rows))
-				bb := make([]float64, len(rows))
+				// Restore canonical column order after the preceding QR pivoting.
+				for j := range aa {
+					aa[j] = columnStorage[j*m : (j+1)*m]
+				}
+				for _, col := range aa {
+					clear(col[len(rows):])
+				}
+				clear(bb[len(rows):])
 				for i, row := range rows {
 					weight := math.Sqrt(1 / math.Max(1, math.Abs(dot(row)-targets[i])/.015))
-					aa[i] = make([]float64, len(row))
 					for j, v := range row {
-						aa[i][j] = v * weight
+						aa[j][i] = v * weight
 					}
 					bb[i] = targets[i] * weight
 				}
-				for j, v := range vars {
-					if v.drift {
-						row := make([]float64, len(vars))
-						row[j] = 5
-						aa = append(aa, row)
-						bb = append(bb, 0)
-					}
+				for i, j := range driftColumns {
+					aa[j][len(rows)+i] = 5
 				}
 				var ok bool
-				x, ok = leastSquares(aa, bb)
+				x, ok = leastSquaresColumns(aa, bb, work)
 				if !ok {
 					valid = false
 					break

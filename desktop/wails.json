@@ -1,0 +1,7 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "OpenSync",
+  "outputfilename": "opensync",
+  "frontend:dir": "frontend",
+  "author": {"name": "OpenSync contributors"}
+}

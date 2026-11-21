@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 )
 
 func nativePrepareDirect(ctx context.Context, o NativeSyncOptions, files []string, excluded []map[string]any) ([]MediaRecord, error) {
@@ -16,6 +17,7 @@ func nativePrepareDirect(ctx context.Context, o NativeSyncOptions, files []strin
 	if _, err := mediaTool("ffmpeg"); err != nil {
 		return nil, err
 	}
+	progress := newIOReadProgress(ctx, len(files), float64(len(files)))
 	records := make([]MediaRecord, len(files))
 	errs := make([]error, len(files))
 	jobs := make(chan int)
@@ -29,12 +31,16 @@ func nativePrepareDirect(ctx context.Context, o NativeSyncOptions, files []strin
 					continue
 				}
 				path := files[i]
+				started := time.Now()
+				progress.report(i, filepath.Base(path), started, 0, 0, 0, false)
 				st, err := os.Stat(path)
 				if err != nil {
 					errs[i] = err
+					progress.report(i, filepath.Base(path), started, 1, 1, 1, true)
 					continue
 				}
 				info, err := probeNative(ctx, path)
+				progress.report(i, filepath.Base(path), started, 1, 1, 1, true)
 				if err != nil {
 					errs[i] = fmt.Errorf("unreadable or unsupported media: %w", err)
 					continue
@@ -59,6 +65,7 @@ func nativePrepareDirect(ctx context.Context, o NativeSyncOptions, files []strin
 					continue
 				}
 				format, _ := info["format"].(map[string]any)
+				r.FormatTags, _ = format["tags"].(map[string]any)
 				r.Duration = number(format["duration"])
 				if r.Audio != nil && number(r.Audio["duration"]) > 0 {
 					r.Duration = number(r.Audio["duration"])

@@ -344,8 +344,9 @@ func phasePeak(r, q []float64) (lag int, prominence, contrast float64, ok bool) 
 	if vr/float64(len(r)) < 1e-14 || vq/float64(len(q)) < 1e-14 {
 		return
 	}
-	dsp.FFTArbitrary(a)
-	dsp.FFTArbitrary(b)
+	var workspace dsp.ArbitraryFFTWorkspace
+	workspace.Transform(a)
+	workspace.Transform(b)
 	magnitudes := make([]float64, size)
 	maxMag := 0.
 	for i := range a {
@@ -358,7 +359,7 @@ func phasePeak(r, q []float64) (lag int, prominence, contrast float64, ok bool) 
 		a[i] /= complex(den, 0)
 		a[i] = complex(real(a[i]), -imag(a[i]))
 	}
-	dsp.FFTArbitrary(a)
+	workspace.Transform(a)
 	values := make([]float64, len(r)-len(q)+1)
 	peak, meanSquare := 0., 0.
 	for i := range values {

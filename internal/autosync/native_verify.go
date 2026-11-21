@@ -208,6 +208,18 @@ func (a *NativeAnalyzer) verify(ctx context.Context, pairs []NativePair, out, na
 	errs := make([]error, len(pairs))
 	jobs := make(chan int)
 	var wg sync.WaitGroup
+	var progressMu sync.Mutex
+	completed := 0
+	reportProgress := func(i int) {
+		progressMu.Lock()
+		defer progressMu.Unlock()
+		completed++
+		status := "no supported candidate"
+		if results[i] != nil && results[i].Selected != nil {
+			status = "pair supported; final validation pending"
+		}
+		observe(ctx, ProgressEvent{Kind: "pair", Stage: namespace, Completed: completed, Total: len(pairs), Reference: pairs[i].Reference, Query: pairs[i].Query, Status: status})
+	}
 	for w := 0; w < nativeWorkers(len(pairs)); w++ {
 		wg.Add(1)
 		go func() {
@@ -227,6 +239,7 @@ func (a *NativeAnalyzer) verify(ctx context.Context, pairs []NativePair, out, na
 					var cached PairEvidence
 					if json.Unmarshal(data, &cached) == nil && cached.Reference == pair.Reference && cached.Query == pair.Query && (cached.Digest == digest || cached.Digest == legacyPairDigest(pair, ref.CacheSHA, query.CacheSHA)) {
 						results[i] = &cached
+						reportProgress(i)
 						continue
 					}
 				}
@@ -257,6 +270,7 @@ func (a *NativeAnalyzer) verify(ctx context.Context, pairs []NativePair, out, na
 				}
 				errs[i] = workspaceJSON(a.ctx, path, result)
 				results[i] = result
+				reportProgress(i)
 			}
 		}()
 	}

@@ -161,11 +161,11 @@ func renderMappedAudio(ctx context.Context, r MediaRecord, points []TimePoint, t
 	if st.Size() != total*frameBytes {
 		return fmt.Errorf("audio join changed total duration")
 	}
-	partial := target + ".partial.wav"
+	partial := filepath.Join(dir, "corrected.wav")
 	if err = runMediaTool(ctx, "ffmpeg", "-nostdin", "-v", "error", "-y", "-f", "s32le", "-ar", fmt.Sprint(sr), "-ac", fmt.Sprint(channels), "-i", assembled, "-c:a", "pcm_s24le", "-rf64", "auto", partial); err != nil {
 		return err
 	}
-	return os.Rename(partial, target)
+	return os.Link(partial, target)
 }
 func renderedPlacementRecord(r MediaRecord, p NativePlacement) MediaRecord {
 	if p.Derivative == nil {

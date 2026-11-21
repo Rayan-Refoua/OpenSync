@@ -9,6 +9,9 @@ import (
 	"path/filepath"
 	"sort"
 	"sync"
+	"sync/atomic"
+
+	"opensync/internal/researchmatch"
 )
 
 type NativePriorPair struct {
@@ -85,12 +88,17 @@ func nativeReservoir(ctx context.Context, records []MediaRecord, out string) ([]
 			Pairs []struct {
 				Reference, Query int
 				Candidates       []struct{ Offset, Score float64 }
+				OnsetPeaks       []researchmatch.DistributedPeak `json:"onset_candidates"`
+				ReviewOnly       bool                            `json:"review_only"`
 			}
 		}
 		if err = json.Unmarshal(data, &discovery); err != nil {
 			return nil, err
 		}
 		for _, p := range discovery.Pairs {
+			if p.ReviewOnly {
+				continue
+			}
 			key := [2]int{p.Reference, p.Query}
 			existing := pairs[key]
 			for _, c := range p.Candidates[:min(3, len(p.Candidates))] {
@@ -103,6 +111,15 @@ func nativeReservoir(ctx context.Context, records []MediaRecord, out string) ([]
 				}
 				if distinct {
 					existing = append(existing, NativePrior{Offset: c.Offset, Method: "distributed_spectral", Score: c.Score})
+				}
+			}
+			if peak, ok := researchmatch.DistinctOnsetPeak(p.OnsetPeaks); ok {
+				distinct := true
+				for _, prior := range existing {
+					distinct = distinct && math.Abs(peak.Offset-prior.Offset) >= .5
+				}
+				if distinct {
+					existing = append(existing, NativePrior{Offset: peak.Offset, Method: "distributed_onset", Score: peak.Score})
 				}
 			}
 			pairs[key] = existing
@@ -177,6 +194,98 @@ func (a *NativeAnalyzer) runProfiles(ctx context.Context, out string) ([]NativeP
 	errs := make([]error, len(pairs))
 	jobs := make(chan int)
 	var wg sync.WaitGroup
+	var completed atomic.Int64
+	fmt.Printf("TIMING: %d pairs: testing offsets, fitting models and checking independent audit windows\n", len(pairs))
+	reportPair := func(i int) {
+		n := int(completed.Add(1))
+		if n == 1 || n%16 == 0 || n == len(pairs) {
+			pair := pairs[i]
+			fmt.Printf("TIMING: %d/%d pairs checked; last %s / %s\n", n, len(pairs), a.records[pair.Reference].Name, a.records[pair.Query].Name)
+			observe(ctx, ProgressEvent{Kind: "pair", Stage: "Acoustic timing profiles", Completed: n, Total: len(pairs), Reference: pair.Reference, Query: pair.Query, Status: "timing profiles evaluated"})
+		}
+	}
+	runPair := func(i int) {
+		pair := pairs[i]
+		ref, query := a.records[pair.Reference], a.records[pair.Query]
+		raw, _ := json.Marshal(map[string]any{"version": "multilevel-profile-native-v2", "spectral_schedule": 2, "pair": pair, "sources": []string{ref.CacheSHA, query.CacheSHA}})
+		identity := shaBytes(raw)
+		name := ref.ID + "_" + query.ID
+		path := filepath.Join(folder, name+"_"+identity[:16]+".json")
+		if data, err := workspaceRead(a.ctx, path); err == nil {
+			var saved NativeProfilePair
+			if json.Unmarshal(data, &saved) == nil && saved.Digest == identity {
+				results[i] = saved
+				return
+			}
+		}
+		reused := false
+		for _, version := range []string{"multilevel-profile-v7", "multilevel-profile-v3"} {
+			if query.Duration >= 2 && query.Duration <= 12 {
+				continue
+			}
+			if version == "multilevel-profile-v3" && (ref.Duration < 70 || query.Duration < 30) {
+				continue
+			}
+			files, _ := workspaceGlob(a.ctx, filepath.Join(out, version, name+"*.json"))
+			sort.Strings(files)
+			for _, old := range files {
+				data, err := workspaceRead(a.ctx, old)
+				if err != nil {
+					errs[i] = err
+					break
+				}
+				if saved, ok := matchingLegacyProfiles(data, pair, ref, query, version); ok {
+					for _, p := range saved.Profiles {
+						evaluateNativeProfile(p)
+					}
+					saved.Digest = identity
+					results[i] = *saved
+					errs[i] = workspaceJSON(a.ctx, path, saved)
+					reused = true
+					break
+				}
+			}
+			if reused || errs[i] != nil {
+				break
+			}
+		}
+		if reused || errs[i] != nil {
+			return
+		}
+		result := NativeProfilePair{Reference: pair.Reference, Query: pair.Query, Digest: identity, Profiles: []*NativeProfile{}}
+		for _, prior := range pair.Candidates {
+			if ctx.Err() != nil {
+				break
+			}
+			p, err := a.profileCandidate(pair.Reference, pair.Query, prior)
+			if err != nil {
+				errs[i] = err
+				break
+			}
+			result.Profiles = append(result.Profiles, p)
+		}
+		if errs[i] == nil && ctx.Err() == nil {
+			validated := false
+			for _, p := range result.Profiles {
+				if p.Status == "validated_relation" {
+					validated = true
+					break
+				}
+			}
+			if !validated {
+				p, err := a.shortPartitionProfile(pair.Reference, pair.Query)
+				if err != nil {
+					errs[i] = err
+				} else if p != nil {
+					result.Profiles = append(result.Profiles, p)
+				}
+			}
+		}
+		if errs[i] == nil && ctx.Err() == nil {
+			errs[i] = workspaceJSON(a.ctx, path, result)
+			results[i] = result
+		}
+	}
 	for w := 0; w < nativeWorkers(len(pairs)); w++ {
 		wg.Add(1)
 		go func() {
@@ -185,86 +294,8 @@ func (a *NativeAnalyzer) runProfiles(ctx context.Context, out string) ([]NativeP
 				if ctx.Err() != nil {
 					continue
 				}
-				pair := pairs[i]
-				ref, query := a.records[pair.Reference], a.records[pair.Query]
-				raw, _ := json.Marshal(map[string]any{"version": "multilevel-profile-native-v2", "pair": pair, "sources": []string{ref.CacheSHA, query.CacheSHA}})
-				identity := shaBytes(raw)
-				name := ref.ID + "_" + query.ID
-				path := filepath.Join(folder, name+"_"+identity[:16]+".json")
-				if data, err := workspaceRead(a.ctx, path); err == nil {
-					var saved NativeProfilePair
-					if json.Unmarshal(data, &saved) == nil && saved.Digest == identity {
-						results[i] = saved
-						continue
-					}
-				}
-				reused := false
-				for _, version := range []string{"multilevel-profile-v7", "multilevel-profile-v3"} {
-					if query.Duration >= 2 && query.Duration <= 12 {
-						continue
-					}
-					if version == "multilevel-profile-v3" && (ref.Duration < 70 || query.Duration < 30) {
-						continue
-					}
-					files, _ := workspaceGlob(a.ctx, filepath.Join(out, version, name+"*.json"))
-					sort.Strings(files)
-					for _, old := range files {
-						data, err := workspaceRead(a.ctx, old)
-						if err != nil {
-							errs[i] = err
-							break
-						}
-						if saved, ok := matchingLegacyProfiles(data, pair, ref, query, version); ok {
-							for _, p := range saved.Profiles {
-								evaluateNativeProfile(p)
-							}
-							saved.Digest = identity
-							results[i] = *saved
-							errs[i] = workspaceJSON(a.ctx, path, saved)
-							reused = true
-							break
-						}
-					}
-					if reused || errs[i] != nil {
-						break
-					}
-				}
-				if reused || errs[i] != nil {
-					continue
-				}
-				result := NativeProfilePair{Reference: pair.Reference, Query: pair.Query, Digest: identity, Profiles: []*NativeProfile{}}
-				for _, prior := range pair.Candidates {
-					if ctx.Err() != nil {
-						break
-					}
-					p, err := a.profileCandidate(pair.Reference, pair.Query, prior)
-					if err != nil {
-						errs[i] = err
-						break
-					}
-					result.Profiles = append(result.Profiles, p)
-				}
-				if errs[i] == nil && ctx.Err() == nil {
-					validated := false
-					for _, p := range result.Profiles {
-						if p.Status == "validated_relation" {
-							validated = true
-							break
-						}
-					}
-					if !validated {
-						p, err := a.shortPartitionProfile(pair.Reference, pair.Query)
-						if err != nil {
-							errs[i] = err
-						} else if p != nil {
-							result.Profiles = append(result.Profiles, p)
-						}
-					}
-				}
-				if errs[i] == nil && ctx.Err() == nil {
-					errs[i] = workspaceJSON(a.ctx, path, result)
-					results[i] = result
-				}
+				runPair(i)
+				reportPair(i)
 			}
 		}()
 	}
