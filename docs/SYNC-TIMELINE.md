@@ -96,3 +96,7 @@ For a missing B between acoustically placed A and C, the engine combines these s
 8. If dates are missing or identical and B nearly fills the gap, center B in the remaining space. This fallback requires consecutive counters and at most two seconds of slack.
 
 Manual rejections, competing acoustic events and internally synchronized groups take precedence. This version requires an acoustic neighbor on both sides of B.
+
+**Add chronological placements** applies this pass directly to the open timeline. Select Chronological event and enable File time Based placement. The button uses the current revision, retains existing placements, and creates a child revision when it finds additional estimates. The same operation is available through `opensync-cli.exe revise OpenSync.opensync --mode chronological --add-chronological`.
+
+For each timestamp source the engine subtracts the relevant clip duration from the timestamp interval between neighbors. Start timestamps use the earlier clip duration and completion timestamps use the later one. Both consecutive boundaries within one second of zero idle time earn the `duration_confirmed` timing basis when the acoustic anchors also agree. An overlap beyond one second, or idle time exceeding the greater of two seconds and twice the relevant duration, breaks that timestamp hypothesis. A real recording pause can therefore prevent placement across the break. Other clocks and acoustic relationships are evaluated independently.

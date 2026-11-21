@@ -287,3 +287,49 @@ func TestTrackFamilySharesChronologicalCounterParsing(t *testing.T) {
 		t.Fatalf("unexpected links: %+v", links)
 	}
 }
+
+func TestAddChronologicalRevisionDurationEvidence(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		starts []float64
+		want   bool
+	}{
+		{"continuous", []float64{0, 10, 20, 30}, true},
+		{"session_break", []float64{0, 120, 130, 140}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, l, g := chronologyFixture()
+			for i, s := range tc.starts {
+				r[i].SourceMtime = int64(100000+s) * 1e9
+				if i != 1 {
+					l[i].Start = s
+					l[i].Knots = []TimePoint{{0, s}, {10, s + 10}}
+				}
+			}
+			path := filepath.Join(t.TempDir(), "test.opensync")
+			if err := saveNativeProject(path, "test", r, nil, l, g); err != nil {
+				t.Fatal(err)
+			}
+			action := ReviewChange{Kind: "add_chronological", Mode: "chronological"}
+			rev, err := CreateSolution(path, action)
+			if err != nil || (rev != path) != tc.want {
+				t.Fatal(rev, err)
+			}
+			if !tc.want {
+				return
+			}
+			p, err := LoadNativeProject(rev)
+			if err != nil {
+				t.Fatal(err)
+			}
+			m := p.Data.Models[1]
+			if !strings.HasSuffix(m.TimingBasis, "duration_confirmed") || m.Offset != 10 {
+				t.Fatal(m)
+			}
+			again, err := CreateSolution(rev, action)
+			if err != nil || again != rev {
+				t.Fatal(again, err)
+			}
+		})
+	}
+}

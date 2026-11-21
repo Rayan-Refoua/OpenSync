@@ -159,6 +159,16 @@ func continuityEvidence(records []MediaRecord, layout []NativeLayout) []Continui
 	return links
 }
 
+// Classify a boundary using a single timestamp convention. The timestamp
+// difference is compared to the duration belonging to that convention.
+func durationBoundary(delta, duration float64) (contiguous, broken bool) {
+	if duration <= 0 {
+		return false, true
+	}
+	idle := delta - duration
+	return math.Abs(idle) <= 1, idle < -1 || idle > math.Max(2, 2*duration)
+}
+
 func chronologicalPlacements(records []MediaRecord, layout []NativeLayout, blocked map[int]bool) []ChronologicalPlacement {
 	byID := map[int]NativeLayout{}
 	for _, m := range layout {
@@ -268,6 +278,26 @@ func chronologicalPlacements(records []MediaRecord, layout []NativeLayout, block
 					if atEnd && kind != "filesystem_mtime" {
 						continue
 					}
+					a, oka := recordingStamp(records[before.id], kind)
+					c, okc := recordingStamp(records[after.id], kind)
+					if !oka || !okc {
+						continue
+					}
+					mediaDuration := func(id int) float64 {
+						if d := number(records[id].Video["duration"]); d > 0 {
+							return d
+						}
+						return records[id].Duration
+					}
+					first, second := mediaDuration(before.id), duration
+					if atEnd {
+						first, second = duration, mediaDuration(after.id)
+					}
+					tightLeft, breakLeft := durationBoundary(stamp-a, first)
+					tightRight, breakRight := durationBoundary(c-stamp, second)
+					if breakLeft || breakRight {
+						continue
+					}
 					var offsets []float64
 					maxError := 0.
 					for j, a := range clockAnchors {
@@ -325,6 +355,9 @@ func chronologicalPlacements(records []MediaRecord, layout []NativeLayout, block
 					}
 					if atEnd {
 						basis += "_end"
+					}
+					if tightLeft && tightRight && before.sequence+1 == e.sequence && e.sequence+1 == after.sequence {
+						basis += "_duration_confirmed"
 					}
 					proposals = append(proposals, ChronologicalPlacement{e.id, (left + right) / 2, math.Max(1, (right-left)/2+maxError), basis, append([]int(nil), used...), "provisional_chronological_estimate"})
 				}

@@ -234,6 +234,19 @@ func CreateSolution(path string, change ReviewChange) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if change.Kind == "add_chronological" {
+		if change.Mode != "chronological" {
+			return "", fmt.Errorf("select Chronological event to add chronological placements")
+		}
+		models, graph, added, err := addSavedChronology(current)
+		if err != nil {
+			return "", err
+		}
+		if added == 0 {
+			return path, nil
+		}
+		return writeSolutionRevision(path, basePath, base.Hash, fmt.Sprintf("Add %d chronological placements", added), models, graph)
+	}
 	ledger, err := projectLedger(current)
 	if err != nil {
 		return "", err
@@ -346,13 +359,18 @@ func CreateSolution(path string, change ReviewChange) (string, error) {
 		layout = applyChronology(base.Data.Records, layout, graph)
 	}
 	models, _ := nativeModelMaps(base.Data.Records, layout, graph)
+	return writeSolutionRevision(path, basePath, base.Hash, label, models, graph)
+}
+
+func writeSolutionRevision(path, basePath, baseHash, label string, models []map[string]any, graph map[string]any) (string, error) {
+	var err error
 	folder := filepath.Join(filepath.Dir(basePath), "Solutions")
 	if err = os.MkdirAll(folder, 0755); err != nil {
 		return "", err
 	}
 	baseRelative, _ := filepath.Rel(folder, basePath)
 	parentRelative, _ := filepath.Rel(folder, path)
-	delta := SolutionDelta{Base: baseRelative, BaseHash: base.Hash, Parent: parentRelative, Created: time.Now().UTC().Format(time.RFC3339Nano), Label: label, Models: models, Graph: graph}
+	delta := SolutionDelta{Base: baseRelative, BaseHash: baseHash, Parent: parentRelative, Created: time.Now().UTC().Format(time.RFC3339Nano), Label: label, Models: models, Graph: graph}
 	b, err := json.Marshal(delta)
 	if err != nil {
 		return "", err
@@ -388,12 +406,87 @@ func CreateSolution(path string, change ReviewChange) (string, error) {
 	return destination, nil
 }
 
+func addSavedChronology(project *NativeProject) ([]map[string]any, map[string]any, int, error) {
+	var payload struct {
+		Models []map[string]any `json:"timing_models"`
+		Graph  map[string]any   `json:"graph"`
+	}
+	if err := json.Unmarshal(project.Payload, &payload); err != nil {
+		return nil, nil, 0, err
+	}
+	g := payload.Graph
+	var groups [][]int
+	raw, err := json.Marshal(g["components"])
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	if err = json.Unmarshal(raw, &groups); err != nil || len(groups) == 0 {
+		return nil, nil, 0, fmt.Errorf("missing project components")
+	}
+	g["components"] = groups
+	var old []ChronologicalPlacement
+	raw, err = json.Marshal(g["chronological_placements"])
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	if err = json.Unmarshal(raw, &old); err != nil {
+		return nil, nil, 0, err
+	}
+	var layout []NativeLayout
+	for _, m := range ReviewTimingModels(project.Data) {
+		points := append([]TimePoint(nil), m.Knots...)
+		for i := range points {
+			points[i][0] -= m.AudioOrigin
+		}
+		if len(points) == 0 {
+			points = []TimePoint{{0, m.AnalysisOffset}, {1, m.AnalysisOffset + m.Rate}}
+		}
+		layout = append(layout, NativeLayout{Recording: m.Recording, Component: m.Component, ComponentSize: m.ComponentSize, Start: m.AnalysisOffset, Rate: m.Rate, Error: m.Error, Knots: points, Status: m.Status})
+	}
+	previousGroups := g["acoustic_components"]
+	updated := applyChronology(project.Data.Records, layout, g)
+	additions := g["chronological_placements"].([]ChronologicalPlacement)
+	if len(additions) == 0 {
+		return nil, nil, 0, nil
+	}
+	if previousGroups != nil {
+		g["acoustic_components"] = previousGroups
+	}
+	moved := map[int]bool{}
+	for _, p := range additions {
+		moved[p.Recording] = true
+	}
+	byID := map[int]map[string]any{}
+	for _, model := range payload.Models {
+		byID[int(number(model["recording"]))] = model
+	}
+	for _, item := range updated {
+		m := byID[item.Recording]
+		if moved[item.Recording] {
+			generated, _ := nativeModelMaps(project.Data.Records, []NativeLayout{item}, g)
+			for k, v := range generated[0] {
+				m[k] = v
+			}
+		} else {
+			m["component"] = item.Component
+			m["component_size"] = item.ComponentSize
+			m["time_domain"] = fmt.Sprintf("component-%d", item.Component)
+		}
+	}
+	g["chronological_placements"] = append(old, additions...)
+	g["file_time_placement"] = true
+	g["placement_mode"] = "chronological"
+	delete(g, "solution_revision")
+	return payload.Models, g, len(additions), nil
+}
+
 func NativeReviseCommand(args []string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("revise requires a saved .opensync project")
 	}
 	f := flag.NewFlagSet("revise", flag.ContinueOnError)
 	change := ReviewChange{Kind: "rebuild"}
+	add := f.Bool("add-chronological", false, "add chronological placements to the current revision with --mode chronological")
 	f.StringVar(&change.Mode, "mode", "", "clips or chronological")
 	f.StringVar(&change.Recording, "reject-recording", "", "recording ID to keep unresolved")
 	if err := f.Parse(args[1:]); err != nil {
@@ -410,6 +503,12 @@ func NativeReviseCommand(args []string) error {
 	}
 	if change.Recording != "" {
 		change.Kind = "reject_recording"
+	}
+	if *add {
+		if change.Recording != "" {
+			return fmt.Errorf("add placements separately from rejecting a recording")
+		}
+		change.Kind = "add_chronological"
 	}
 	path, err := CreateSolution(args[0], change)
 	if err == nil {

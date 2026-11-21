@@ -699,6 +699,7 @@ function inspect(c) {
 }
 
 async function reviewSolution(change) {
+  const previousPath = state.project?.path;
   const selected = state.project?.clips[state.selected]?.id;
   stopPlayback();
   const p = await api().ReviewSolution(change);
@@ -708,7 +709,7 @@ async function reviewSolution(change) {
     inspect(c);
     pan(c.start);
   }
-  message("Review revision saved; original evidence retained");
+  message(change.kind === "add_chronological" ? (p.path === previousPath ? "No additional chronological placements found" : "Chronological placements added · inspect the magenta clips") : "Review revision saved; original evidence retained");
 }
 
 // Two-lane audition with one output clock, bounded four-second PCM blocks.

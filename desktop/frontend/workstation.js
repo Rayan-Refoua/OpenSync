@@ -257,6 +257,7 @@ export function setupWorkstation(h) {
     h.pan(c.start);
     h.seek(c.start, false);
   };
+  $("addChronological").onclick = () => h.action(() => h.reviewSolution({kind:"add_chronological", mode:config.mode}));
   $("rebuildSolution").onclick = () =>
     h.action(() => h.reviewSolution({ kind: "mode", mode: config.mode, fileTimePlacement: config.fileTimePlacement !== false }));
   $("undoReview").onclick = () =>
@@ -511,6 +512,7 @@ export function setupWorkstation(h) {
       "resyncProject",
     ])
       $(id).disabled = !!s.running || !h.state.project?.path;
+    $("addChronological").disabled = !!s.running || !h.state.project?.path || config.mode !== "chronological" || config.fileTimePlacement === false;
     $("undoReview").disabled =
       !!s.running || !h.state.project?.graph?.solution_revision;
     if (s.diagnostic && h.api()?.ReportPreviewState)
