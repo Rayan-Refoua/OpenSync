@@ -1,12 +1,12 @@
 # OpenSync
 
-\<p align="center">
-&#x20; \<img src="assets/logo.svg" alt="OpenSync logo" width="260">
-\</p>
+<p align="center">
+  <img src="assets/logo.svg" alt="OpenSync logo" width="260">
+</p>
 
-\<p align="center">   \<strong>Open-source audio and video synchronization for professional editing workflows.\</strong> \</p>
+<p align="center"><strong>Open-source audio and video synchronization for professional editing workflows.</strong></p>
 
-\<p align="center">   Native Go engine · Windows desktop workstation · Evidence-based synchronization · GPL-3.0-or-later \</p>
+<p align="center">Native Go engine · Windows desktop workstation · Evidence-based synchronization · GPL-3.0-or-later</p>
 
 OpenSync is an independent, community-driven application for synchronizing recordings from multiple cameras, microphones, and audio recorders.
 
@@ -18,11 +18,11 @@ The project combines a native synchronization engine with a desktop timeline for
 
 > **Project status — Public alpha development**
 >
-> OpenSync currently includes a native Go synchronization engine, an operational Windows desktop workstation, a waveform timeline, multicamera monitoring, review workflows, and Premiere-compatible XML export.
+> OpenSync currently includes a native Go synchronization engine, a Windows desktop workstation, an interactive waveform timeline, buffered multicamera monitoring, review revisions, configurable sync/export policies, and Premiere-compatible XML export. The public alpha is available as a portable Windows x64 package.
 >
-> The project remains under active development. Although substantial automated and real-media validation exists, synchronization reliability and NLE compatibility are not yet certified across all production scenarios.
+> This is an early alpha, not a production-certified release. The engine acceptance benchmark remains advisory and has known gaps; Premiere XML has structural checks but is not certified across all Premiere versions, media types, or production workflows. See [known limits and benchmark results](docs/ENGINE-ACCEPTANCE.md) before relying on a result without review.
 >
-> See [Releases](https://github.com/Rayan-Refoua/OpenSync/releases) for published builds.
+> Download [OpenSync v0.1.0-alpha.1](https://github.com/Rayan-Refoua/OpenSync/releases/tag/v0.1.0-alpha.1) or browse [all releases](https://github.com/Rayan-Refoua/OpenSync/releases).
 
 ---
 
@@ -62,9 +62,11 @@ OpenSync does not assume that every recording can be synchronized. A result that
 | Multicamera preview monitor                                 | Implemented; bounded performance testing             |
 | Evidence inspection and review revisions                    | Implemented                                          |
 | Premiere-compatible FCP7 XML export                         | Implemented; real-editor validation ongoing          |
+| Audio drift-correction WAVs for eligible recorder tracks    | Implemented; configurable lead/lag tolerances        |
+| Timeline filename search and project drag-and-drop          | Implemented                                          |
 | Additional NLE interchange formats                          | Planned                                              |
 | General-purpose manual timeline editing                     | Not yet implemented                                  |
-| Packaged public releases                                    | See GitHub Releases                                  |
+| Packaged public releases                                    | Windows x64 portable alpha available                 |
 
 The available functionality is more extensive than this summary. Technical details and limitations are maintained in the [documentation directory](docs/).
 
@@ -158,7 +160,9 @@ Current functionality includes:
 - Add individual recordings or recursively import folders.
 - Synchronize recordings directly through the native Go engine.
 - Open saved `.opensync` projects.
+- Open a project by dropping its `.opensync` file or project folder onto the window.
 - Navigate a zoomable, scrollable timeline with waveforms.
+- Find recordings by filename and jump to their timeline positions.
 - Inspect media metadata and synchronization evidence.
 - Audition synchronized audio.
 - Monitor multiple camera feeds.
@@ -168,6 +172,7 @@ Current functionality includes:
 - Re-evaluate saved evidence without repeating full acoustic analysis.
 - Maintain reversible project solution revisions.
 - Export the currently opened result to a Premiere-compatible XML timeline.
+- Configure recovery depth, input-reading policy, reader concurrency, worker and memory budgets, track grouping, unmatched-media handling, provisional exports, and audio lead/lag tolerances.
 
 ### Multicamera monitoring
 
@@ -189,6 +194,8 @@ Project timing retains the precision of the engine's stored model; display-frame
 
 The desktop is currently a **synchronization and review workstation**, not a complete nonlinear video editor.
 
+Audio-only recorder drift correction can create a 24-bit WAV alongside an eligible original and point the Premiere XML at the corrected audio. The source remains unchanged; the allowed audio lead and lag are configurable. Video is never retimed by this correction path. Keep the generated WAV with the source media when moving or relinking the exported project. See [timeline preparation and export guidance](docs/SYNC-TIMELINE.md).
+
 See [Desktop documentation](docs/DESKTOP.md) for controls, playback architecture, source-media handling, and tested limitations.
 
 ## Getting started
@@ -204,6 +211,8 @@ For a packaged release:
 3. Launch `opensync.exe` for the desktop workstation.
 4. Add recordings and run synchronization.
 5. Inspect uncertain or unresolved results before exporting.
+
+The current published build is [v0.1.0-alpha.1](https://github.com/Rayan-Refoua/OpenSync/releases/tag/v0.1.0-alpha.1). It is a portable alpha, not an installer; Windows file associations and an installer are not included.
 
 The package is designed to keep `ffmpeg.exe` and `ffprobe.exe` in `runtime/bin` beside the application executables.
 
@@ -234,6 +243,7 @@ opensync-cli export --help
 ```
 
 Folder scanning is recursive. The engine reports unusable or excluded inputs rather than silently treating them as synchronized recordings.
+Analysis caching is disabled by default. Use `--cache` when you explicitly want to retain reusable analysis data; `--resume` resumes compatible cached work.
 
 ### Chronological and review workflows
 
@@ -344,7 +354,7 @@ go test ./...
 
 ### Engine acceptance benchmarks
 
-OpenSync includes a deterministic acceptance benchmark:
+OpenSync includes a deterministic synthetic acceptance benchmark:
 
 ```bash
 go run ./cmd/opensync benchmark --output acceptance --profile quick
@@ -356,7 +366,7 @@ It exercises acoustic matching, ambiguity handling, timing behavior, and reprodu
 
 The full profile includes longer-duration timing fixtures and requires additional resources.
 
-**Important:** Passing unit tests does not establish synchronization accuracy, and synthetic benchmark success does not guarantee correct matching on arbitrary real-world recordings.
+**Current status:** The acceptance benchmark is advisory and known capability gaps remain. The recorded baseline is not a passing production-accuracy claim. Passing unit tests does not establish synchronization accuracy, and synthetic benchmark success does not guarantee correct matching on arbitrary real-world recordings.
 
 Read [Engine acceptance](docs/ENGINE-ACCEPTANCE.md) for the benchmark contract, error thresholds, known limitations, and interpretation of readiness results.
 
@@ -375,7 +385,7 @@ Real recordings are necessary to expose failure modes that synthetic tests may n
 - Segmented camera recordings.
 - Variable-frame-rate and complex media containers.
 
-The project records measured results and unresolved failures rather than treating every recovered candidate as correct.
+The project records measured results and unresolved failures rather than treating every recovered candidate as correct. Review provisional and supported placements in the project before using an exported timeline; do not read an exported clip's presence as proof that its synchronization was independently validated.
 
 ### Independent comparisons
 
