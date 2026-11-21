@@ -333,3 +333,94 @@ func TestAddChronologicalRevisionDurationEvidence(t *testing.T) {
 		})
 	}
 }
+
+func TestDateGuidedAcousticSearch(t *testing.T) {
+	ref := fixtureNoise(180, 453)
+	for _, tc := range []struct {
+		name  string
+		query []int16
+		want  bool
+	}{
+		{"nearby", ref[61*16000 : 81*16000], true},
+		{"false_date", ref[70*16000 : 90*16000], false},
+		{"unrelated", fixtureNoise(20, 986), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := shortTestAnalyzer(t, ref, tc.query)
+			out := t.TempDir()
+			pair := NativePair{Reference: 0, Query: 1, Candidates: []NativeCandidate{{Offset: 60, Method: "calibrated_chronology_audio_search"}}}
+			edges, err := a.verify(context.Background(), []NativePair{pair}, out, "guided")
+			if err != nil {
+				t.Fatal(err)
+			}
+			accepted, err := a.validateEdges(edges, out, "guided-")
+			if err != nil || (len(accepted) == 1) != tc.want {
+				t.Fatal(len(edges), len(accepted), err)
+			}
+			if tc.want && math.Abs(accepted[0].Selected.Offset-61) > .001 {
+				t.Fatal(accepted[0].Selected.Offset)
+			}
+		})
+	}
+}
+
+func TestDateGuidanceSavedProject(t *testing.T) {
+	path := os.Getenv("OPENSYNC_DATE_BENCH_PROJECT")
+	if path == "" {
+		t.Skip("set OPENSYNC_DATE_BENCH_PROJECT to audit saved acoustic placements")
+	}
+	p, err := LoadNativeProject(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var layout []NativeLayout
+	for _, m := range p.Data.Models {
+		points := append([]TimePoint(nil), m.Knots...)
+		for i := range points {
+			points[i][0] -= m.AudioOrigin
+		}
+		if len(points) < 2 {
+			points = []TimePoint{{0, m.AnalysisOffset}, {1, m.AnalysisOffset + m.Rate}}
+		}
+		layout = append(layout, NativeLayout{Recording: m.Recording, Component: m.Component, ComponentSize: m.ComponentSize, Start: m.AnalysisOffset, Rate: m.Rate, Knots: points, Status: m.Status, Error: m.Error})
+	}
+	hidden, proposed, inside := 0, 0, 0
+	for i, m := range layout {
+		if m.Component != 1 || m.Status != "acoustically_supported_not_certified" {
+			continue
+		}
+		hidden++
+		layout[i] = NativeLayout{Recording: m.Recording, ComponentSize: 1, Status: "unresolved_no_supported_relation"}
+		for _, pair := range dateGuidedPairs(p.Data.Records, layout, nil, nil) {
+			if pair.Query != m.Recording {
+				continue
+			}
+			for _, ref := range layout {
+				if ref.Recording == pair.Reference {
+					truth := MapTime(InverseMapping(ref.Knots), MapTime(m.Knots, 0))
+					if math.Abs(pair.Candidates[0].Offset-truth) <= 2 {
+						inside++
+					}
+					proposed++
+				}
+			}
+		}
+		layout[i] = m
+	}
+	t.Logf("%d recordings, %d hidden acoustic placements, %d predicted overlaps, %d within search radius", len(layout), hidden, proposed, inside)
+}
+
+func TestDateGuidedPlannerUsesOverlappingRecorder(t *testing.T) {
+	r, l, _ := chronologyFixture()
+	r[1].Audio = map[string]any{}
+	r = append(r, MediaRecord{ID: "reference", Name: "recorder.wav", Duration: 90, Audio: map[string]any{}})
+	l = append(l, NativeLayout{Recording: 4, Component: 1, ComponentSize: 4, Status: "acoustically_supported_not_certified", Rate: 1, Knots: []TimePoint{{0, -20}, {90, 70}}})
+	pairs := dateGuidedPairs(r, l, nil, nil)
+	if len(pairs) != 1 || pairs[0].Query != 1 || pairs[0].Reference != 4 || math.Abs(pairs[0].Candidates[0].Offset-32) > .01 {
+		t.Fatal(pairs)
+	}
+	r[1].SourceMtime += int64(time.Hour)
+	if v := dateGuidedPairs(r, l, nil, nil); len(v) != 0 {
+		t.Fatal(v)
+	}
+}

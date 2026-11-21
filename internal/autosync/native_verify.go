@@ -101,6 +101,9 @@ func (a *NativeAnalyzer) assessCandidate(ref, query int, c NativeCandidate) (*Ca
 		}
 		t := times[i]
 		radius := .35
+		if c.Method == "calibrated_chronology_audio_search" {
+			radius = 2
+		}
 		if c.AnchorTime != 0 {
 			radius += math.Abs(t+length/2-c.AnchorTime) * .001
 		}

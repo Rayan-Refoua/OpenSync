@@ -81,7 +81,10 @@ func runNativeDistributed(ctx context.Context, records []MediaRecord, layout []N
 	for _, r := range records {
 		identities = append(identities, []any{r.ID, r.CacheSHA})
 	}
-	raw, _ := pythonJSON([]any{researchmatch.DistributedVersion, "heldout-onsets-v3", settings.Recovery, settings.LongReferenceHours, identities})
+	raw, err := json.Marshal([]any{researchmatch.DistributedVersion, "heldout-onsets-v3", settings.Recovery, settings.LongReferenceHours, identities, layout})
+	if err != nil {
+		return nil, err
+	}
 	identity := shaBytes(raw)
 	saved := filepath.Join(out, "distributed-discovery.json")
 	if data, err := workspaceRead(ctx, saved); err == nil {

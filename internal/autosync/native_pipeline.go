@@ -413,10 +413,44 @@ func NativeSync(ctx context.Context, o NativeSyncOptions) error {
 	stages["initial_timing_profiles_seconds"] = time.Since(stage).Seconds()
 	graphStarted := time.Now()
 	progress.set("Solving independent timing anchors")
-	preliminary, _ := selectNativeEdges(records, edges, profiles)
+	preliminary, decisions := selectNativeEdges(records, edges, profiles)
 	layout, _, err := nativeSolve(records, preliminary)
 	if err != nil {
 		return err
+	}
+	if o.Mode == "chronological" && (o.FileTimePlacement == nil || *o.FileTimePlacement) && o.Analysis.Recovery != "off" && len(ledger.Pairs) == 0 && len(ledger.Recordings) == 0 {
+		blocked := map[int]bool{}
+		for _, d := range decisions {
+			if d["status"] == "unresolved_competing_events" {
+				blocked[int(number(d["recording"]))] = true
+			}
+		}
+		candidates := dateGuidedPairs(records, layout, blocked, append(append([]NativePair(nil), pairs...), recovery...))
+		if len(candidates) > 0 {
+			found, err := analyzer.verify(ctx, candidates, out, "date-guided-v1")
+			if err != nil {
+				return err
+			}
+			nearby := found[:0]
+			for _, e := range found {
+				if e.Selected.Method == "calibrated_chronology_audio_search" {
+					nearby = append(nearby, e)
+				}
+			}
+			checked, err := analyzer.validateEdges(nearby, out, "date-guided-")
+			if err != nil {
+				return err
+			}
+			fmt.Printf("CHRONOLOGY searched %d predicted overlaps; %d passed acoustic holdout\n", len(candidates), len(checked))
+			if len(checked) > 0 {
+				edges = append(edges, checked...)
+				preliminary, _ = selectNativeEdges(records, edges, profiles)
+				layout, _, err = nativeSolve(records, preliminary)
+				if err != nil {
+					return err
+				}
+			}
+		}
 	}
 	stages["preliminary_anchor_graph_seconds"] = time.Since(graphStarted).Seconds()
 	progress.set("Distributed acoustic search")
