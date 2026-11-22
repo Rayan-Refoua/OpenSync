@@ -10,7 +10,7 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE_DIR = ROOT / "release"
-PACKAGE_NAME = "OpenSync-0.1.0-alpha.3-windows-x64"
+PACKAGE_NAME = "OpenSync-0.1.0-alpha.4-windows-x64"
 PROCESS_IMAGES = (
     "opensync.exe",
     "opensync-cli.exe",
