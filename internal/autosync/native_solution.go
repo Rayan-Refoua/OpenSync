@@ -21,6 +21,7 @@ type ReviewLedger struct {
 	Pairs      []ReviewPair `json:"rejected_pairs"`
 }
 type ReviewChange struct {
+	Candidate         string `json:"candidate,omitempty"`
 	FileTimePlacement *bool  `json:"fileTimePlacement,omitempty"`
 	Kind              string `json:"kind"`
 	Recording         string `json:"recording"`
@@ -235,6 +236,13 @@ func CreateSolution(path string, change ReviewChange) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if change.Kind == "accept_candidate" || change.Kind == "reject_candidate" {
+		models, graph, label, err := reviewCandidate(current, change.Candidate, change.Kind == "accept_candidate")
+		if err != nil {
+			return "", err
+		}
+		return writeSolutionRevision(path, basePath, base.Hash, label, models, graph)
+	}
 	if change.Kind == "add_chronological" {
 		if change.Mode != "chronological" {
 			return "", fmt.Errorf("select Chronological event to add chronological placements")
@@ -343,6 +351,7 @@ func CreateSolution(path string, change ReviewChange) (string, error) {
 	graph["placement_mode"] = mode
 	graph["recording_continuity"] = continuityEvidence(base.Data.Records, layout)
 	graph["review_ledger"] = ledger
+	graph["manual_candidate_decisions"] = current.Data.Graph["manual_candidate_decisions"]
 	graph["event_decisions"] = base.Data.Graph["event_decisions"]
 	graph["chronological_placements"] = []ChronologicalPlacement{}
 	// Conservative: old provisional proposals are not automatically reinstated
@@ -360,6 +369,11 @@ func CreateSolution(path string, change ReviewChange) (string, error) {
 		layout = applyChronology(base.Data.Records, layout, graph)
 	}
 	models, _ := nativeModelMaps(base.Data.Records, layout, graph)
+	graph["unresolved_timing_hypotheses"] = base.Data.Graph["unresolved_timing_hypotheses"]
+	models, graph, err = reapplyManualCandidates(base.Data.Records, models, graph)
+	if err != nil {
+		return "", err
+	}
 	return writeSolutionRevision(path, basePath, base.Hash, label, models, graph)
 }
 

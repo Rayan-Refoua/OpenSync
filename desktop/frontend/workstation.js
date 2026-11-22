@@ -68,6 +68,7 @@ export function setupWorkstation(h) {
   function apply() {
     config.mode ||= "clips";
     $("syncMode").value = config.mode;
+    $("syncMode").dispatchEvent(new Event("input"));
     $("fileTimePlacement").checked = config.mode === "chronological" && config.fileTimePlacement !== false;
     $("fileTimePlacement").disabled = config.mode !== "chronological" || $("syncMode").disabled;
     config.layout = { ...defaultLayout, ...config.layout };
@@ -110,17 +111,7 @@ export function setupWorkstation(h) {
     addSettingHelp(label, control, caption.textContent.trim());
   }
   addSettingHelp($("syncMode"), $("syncMode"), "Synchronization mode");
-  function openSettings(scope = "workstation") {
-    const f = $("settingsForm");
-    const titles = {
-      workstation: "Workstation preferences",
-      sync: "Synchronization options",
-      export: "Premiere XML options",
-    };
-    $("settingsTitle").textContent = titles[scope];
-    for (const panel of f.querySelectorAll("[data-settings]"))
-      panel.hidden = panel.dataset.settings !== scope;
-    $("resetShortcuts").hidden = scope !== "workstation";
+  function populateSettings(f, config) {
     $("fileTimePlacement").checked = config.fileTimePlacement !== false;
     for (const [k, v] of Object.entries(config.resources))
       f.elements[k].value = v;
@@ -143,6 +134,61 @@ export function setupWorkstation(h) {
     f.elements.monitorPosition.value = config.layout.position;
     f.elements.monitorRows.value = config.layout.rows;
     f.elements.monitorColumns.value = config.layout.columns;
+  }
+  function watchSetting(control, value, restore) {
+    const row = control.closest(".settingWithHelp");
+    if (!row) return () => {};
+    row.querySelector(".resetSetting")?.remove();
+    const reset = document.createElement("button");
+    reset.className = "resetSetting";
+    reset.type = "button";
+    reset.textContent = "↶";
+    const name = row.querySelector(".settingHelpButton")?.getAttribute("aria-label")?.slice(6) || "setting";
+    reset.title = `Reset ${name} to default`;
+    reset.setAttribute("aria-label", reset.title);
+    row.append(reset);
+    const read = () => control.dataset.chord ?? (control.type === "checkbox" ? control.checked : control.value);
+    const update = () => {
+      const current = read();
+      const changed = control.type === "number" && current !== ""
+        ? Number(current) !== Number(value) : current !== value;
+      row.classList.toggle("changedSetting", changed);
+      reset.disabled = !changed || control.disabled;
+    };
+    control.oninput = update;
+    reset.onclick = () => {
+      restore(value);
+      update();
+    };
+    update();
+    return update;
+  }
+  watchSetting($("syncMode"), "clips", (value) => {
+    $("syncMode").value = value;
+    $("syncMode").dispatchEvent(new Event("change"));
+  });
+  async function openSettings(scope = "workstation") {
+    const f = $("settingsForm");
+    const titles = {
+      workstation: "Workstation preferences",
+      sync: "Synchronization options",
+      export: "Premiere XML options",
+    };
+    const defaults = await h.api().DefaultSettings();
+    $("settingsTitle").textContent = titles[scope];
+    for (const panel of f.querySelectorAll("[data-settings]"))
+      panel.hidden = panel.dataset.settings !== scope;
+    $("resetShortcuts").hidden = scope !== "workstation";
+    const controls = [...f.querySelectorAll("[data-settings] input, [data-settings] select")]
+      .filter((control) => control.name || control.id === "fileTimePlacement");
+    populateSettings(f, defaults);
+    const read = (control) => control.type === "checkbox" ? control.checked : control.value;
+    const values = controls.map(read);
+    populateSettings(f, config);
+    controls.forEach((control, index) => watchSetting(control, values[index], (value) => {
+      if (control.type === "checkbox") control.checked = value;
+      else control.value = value;
+    }));
     const list = $("shortcutSettings");
     list.replaceChildren();
     for (const [id, [def, label]] of Object.entries(shortcuts)) {
@@ -159,6 +205,7 @@ export function setupWorkstation(h) {
         if (["Control", "Shift", "Alt", "Meta"].includes(e.key)) return;
         input.dataset.chord = e.code === "Backspace" ? "" : keyChord(e);
         input.value = keyLabel(input.dataset.chord);
+        input.dispatchEvent(new Event("input"));
       };
       row.append(document.createTextNode(label), input);
       list.append(row);
@@ -166,18 +213,30 @@ export function setupWorkstation(h) {
         `Assigns a keyboard shortcut for ${label.toLowerCase()}.`,
         `The default is ${keyLabel(def)}. Press a new combination in the field, or Backspace to clear it. Avoid shortcuts used by other workstation commands. This changes the controls only.`,
       ]);
+      watchSetting(input, def, (value) => {
+        input.dataset.chord = value;
+        input.value = keyLabel(value);
+      });
     }
     $("settingsError").textContent = "";
     $("settingsDialog").showModal();
   }
-  $("settingsButton").onclick = () => openSettings();
-  $("syncSettings").onclick = () => openSettings("sync");
-  $("exportSettings").onclick = () => openSettings("export");
+  $("settingsButton").onclick = () => h.action(() => openSettings());
+  $("syncSettings").onclick = () => h.action(() => openSettings("sync"));
+  $("exportSettings").onclick = () => h.action(() => openSettings("export"));
+  $("resetWorkstation").onclick = () => h.action(async () => {
+    if (!window.confirm("Clear the open timeline and input list, and restore all settings to defaults? Saved projects and source files stay on disk.")) return;
+    config = await h.api().ResetWorkstation();
+    apply();
+    monitor.reset();
+    h.clearProject();
+  });
   $("closeSettings").onclick = () => $("settingsDialog").close();
   $("resetShortcuts").onclick = () => {
     for (const input of $("shortcutSettings").querySelectorAll("input")) {
       input.dataset.chord = shortcuts[input.dataset.action][0];
       input.value = keyLabel(input.dataset.chord);
+      input.dispatchEvent(new Event("input"));
     }
   };
   $("settingsForm").onsubmit = async (e) => {
@@ -335,7 +394,7 @@ export function setupWorkstation(h) {
     h.action(async () => {
       if (!$("historyList").value) return;
       h.stop();
-      h.setProject(await h.api().OpenProject($("historyList").value), false);
+      h.setProject(await h.api().SelectHistoryRevision($("historyList").value), false);
       $("historyDialog").close();
     });
   $("syncMode").onchange = () =>
@@ -545,6 +604,8 @@ export function setupWorkstation(h) {
       if (s.running) { h.stop(); monitor.reset(); }
     }
     $("syncMode").disabled = !!s.running;
+    $("syncMode").dispatchEvent(new Event("input"));
+    $("resetWorkstation").disabled = !!s.running;
     $("syncSettings").disabled = !!s.running;
     $("exportSettings").disabled = !!s.running;
     const step = s.running

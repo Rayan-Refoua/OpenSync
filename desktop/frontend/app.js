@@ -1,4 +1,5 @@
 import { setupWorkstation } from "./workstation.js";
+import { setupMatchReview } from "./match-review.js";
 import { placementLabel } from "./status.js";
 import { BUFFER_FLOOR, BUFFER_TARGET } from "./playback-buffer.js";
 import {
@@ -38,6 +39,8 @@ const state = {
   generation: 0,
 };
 const colors = {
+  ambiguous: ["#453453", "#e5b3fc"],
+  manual: ["#284838", "#b8e4a6"],
   supported: ["#24454a", "#8bbfc5"],
   validated: ["#294635", "#98c4a0"],
   provisional: ["#51442c", "#ddbe7b"],
@@ -193,6 +196,15 @@ function setProject(p, fitView = true) {
   stopPlayback();
   state.project = p;
   state.generation = p.generation;
+  const fps = $("fps");
+  fps.querySelector("option[data-project-rate]")?.remove();
+  const matchingRate = Array.from(fps.options).find((o) => Math.abs(Number(o.value) - p.fps) < 0.00001);
+  if (matchingRate) fps.value = matchingRate.value;
+  else if (p.fps > 0) {
+    const option = new Option(`${Number(p.fps.toFixed(3))} fps`, p.fps, false, true);
+    option.dataset.projectRate = "";
+    fps.add(option);
+  }
   state.selected = null;
   state.tracks = new Set(p.tracks.length ? [0] : []);
   waves.clear();
@@ -202,11 +214,12 @@ function setProject(p, fitView = true) {
   $("empty").hidden = p.clips.length > 0;
   $("projectName").textContent = p.name;
   $("projectName").title = p.path || "Live, provisional view";
-  const unresolved = p.clips.filter((c) => c.state === "unresolved").length,
+  const ambiguous = p.clips.filter((c) => c.reviewCount).length,
+    unresolved = p.clips.filter((c) => c.state === "unresolved" && !c.reviewCount).length,
     review = p.clips.filter((c) => c.state === "provisional").length,
     missing = p.clips.filter((c) => c.missing).length;
   $("counts").textContent =
-    `${p.clips.length} recordings · ${p.tracks.length} lanes · ${unresolved} unresolved${review ? ` · ${review} to review` : ""}${missing ? ` · ${missing} missing` : ""}`;
+    `${p.clips.length} recordings · ${p.tracks.length} lanes · ${unresolved} unresolved${ambiguous ? ` · ${ambiguous} with match candidates` : ""}${review ? ` · ${review} to review` : ""}${missing ? ` · ${missing} missing` : ""}`;
   $("inspector").replaceChildren();
   const hint = document.createElement("p");
   hint.className = "muted";
@@ -228,6 +241,18 @@ function setProject(p, fitView = true) {
     });
   } else pan(state.left);
   seek(0, false);
+  requestDraw();
+}
+function clearProject() {
+  setProject({ name: "No project open", generation: 0, fps: 50, clips: [], tracks: [], duration: 0, graph: {} });
+  state.project = null;
+  state.left = state.playhead = state.scroll = 0;
+  $("counts").textContent = "Open a project to inspect its synchronization";
+  $("projectName").title = "";
+  $("log").replaceChildren();
+  $("toast").hidden = true;
+  message("Ready");
+  updatePlayhead();
   requestDraw();
 }
 function draw() {
@@ -306,7 +331,7 @@ function drawClip(c, row) {
     height = ROW - 10;
   if (width <= 0) return;
   const chronological = c.status === "provisional_chronological_estimate";
-  const [fill, ink] = chronological ? ["#64164e", "#ff95db"] : colors[c.state] || colors.provisional;
+  const [fill, ink] = chronological ? ["#64164e", "#ff95db"] : colors[c.reviewCount ? "ambiguous" : c.state] || colors.provisional;
   // At overview scale a clip may occupy only two pixels. Its waveform and
   // status remain visible; expensive text clipping has no useful pixels there.
   const clipped = width > 24;
@@ -329,6 +354,10 @@ function drawClip(c, row) {
   if (width > 170) {
     const label = c.missing
       ? "MISSING SOURCE"
+      : c.reviewCount
+        ? `${c.reviewCount} MATCH CANDIDATES`
+      : c.status === "manually_accepted"
+        ? "MANUALLY ACCEPTED"
       : chronological ? (c.timingBasis === "chronological_estimate_refined_by_audio" ? "AUDIO REFINED" : "CHRONOLOGICAL ESTIMATE")
       : c.status === "unresolved_disconnected_group"
         ? `GROUP ${c.component} · LOCAL SYNC`
@@ -602,7 +631,11 @@ function inspect(c) {
   const note = document.createElement("p");
   note.className = "muted";
   note.textContent =
-    c.status === "unresolved_disconnected_group"
+    c.reviewCount
+      ? "Saved acoustic candidates are available. Compare the two recordings and accept a placement or reject individual offsets."
+    : c.status === "manually_accepted"
+      ? "A reviewer accepted this offset by audition. The decision is stored in this solution revision."
+    : c.status === "unresolved_disconnected_group"
       ? "This recording has supported timing within its group. The group has no established offset to the main timeline, so it is presented separately."
       : c.state === "unresolved"
         ? "No supported placement relative to the main group. This recording is preserved at the timeline end."
@@ -616,6 +649,12 @@ function inspect(c) {
           ? "The engine found consistent acoustic evidence for this placement. This is a completed synchronization result, not independent certification of physical capture time. Sound travel in a large venue can introduce a camera-dependent delay."
           : "Placement follows acoustic arrival time. Physical capture-time alignment is not independently established.";
   el.append(note);
+  if (c.reviewCount && state.project.path) {
+    const review = document.createElement("button");
+    review.textContent = `Inspect ${c.reviewCount} match candidate${c.reviewCount === 1 ? "" : "s"}`;
+    review.onclick = () => matchReview.open(c.index);
+    el.append(review);
+  }
   const ledger = state.project.graph?.review_ledger || {},
     rejected = (ledger.rejected_recordings || []).includes(c.id);
   const correction = document.createElement("button");
@@ -1089,6 +1128,7 @@ async function poll() {
       const p = await api().GetProject();
       setProject(p, !state.project || !s.running);
     }
+    $("openMatchReview").disabled = s.running || !state.project?.path || !state.project?.manualCandidates?.length;
     let changed = false;
     if (s.running && state.project) {
       for (const [i, text] of Object.entries(s.clipActivity || {})) {
@@ -1117,6 +1157,7 @@ async function poll() {
 }
 const workstation = setupWorkstation({
   setProject,
+  clearProject,
   reviewSolution,
   state,
   api,
@@ -1140,6 +1181,7 @@ const workstation = setupWorkstation({
     rate: playRate,
   }),
 });
+const matchReview = setupMatchReview({state, api, stop: stopPlayback, setProject, inspect, pan, message});
 window.runtime?.OnFileDrop?.((_x, _y, paths) => {
   action(async () => setProject(await api().OpenDroppedProject(paths)));
 }, false);

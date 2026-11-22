@@ -13,6 +13,9 @@ export const stages = [
   "Building project and Premiere XML",
 ];
 export function placementLabel(c) {
+  if (c.reviewCount) return c.reviewCount > 1 ? "Competing match candidates" : "Match candidate to review";
+  if (c.state === "manual") return "Manually accepted placement";
+  if (c.timingBasis === "manual_local_audio_review") return "Manually aligned within a separate group";
   if (c.status === "unresolved_disconnected_group") return "Aligned within a separate group";
   return (
     {
@@ -80,15 +83,18 @@ export function currentReport(s, project) {
     const n = {
       supported: 0,
       validated: 0,
+      manual: 0,
+      candidates: 0,
       provisional: 0,
       unresolved: 0,
       missing: 0,
     };
     for (const c of project.clips) {
-      if (c.state in n) n[c.state]++;
+      if (c.reviewCount) n.candidates++;
+      else if (c.state in n) n[c.state]++;
       if (c.missing) n.missing++;
     }
-    const review = n.provisional + n.unresolved;
+    const review = n.provisional + n.unresolved + n.candidates;
     const complete = s.outcome === "complete" && project.path;
     return {
       tone: review || n.missing ? "review" : "complete",
@@ -97,7 +103,7 @@ export function currentReport(s, project) {
         : project.path
           ? "Project ready for review"
           : "Provisional timeline",
-      detail: `${project.clips.length} recordings · ${n.supported} supported · ${n.validated} validated · ${n.provisional} provisional · ${n.unresolved} unresolved${n.missing ? ` · ${n.missing} offline` : ""}`,
+      detail: `${project.clips.length} recordings · ${n.supported} supported · ${n.validated} validated · ${n.provisional} provisional · ${n.unresolved} unresolved${n.candidates ? ` · ${n.candidates} with candidates` : ""}${n.manual ? ` · ${n.manual} manually accepted` : ""}${n.missing ? ` · ${n.missing} offline` : ""}`,
       next: n.missing
         ? "Locate missing media, then review synchronization"
         : review

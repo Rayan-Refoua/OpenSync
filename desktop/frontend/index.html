@@ -58,7 +58,7 @@
         </section>
         <section class="workflowStep" data-step="review" aria-label="Review">
           <span class="stepLabel">3 · Review</span>
-          <div class="stepActions" id="reviewActions"></div>
+          <div class="stepActions" id="reviewActions"><button id="openMatchReview" disabled>Review matches</button></div>
         </section>
         <section class="workflowStep" data-step="export" aria-label="Export">
           <span class="stepLabel">4 · Export</span>
@@ -74,6 +74,7 @@
       >
         Workstation
       </button>
+      <button id="resetWorkstation" title="Clear the open timeline and inputs, and restore settings defaults">Reset</button>
     </header>
       <section
         id="currentState"
@@ -157,6 +158,45 @@
         </div>
       </details>
     </section>
+    <dialog id="matchReviewDialog" aria-labelledby="matchReviewTitle">
+      <div class="matchReviewHeader"><h2 id="matchReviewTitle">Match Review</h2><span id="matchQueueCount"></span><button id="closeMatchReview">Return to timeline <kbd>Esc</kbd></button></div>
+      <div class="matchDesk">
+      <aside class="matchQueue"><h3>Candidate queue <kbd>A D</kbd></h3><div id="matchCandidates" aria-label="Candidate queue"></div></aside>
+      <section class="matchComparison" aria-label="Pair comparison">
+      <div class="matchMonitors">
+        <figure><figcaption id="matchMetaA"></figcaption><video id="matchVideoA" muted playsinline></video><span id="matchVideoStateA"></span></figure>
+        <figure><figcaption id="matchMetaB"></figcaption><video id="matchVideoB" muted playsinline></video><span id="matchVideoStateB"></span></figure>
+      </div>
+      <div class="matchTimeline">
+        <div id="matchReference"></div>
+        <div id="matchQuery"></div>
+        <div id="matchPlot"><canvas id="matchWaveforms" width="1000" height="160" aria-label="Aligned reference and candidate audio waveforms"></canvas></div>
+      </div>
+      <label>Audition position <input id="matchPosition" type="range" min="0" max="0" step="any"></label>
+      <div class="matchAuditionOptions">
+        <label>Window length
+          <select id="matchDuration" aria-label="Audition window length">
+            <option value="1">1 s</option><option value="2">2 s</option><option value="4" selected>4 s</option>
+            <option value="8">8 s</option><option value="12">12 s</option>
+          </select>
+        </label>
+        <button id="matchShuffle" title="Jump to an unused section of the overlap">Shuffle section <kbd>E</kbd></button>
+        <output id="matchWindow"></output>
+      </div>
+      <div class="matchReviewHeader">
+        <button id="matchPlay">Play window <kbd>Space</kbd></button><button id="matchStop">Stop</button>
+        <button id="matchAB" aria-label="Switch between reference and candidate audio">Audio A <kbd>S</kbd></button>
+        <button id="matchBoth" aria-pressed="false">Mix A + B <kbd>W</kbd></button>
+        <span id="matchReviewStatus" role="status"></span>
+      </div>
+      <div class="dialogActions">
+        <button id="matchUndo">Undo decision <kbd>Ctrl+Z</kbd></button>
+        <button id="matchRejectNext">Reject &amp; next <kbd>X</kbd></button>
+        <button id="matchAccept" class="primary">Accept placement</button>
+      </div>
+      </section>
+      </div>
+    </dialog>
     <dialog id="findClipDialog">
       <h3>Find recording</h3>
       <input id="findClipInput" type="search" aria-label="Recording filename" placeholder="Type part of a filename" autofocus />

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -47,6 +48,9 @@ func (a *App) ReviewSolution(change autosync.ReviewChange) (result *desktop.Proj
 	if err != nil {
 		return nil, err
 	}
+	if err = saveActiveReview(reviewBase(p), path); err != nil {
+		return nil, err
+	}
 	a.media.SetProject(next)
 	a.mu.Lock()
 	a.stage = "Review revision saved"
@@ -68,7 +72,7 @@ func (a *App) UndoReview() (*desktop.Project, error) {
 	if parent == "" {
 		return nil, fmt.Errorf("already at the original project")
 	}
-	return a.OpenProject(parent)
+	return a.SelectHistoryRevision(parent)
 }
 
 type SolutionHistoryItem struct {
@@ -174,4 +178,53 @@ func (a *App) ExportProjectXML() (output string, err error) {
 	path := filepath.Join(out, "OpenSync.xml")
 	a.log("export", "Premiere XML saved · "+path)
 	return path, nil
+}
+
+func reviewBase(p *desktop.Project) string {
+	revision, _ := p.Graph["solution_revision"].(map[string]any)
+	if base, ok := revision["base_project"].(string); ok {
+		return base
+	}
+	return p.Path
+}
+
+// Each immutable solution project retains its parent. This small cursor lets
+// opening the original project resume the selected branch after a restart.
+func activeReviewPath(base string) (string, error) {
+	b, err := os.ReadFile(base + ".active-review")
+	if os.IsNotExist(err) {
+		return base, nil
+	}
+	if err != nil {
+		return "", err
+	}
+	name := string(b)
+	if name != filepath.Base(name) || !strings.HasPrefix(name, "solution-") || filepath.Ext(name) != ".opensync" {
+		return "", fmt.Errorf("invalid saved review selection")
+	}
+	return filepath.Join(filepath.Dir(base), "Solutions", name), nil
+}
+
+func saveActiveReview(base, path string) error {
+	dest := base + ".active-review"
+	if filepath.Clean(path) == filepath.Clean(base) {
+		err := os.Remove(dest)
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	temp, err := os.CreateTemp(filepath.Dir(base), ".review-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(temp.Name())
+	_, err = temp.WriteString(filepath.Base(path))
+	if closeErr := temp.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return err
+	}
+	return os.Rename(temp.Name(), dest)
 }

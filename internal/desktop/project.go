@@ -14,6 +14,7 @@ import (
 )
 
 type Clip struct {
+	ReviewCount          int                  `json:"reviewCount,omitempty"`
 	PlacementUncertainty float64              `json:"placementUncertainty,omitempty"`
 	TimingBasis          string               `json:"timingBasis,omitempty"`
 	ID                   string               `json:"id"`
@@ -41,15 +42,16 @@ type Track struct {
 	Clips []int  `json:"clips"`
 }
 type Project struct {
-	Name       string          `json:"name"`
-	Path       string          `json:"path"`
-	Generation uint64          `json:"generation"`
-	Duration   float64         `json:"duration"`
-	FPS        float64         `json:"fps"`
-	Clips      []Clip          `json:"clips"`
-	Tracks     []Track         `json:"tracks"`
-	Evidence   json.RawMessage `json:"evidence"`
-	Graph      map[string]any  `json:"graph"`
+	ManualCandidates []autosync.ManualCandidate `json:"manualCandidates"`
+	Name             string                     `json:"name"`
+	Path             string                     `json:"path"`
+	Generation       uint64                     `json:"generation"`
+	Duration         float64                    `json:"duration"`
+	FPS              float64                    `json:"fps"`
+	Clips            []Clip                     `json:"clips"`
+	Tracks           []Track                    `json:"tracks"`
+	Evidence         json.RawMessage            `json:"evidence"`
+	Graph            map[string]any             `json:"graph"`
 }
 
 func LoadProject(path string) (*Project, error) {
@@ -73,6 +75,14 @@ func LoadProject(path string) (*Project, error) {
 // are appended for display, without claiming that they share a time origin.
 func BuildProject(p autosync.NativePayload) *Project {
 	v := &Project{Name: p.Name, FPS: 50, Clips: []Clip{}, Tracks: []Track{}, Graph: p.Graph}
+	v.ManualCandidates = autosync.ManualCandidates(p)
+	reviewCounts := map[int]int{}
+	decisions, _ := p.Graph["manual_candidate_decisions"].(map[string]any)
+	for _, candidate := range v.ManualCandidates {
+		if decisions[candidate.ID] == nil {
+			reviewCounts[candidate.Query]++
+		}
+	}
 	models := map[int]autosync.TimeModel{}
 	for _, m := range autosync.ReviewTimingModels(p) {
 		models[m.Recording] = m
@@ -102,6 +112,10 @@ func BuildProject(p autosync.NativePayload) *Project {
 		}
 		c := Clip{ID: r.ID, Index: i, Name: r.Name, Source: source, Duration: r.Duration, Start: autosync.MapTime(points, 0), End: autosync.MapTime(points, r.Duration), Status: m.Status, State: state, Component: m.Component, Residual: m.Error, Rate: m.Rate, Mapping: points, AudioOrigin: m.AudioOrigin, Video: r.Video != nil, Audio: r.Audio != nil, Missing: !exists(source), Metadata: r}
 		v.Clips = append(v.Clips, c)
+		v.Clips[len(v.Clips)-1].ReviewCount = reviewCounts[i]
+		if m.Status == "manually_accepted" {
+			v.Clips[len(v.Clips)-1].State = "manual"
+		}
 		v.Clips[len(v.Clips)-1].PlacementUncertainty = m.PlacementUncertainty
 		v.Clips[len(v.Clips)-1].TimingBasis = m.TimingBasis
 		if state == "unresolved" || (state == "provisional" && !m.Resolved) {
@@ -203,6 +217,32 @@ func BuildProject(p autosync.NativePayload) *Project {
 		laneEnds[lane] = c.End
 		v.Tracks[lane].Clips = append(v.Tracks[lane].Clips, i)
 		v.Duration = math.Max(v.Duration, c.End)
+	}
+	var longest float64
+	for _, track := range v.Tracks {
+		byRate := map[autosync.FrameRate]float64{}
+		var occupied float64
+		for _, index := range track.Clips {
+			clip := v.Clips[index]
+			if !clip.Video {
+				continue
+			}
+			duration := max(0, clip.End-clip.Start)
+			occupied += duration
+			if rate, err := autosync.VideoFrameRate(clip.Metadata); err == nil {
+				byRate[rate] += duration
+			}
+		}
+		if occupied <= longest || len(byRate) == 0 {
+			continue
+		}
+		longest = occupied
+		var best float64
+		for rate, seconds := range byRate {
+			if seconds > best || (seconds == best && rate.FPS() > v.FPS) {
+				best, v.FPS = seconds, rate.FPS()
+			}
+		}
 	}
 	return v
 }

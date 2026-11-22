@@ -178,4 +178,9 @@ func recordRate(r MediaRecord, fallback FrameRate) (FrameRate, error) {
 	}
 	return rate, err
 }
+
+// VideoFrameRate returns the nominal frame rate used for presentation.
+func VideoFrameRate(r MediaRecord) (FrameRate, error) {
+	return recordRate(r, FrameRate{50, false})
+}
 func roundFrame(x float64) int64 { return int64(math.RoundToEven(x)) }

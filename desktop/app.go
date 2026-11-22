@@ -86,6 +86,22 @@ func (a *App) logRecording(kind, message string, recording *int) {
 }
 func (a *App) GetProject() *desktop.Project { return a.media.Project() }
 func (a *App) OpenProject(path string) (*desktop.Project, error) {
+	active, err := activeReviewPath(path)
+	if err != nil {
+		return nil, err
+	}
+	return a.openProject(active, "")
+}
+
+func (a *App) SelectHistoryRevision(path string) (*desktop.Project, error) {
+	current := a.media.Project()
+	if current == nil {
+		return nil, fmt.Errorf("no project")
+	}
+	return a.openProject(path, reviewBase(current))
+}
+
+func (a *App) openProject(path, updateBase string) (*desktop.Project, error) {
 	a.mu.Lock()
 	busy := a.running
 	a.mu.Unlock()
@@ -96,11 +112,29 @@ func (a *App) OpenProject(path string) (*desktop.Project, error) {
 	if e != nil {
 		return nil, e
 	}
+	if updateBase != "" {
+		if !strings.EqualFold(filepath.Clean(reviewBase(p)), filepath.Clean(updateBase)) {
+			return nil, fmt.Errorf("revision belongs to a different project")
+		}
+		if err := saveActiveReview(updateBase, path); err != nil {
+			return nil, err
+		}
+	}
 	a.media.SetProject(p)
 	if err := a.media.RememberProject(p); err != nil {
 		a.log("warning", "Could not save recent project history: "+err.Error())
 	}
 	a.mu.Lock()
+	a.inputs = nil
+	seen := map[string]bool{}
+	for _, clip := range p.Clips {
+		source := clip.Source
+		key := strings.ToLower(filepath.Clean(source))
+		if source != "" && !clip.Missing && !seen[key] {
+			seen[key] = true
+			a.inputs = append(a.inputs, source)
+		}
+	}
 	a.outcome = "ready"
 	a.stage = "Project ready"
 	a.detail = ""
@@ -202,6 +236,23 @@ func (a *App) ClearInputs() {
 	if !a.running {
 		a.inputs = nil
 	}
+}
+func (a *App) ResetWorkstation() (WorkstationSettings, error) {
+	defaults := defaultSettings()
+	if err := a.UpdateSettings(defaults); err != nil {
+		return defaults, err
+	}
+	a.media.SetProject(nil)
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.inputs = nil
+	a.events = nil
+	a.clipActivity = map[int]string{}
+	a.stage, a.detail, a.outcome = "Ready", "", "ready"
+	a.stageStarted = time.Now()
+	a.stageCompleted, a.stageTotal = 0, 0
+	a.ioProgress = nil
+	return defaults, nil
 }
 func (a *App) Status(after int64) map[string]any {
 	a.mu.Lock()
