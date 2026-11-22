@@ -6,6 +6,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE_DIR = ROOT / "release"
@@ -93,13 +94,13 @@ def main() -> None:
     executable = output / "opensync.exe"
     if not executable.is_file():
         raise RuntimeError(f"Build completed without the desktop executable: {executable}")
-    archive_path = shutil.make_archive(
-        str(release_root / PACKAGE_NAME),
-        "zip",
-        root_dir=release_root,
-        base_dir=PACKAGE_NAME,
-        compresslevel=3,
-    )
+    archive_path = release_root / f"{PACKAGE_NAME}.zip"
+    with zipfile.ZipFile(
+        archive_path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=3, allowZip64=True
+    ) as package_zip:
+        for package_file in sorted(output.rglob("*")):
+            if package_file.is_file():
+                package_zip.write(package_file, package_file.relative_to(release_root))
     command = [str(executable)]
     if args.project:
         command.append(str(args.project.resolve()))
