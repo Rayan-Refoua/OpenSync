@@ -65,7 +65,7 @@ For a reviewed revision, pass the revision’s `.opensync` path to `export`. Ope
 
 ## Override automatic decisions
 
-In **Workstation Settings**, expand **Engine and Premiere export**. The recovery and input controls apply to the next sync. The export controls also apply when you export a saved project again.
+Open **Options** beside **Synchronize** for recovery, verification, file-time placement, and analysis resource limits. Open **Options** beside **Export XML** for track layout, unmatched media, and drift correction. Export options apply both to the XML created during synchronization and to later exports. **Workstation** holds playback, preview, and keyboard preferences.
 
 | Control | CLI | Effect |
 | --- | --- | --- |

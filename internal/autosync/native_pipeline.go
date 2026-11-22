@@ -357,7 +357,7 @@ func NativeSync(ctx context.Context, o NativeSyncOptions) error {
 	}
 	stage = time.Now()
 	progress.set("Verifying recovery candidates")
-	recovered, err := analyzer.verify(ctx, recovery, out, "evidence-recovery-v2")
+	recovered, err := analyzer.verify(ctx, recovery, out, "evidence-recovery-v2", initial)
 	if err != nil {
 		return err
 	}

@@ -7,6 +7,7 @@ import {
 import { CameraMonitor } from "./monitor.js";
 import { clamp } from "./core.js";
 import { currentReport } from "./status.js";
+import { addSettingHelp } from "./settings-help.js";
 const defaultLayout = { position: "right", rows: 4, columns: 0 };
 const $ = (id) => document.getElementById(id);
 export function setupWorkstation(h) {
@@ -99,8 +100,28 @@ export function setupWorkstation(h) {
       h.message(String(e), true);
     }
   }
-  function openSettings() {
+  const reviewActions = $("reviewActions");
+  reviewActions.append($("nextAttention"), $("findClip"), document.querySelector(".projectActions"));
+  for (const label of $("settingsForm").querySelectorAll("label")) {
+    const control = label.querySelector("input, select");
+    if (!control) continue;
+    const caption = label.cloneNode(true);
+    caption.querySelector("input, select").remove();
+    addSettingHelp(label, control, caption.textContent.trim());
+  }
+  addSettingHelp($("syncMode"), $("syncMode"), "Synchronization mode");
+  function openSettings(scope = "workstation") {
     const f = $("settingsForm");
+    const titles = {
+      workstation: "Workstation preferences",
+      sync: "Synchronization options",
+      export: "Premiere XML options",
+    };
+    $("settingsTitle").textContent = titles[scope];
+    for (const panel of f.querySelectorAll("[data-settings]"))
+      panel.hidden = panel.dataset.settings !== scope;
+    $("resetShortcuts").hidden = scope !== "workstation";
+    $("fileTimePlacement").checked = config.fileTimePlacement !== false;
     for (const [k, v] of Object.entries(config.resources))
       f.elements[k].value = v;
     f.elements.recovery.value = config.analysis?.recovery || "balanced";
@@ -141,11 +162,17 @@ export function setupWorkstation(h) {
       };
       row.append(document.createTextNode(label), input);
       list.append(row);
+      addSettingHelp(row, input, label, [
+        `Assigns a keyboard shortcut for ${label.toLowerCase()}.`,
+        `The default is ${keyLabel(def)}. Press a new combination in the field, or Backspace to clear it. Avoid shortcuts used by other workstation commands. This changes the controls only.`,
+      ]);
     }
     $("settingsError").textContent = "";
     $("settingsDialog").showModal();
   }
-  $("settingsButton").onclick = openSettings;
+  $("settingsButton").onclick = () => openSettings();
+  $("syncSettings").onclick = () => openSettings("sync");
+  $("exportSettings").onclick = () => openSettings("export");
   $("closeSettings").onclick = () => $("settingsDialog").close();
   $("resetShortcuts").onclick = () => {
     for (const input of $("shortcutSettings").querySelectorAll("input")) {
@@ -158,7 +185,8 @@ export function setupWorkstation(h) {
     try {
       const next = {
         mode: config.mode,
-        fileTimePlacement: config.fileTimePlacement !== false,
+        fileTimePlacement: config.mode === "chronological"
+          ? $("fileTimePlacement").checked : config.fileTimePlacement !== false,
         analysis: {
           recovery: e.target.elements.recovery.value,
           readMode: e.target.elements.readMode.value,
@@ -310,10 +338,9 @@ export function setupWorkstation(h) {
       h.setProject(await h.api().OpenProject($("historyList").value), false);
       $("historyDialog").close();
     });
-  $("fileTimePlacement").onchange = $("syncMode").onchange = () =>
+  $("syncMode").onchange = () =>
     h.action(async () => {
       const next = { ...config, mode: $("syncMode").value };
-      if (next.mode === config.mode) next.fileTimePlacement = $("fileTimePlacement").checked;
       try {
         await h.api().UpdateSettings(next);
         config = next;
@@ -478,7 +505,7 @@ export function setupWorkstation(h) {
   });
   const timer = setInterval(() => {
     const transport = h.transport();
-    monitor.tick(h.state.playhead, transport.playing, transport.rate);
+    monitor.tick(h.state.playhead, transport.playing, transport.rate, transport.playing || transport.buffering);
     const buffers = monitor.visible
       ? monitor.tiles.map((t) => monitor.bufferInfo(t))
       : [];
@@ -518,6 +545,16 @@ export function setupWorkstation(h) {
       if (s.running) { h.stop(); monitor.reset(); }
     }
     $("syncMode").disabled = !!s.running;
+    $("syncSettings").disabled = !!s.running;
+    $("exportSettings").disabled = !!s.running;
+    const step = s.running
+      ? s.stage === "Exporting Premiere XML" ? "export"
+        : s.stage === "Re-evaluating saved evidence" ? "review" : "sync"
+      : h.state.project?.path ? "review" : s.inputs ? "sync" : "load";
+    for (const section of document.querySelectorAll(".workflowStep")) {
+      if (section.dataset.step === step) section.setAttribute("aria-current", "step");
+      else section.removeAttribute("aria-current");
+    }
     $("fileTimePlacement").disabled = !!s.running || config.mode !== "chronological";
     for (const id of [
       "rebuildSolution",

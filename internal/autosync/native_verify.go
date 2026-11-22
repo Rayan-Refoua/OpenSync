@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"sync"
+	"sync/atomic"
 )
 
 type CandidateEvidence struct {
@@ -203,7 +204,17 @@ func (a *NativeAnalyzer) assessCandidate(ref, query int, c NativeCandidate) (*Ca
 	result.Span = tmax - tmin
 	return result, nil
 }
-func (a *NativeAnalyzer) verify(ctx context.Context, pairs []NativePair, out, namespace string) ([]*PairEvidence, error) {
+func verificationDigest(pair NativePair, refSHA, querySHA string, settings VerificationSettings) string {
+	input := map[string]any{"pair": pair, "reference": refSHA, "query": querySHA, "verifier": "native-v1"}
+	if settings.custom() {
+		input["verification"] = settings
+	}
+	encoded, _ := json.Marshal(input)
+	sum := sha256.Sum256(encoded)
+	return hex.EncodeToString(sum[:])
+}
+
+func (a *NativeAnalyzer) verify(ctx context.Context, pairs []NativePair, out, namespace string, initial ...map[[2]int]NativePair) ([]*PairEvidence, error) {
 	settings := analysisSettings(a.ctx).Verification
 	folder := filepath.Join(out, namespace)
 	if err := workspaceMkdir(a.ctx, folder, 0755); err != nil {
@@ -215,6 +226,7 @@ func (a *NativeAnalyzer) verify(ctx context.Context, pairs []NativePair, out, na
 	var wg sync.WaitGroup
 	var progressMu sync.Mutex
 	completed := 0
+	var reused atomic.Int64
 	reportProgress := func(i int) {
 		progressMu.Lock()
 		defer progressMu.Unlock()
@@ -235,13 +247,7 @@ func (a *NativeAnalyzer) verify(ctx context.Context, pairs []NativePair, out, na
 				}
 				pair := pairs[i]
 				ref, query := a.records[pair.Reference], a.records[pair.Query]
-				input := map[string]any{"pair": pair, "reference": ref.CacheSHA, "query": query.CacheSHA, "verifier": "native-v1"}
-				if settings.custom() {
-					input["verification"] = settings
-				}
-				encoded, _ := json.Marshal(input)
-				sum := sha256.Sum256(encoded)
-				digest := hex.EncodeToString(sum[:])
+				digest := verificationDigest(pair, ref.CacheSHA, query.CacheSHA, settings)
 				path := filepath.Join(folder, ref.ID+"_"+query.ID+".json")
 				if data, err := workspaceRead(a.ctx, path); err == nil {
 					var cached PairEvidence
@@ -252,7 +258,28 @@ func (a *NativeAnalyzer) verify(ctx context.Context, pairs []NativePair, out, na
 					}
 				}
 				result := &PairEvidence{Reference: pair.Reference, Query: pair.Query, Digest: digest, Provenance: "discovery_source_reused; no independent certification", Candidates: []*CandidateEvidence{}}
+				prior := map[NativeCandidate]*CandidateEvidence{}
+				if namespace == "evidence-recovery-v2" && len(initial) > 0 {
+					if original, ok := initial[0][[2]int{pair.Reference, pair.Query}]; ok {
+						path := filepath.Join(out, "evidence-v2", ref.ID+"_"+query.ID+".json")
+						if data, err := workspaceRead(a.ctx, path); err == nil {
+							var saved PairEvidence
+							if json.Unmarshal(data, &saved) == nil && saved.Reference == pair.Reference &&
+								saved.Query == pair.Query && len(saved.Candidates) == len(original.Candidates) &&
+								saved.Digest == verificationDigest(original, ref.CacheSHA, query.CacheSHA, settings) {
+								for j, candidate := range original.Candidates {
+									prior[candidate] = saved.Candidates[j]
+								}
+							}
+						}
+					}
+				}
 				for _, c := range pair.Candidates {
+					if previous := prior[c]; previous != nil {
+						result.Candidates = append(result.Candidates, previous)
+						reused.Add(1)
+						continue
+					}
 					e, err := a.assessCandidate(pair.Reference, pair.Query, c)
 					if err != nil {
 						errs[i] = err
@@ -303,12 +330,20 @@ func (a *NativeAnalyzer) verify(ctx context.Context, pairs []NativePair, out, na
 		return nil, err
 	}
 	fmt.Printf("VERIFY %s: %d/%d supported pairs\n", namespace, len(edges), len(pairs))
+	if count := reused.Load(); count != 0 {
+		observe(ctx, ProgressEvent{Kind: "evidence", Stage: namespace, Status: fmt.Sprintf("Reused %d identical candidate checks", count)})
+	}
 	return edges, nil
 }
 func (a *NativeAnalyzer) validateEdges(edges []*PairEvidence, out, namespace string) ([]*PairEvidence, error) {
 	var accepted []*PairEvidence
 	reports := make([]*HoldoutReport, len(edges))
 	work := func(edge *PairEvidence) (*HoldoutReport, error) {
+		// Final validation receives the unchanged, already accepted edges plus
+		// newly refined edges. Only the latter require fresh holdout windows.
+		if namespace == "" && edge.Validation != nil && edge.Validation.Status == "pass_disjoint_windows" {
+			return edge.Validation, nil
+		}
 		ref, query := edge.Reference, edge.Query
 		model := edge.Selected
 		offset, rate := model.Offset, 1+model.Slope

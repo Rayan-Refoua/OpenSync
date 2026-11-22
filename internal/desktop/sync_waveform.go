@@ -28,11 +28,27 @@ func (s *Service) syncWaveform(record autosync.MediaRecord, dir string, onError 
 		return nil
 	}
 	var base []peakPair
+	var cached *peakChunk
+	var checked bool
 	var samples int
 	var index int64
+	var recent []string
+	if dir != "" {
+		recent = s.recentPeakDirs()
+	}
+	checkCache := func() {
+		if !checked {
+			checked = true
+			key := identity + "\x00" + strconv.FormatInt(index, 10)
+			cached = readRecentPeak(recent, dir, key)
+		}
+	}
 	flush := func() {
 		key := identity + "\x00" + strconv.FormatInt(index, 10)
-		chunk := buildPeakChunk(base)
+		chunk := cached
+		if chunk == nil {
+			chunk = buildPeakChunk(base)
+		}
 		p := s.peaks
 		p.mu.Lock()
 		if p.entries[key] == nil && chunk.bytes <= p.limit {
@@ -50,6 +66,8 @@ func (s *Service) syncWaveform(record autosync.MediaRecord, dir string, onError 
 			}
 		}
 		base = nil
+		cached = nil
+		checked = false
 		samples = 0
 		index++
 	}
@@ -87,8 +105,9 @@ func (s *Service) syncWaveform(record autosync.MediaRecord, dir string, onError 
 			return
 		}
 		for offset > 0 {
+			checkCache()
 			// Chunk-sized zero regions need no per-sample computation.
-			if base == nil {
+			if cached == nil && base == nil {
 				base = make([]peakPair, peakChunkBins)
 			}
 			n := min(offset, int64(peakChunkSamples-samples))
@@ -98,12 +117,24 @@ func (s *Service) syncWaveform(record autosync.MediaRecord, dir string, onError 
 				flush()
 			}
 		}
-		for i := 0; i+1 < len(data); i += 2 {
-			if offset < 0 {
-				offset++
+		if offset < 0 {
+			skip := min(-offset, int64(len(data)/2))
+			offset += skip
+			data = data[2*skip:]
+		}
+		for len(data) >= 2 {
+			checkCache()
+			if cached != nil {
+				n := min(len(data)/2, peakChunkSamples-samples)
+				samples += n
+				data = data[2*n:]
+				if samples == peakChunkSamples {
+					flush()
+				}
 				continue
 			}
-			push(float32(int16(binary.LittleEndian.Uint16(data[i:]))) / 32768)
+			push(float32(int16(binary.LittleEndian.Uint16(data))) / 32768)
+			data = data[2:]
 		}
 	}
 }

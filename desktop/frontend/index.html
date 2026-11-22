@@ -19,7 +19,19 @@
           /><small>SYNCHRONIZATION WORKSTATION</small>
         </div>
       </div>
-      <div class="tools">
+      <nav class="workflow" aria-label="Project workflow">
+        <section class="workflowStep" data-step="load" aria-label="Load">
+          <span class="stepLabel">1 · Load</span>
+          <div class="stepActions">
+            <button id="open" class="ui-icon" title="Open a saved project · Ctrl+O · You can also drop a project file or folder">Open project</button>
+            <button id="add" class="ui-icon" title="Select source recordings">Add files</button>
+            <button id="folder" class="ui-icon" title="Select folders with Ctrl or Shift; scans subfolders">Add folders</button>
+            <button id="clear" class="ui-icon" title="Clear the input selection" aria-label="Clear inputs">Clear</button>
+          </div>
+        </section>
+        <section class="workflowStep" data-step="sync" aria-label="Synchronize">
+          <span class="stepLabel">2 · Synchronize</span>
+          <div class="stepActions">
         <select
           id="syncMode"
           aria-label="Synchronization mode"
@@ -28,19 +40,8 @@
           <option value="clips">Clips / takes</option>
           <option value="chronological">Chronological event</option>
         </select>
-        <label title="Estimate placements from file dates and recording order"><input id="fileTimePlacement" type="checkbox" disabled />File time Based placement</label>
-        <button id="open" class="ui-icon" title="Open a .opensync project · Ctrl+O · You can also drop the project file or folder anywhere in the window">
-          Open project</button
-        ><button id="add" class="ui-icon" title="Select source recordings for a new sync">
-          Add files</button
-        ><button
-          id="folder" class="ui-icon"
-          title="Select media folders with Ctrl or Shift; subfolders are included"
-        >
-          Add folders</button
-        ><button id="clear" class="ui-icon" title="Clear the input selection">
-          Clear</button
-        ><button
+        <button id="syncSettings" aria-label="Synchronization options" title="File-time placement, recovery, verification and processing limits">Options</button>
+        <button
           id="sync"
           class="primary ui-icon"
           title="Run the native Go engine; media caching is disabled"
@@ -53,13 +54,25 @@
         >
           Cancel
         </button>
-      </div>
-      <div id="build">NATIVE GO</div>
+          </div>
+        </section>
+        <section class="workflowStep" data-step="review" aria-label="Review">
+          <span class="stepLabel">3 · Review</span>
+          <div class="stepActions" id="reviewActions"></div>
+        </section>
+        <section class="workflowStep" data-step="export" aria-label="Export">
+          <span class="stepLabel">4 · Export</span>
+          <div class="stepActions">
+            <button id="exportSettings" aria-label="Premiere XML options" title="Premiere track layout, unmatched clips and drift correction">Options</button>
+            <button id="exportXML" class="ui-icon" title="Export the current solution to Premiere XML">Export XML</button>
+          </div>
+        </section>
+      </nav>
       <button
         id="settingsButton" class="ui-icon"
         title="Resource limits and keyboard shortcuts · Ctrl+Alt+K"
       >
-        Settings
+        Workstation
       </button>
     </header>
       <section
@@ -107,16 +120,15 @@
       >
         Next attention
       </button>
-      <button id="exportXML" class="ui-icon" title="Export the current solution to Premiere XML">Export XML</button>
-      <button id="addChronological" disabled title="Use saved dates and durations to add estimates to this timeline">Add chronological placements</button>
       <button id="findClip" title="Find a recording by filename · Ctrl+F">Find clip</button>
       <details class="projectActions">
         <summary
           title="Review revisions, rerun synchronization, or export the current result"
         >
-          Project actions
+          Actions
         </summary>
         <div>
+          <button id="addChronological" disabled title="Use saved dates and durations to add estimates to this timeline">Add chronological placements</button>
           <button
             id="rebuildSolution"
             title="Re-evaluate saved evidence in the selected mode; retain manual rejections; no audio extraction"
@@ -344,11 +356,11 @@
     </footer>
     <div id="tooltip" hidden></div>
     <div id="toast" hidden role="alert"></div>
-    <dialog id="settingsDialog">
+    <dialog id="settingsDialog" aria-labelledby="settingsTitle">
       <form id="settingsForm">
-        <h2>Workstation settings</h2>
-        <details class="engineSettings">
-          <summary>Engine and Premiere export</summary>
+        <h2 id="settingsTitle">Workstation preferences</h2>
+        <section data-settings="sync">
+          <label title="Estimate placements from file dates and recording order"><input id="fileTimePlacement" type="checkbox" disabled /> File time Based placement</label>
           <div class="settingsGrid">
             <label title="Controls the extra search pass for unresolved recordings">Acoustic recovery
               <select name="recovery">
@@ -375,6 +387,11 @@
 <label>Runner-up confidence ratio for ambiguity<input name="ambiguityRatio" type="number" min="0.01" max="1" step="0.001" required /></label>
 <label>Event grouping tolerance (ms)<input name="eventToleranceMS" type="number" min="1" max="1000" step="1" required /></label>
 </fieldset>
+          </div>
+        </section>
+        <section data-settings="export">
+          <p class="muted">These options apply to the XML created during synchronization and when you export a reviewed project.</p>
+          <div class="settingsGrid">
             <label title="Changes Premiere track grouping without changing clip placement">Premiere track grouping
               <select name="trackLayout"><option value="family">Folder and filename family</option><option value="folder">Folder only</option></select>
             </label>
@@ -390,7 +407,8 @@
           <label>Allowed audio lead (ms)<input name="audioEarlyMS" type="number" min="0.1" step="0.1" required /></label>
           <label>Allowed audio lag (ms)<input name="audioLateMS" type="number" min="0.1" step="0.1" required /></label>
           </div>
-        </details>
+        </section>
+        <section data-settings="sync">
         <div class="settingsGrid">
           <label
             >Managed RAM budget (MiB)<input
@@ -407,6 +425,10 @@
               min="1"
               required
           /></label>
+        </div>
+        </section>
+        <section data-settings="workstation">
+        <div class="settingsGrid">
           <label
             >Background intensity<select name="background">
               <option value="off">Foreground only</option>
@@ -465,7 +487,7 @@
         <p class="muted">
           RAM controls set hard visualization/analysis cache budgets and a soft
           Go heap target. Browser, GPU and decoder allocations cannot be capped
-          exactly here. Buffered 640×360 video previews retain source frame
+          exactly here. Buffered video previews retain source aspect ratio and frame
           timing. Playback fills eight seconds first and maintains a five-second
           reserve. Preview segments stay in RAM; original files and exports are
           unchanged.
@@ -478,6 +500,7 @@
           >
         </h3>
         <div id="shortcutSettings"></div>
+        </section>
         <div class="dialogActions">
           <button type="button" id="resetShortcuts">
             Premiere-style defaults</button
@@ -486,6 +509,13 @@
           ><button type="submit" class="primary">Apply</button>
         </div>
       </form>
+    </dialog>
+    <dialog id="settingHelpDialog" aria-labelledby="settingHelpTitle">
+      <h2 id="settingHelpTitle"></h2>
+      <p id="settingHelpDescription"></p>
+      <h3 id="settingHelpGuide"></h3>
+      <ul id="settingHelpList"></ul>
+      <form method="dialog" class="dialogActions"><button autofocus>Close</button></form>
     </dialog>
     <script type="module" src="app.js"></script>
   </body>

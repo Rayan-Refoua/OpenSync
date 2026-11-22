@@ -54,9 +54,21 @@ export function chooseFeeds(project, t, pins, current, limit) {
   return result;
 }
 export class CameraMonitor {
+  expectedTime(t) {
+    const expected = Math.max(0, t.target - t.previewStart);
+    const ranges = t.video.buffered;
+    // The first encoded frame can land after the requested time, especially
+    // at a clip boundary. A seek into that empty interval cannot become ready.
+    for (let i = 0; i < ranges.length; i++) {
+      const start = ranges.start(i);
+      if (start >= t.segmentStart && start > expected && start - expected <= 0.12)
+        return start;
+    }
+    return expected;
+  }
   bufferInfo(t) {
     const v = t.video,
-      expected = Math.max(0, t.target - t.previewStart),
+      expected = this.expectedTime(t),
       speed = t.sourceSpeed || 1;
     const end = Math.min(
       Number.isFinite(v.duration) ? v.duration : Infinity,
@@ -74,7 +86,7 @@ export class CameraMonitor {
           !t.failed &&
           t.video.readyState >= 2 &&
           !t.video.seeking &&
-          Math.abs(t.video.currentTime - (t.target - t.previewStart)) < 0.12 &&
+          Math.abs(t.video.currentTime - this.expectedTime(t)) < 0.12 &&
           (seconds === 0 ||
             hasBuffer(
               this.bufferInfo(t).ahead,
@@ -92,6 +104,7 @@ export class CameraMonitor {
       return (
         t.failed ||
         t.video.readyState < 2 ||
+        t.joining ||
         !hasBuffer(b.ahead, b.remaining, b.speed, BUFFER_FLOOR + 0.25) ||
         t.hardCorrection
       );
@@ -101,7 +114,7 @@ export class CameraMonitor {
     const deadline = performance.now() + 60000;
     try {
       while (!signal.aborted) {
-        this.tick(time, false, rate);
+        this.tick(time, false, rate, true);
         if (this.ready(rate > 0 ? BUFFER_TARGET : 0)) return;
         const minimum = this.tiles.length
           ? Math.min(
@@ -133,6 +146,7 @@ export class CameraMonitor {
     this.onSelect = onSelect;
     this.pins = new Set();
     this.tiles = [];
+    this.warm = new Map();
     this.maxFeeds = 4;
     this.visible = true;
     this.lastTick = 0;
@@ -151,6 +165,8 @@ export class CameraMonitor {
   }
   reset() {
     for (const t of this.tiles) this.release(t);
+    for (const t of this.warm.values()) this.release(t);
+    this.warm.clear();
     this.tiles = [];
     this.pins.clear();
   }
@@ -160,6 +176,8 @@ export class CameraMonitor {
       .getElementById("monitorPanel")
       .classList.toggle("collapsed", !this.visible);
     if (!this.visible) {
+      for (const t of this.warm.values()) this.release(t);
+      this.warm.clear();
       for (const t of this.tiles) {
         t.buffered?.close();
         t.buffered = null;
@@ -170,7 +188,52 @@ export class CameraMonitor {
       }
     }
   }
-  tick(time, playing, rate = 1) {
+  prefetch(project, time, rate, feeds) {
+    const candidates = new Map();
+    if (rate > 0) {
+      const horizon = time + 12 * rate;
+      const boundaries = new Set();
+      for (const c of project.clips) {
+        if (!c.video || c.missing) continue;
+        for (const boundary of videoRange(c))
+          if (boundary > time && boundary <= horizon) boundaries.add(boundary);
+      }
+      let selected = feeds;
+      for (const boundary of [...boundaries].sort((a, b) => a - b)) {
+        selected = chooseFeeds(project, boundary, this.pins, selected, this.maxFeeds);
+        for (const { clip } of selected) {
+          if (!feeds.some((f) => f.clip.index === clip.index) && !candidates.has(clip.index))
+            candidates.set(clip.index, { clip, boundary });
+          if (candidates.size >= 2) break;
+        }
+        if (candidates.size >= 2) break;
+      }
+    }
+    for (const [index, tile] of this.warm) {
+      if (!candidates.has(index)) {
+        this.release(tile);
+        this.warm.delete(index);
+      }
+    }
+    for (const [index, { clip, boundary }] of candidates) {
+      let tile = this.warm.get(index);
+      const source = clamp(mapTime(clip.mapping, boundary, true), 0, clip.duration);
+      if (!tile) {
+        tile = this.makeTile();
+        tile.el.hidden = true;
+        tile.clip = clip;
+        tile.key = `${this.generation}:${index}`;
+        tile.joining = true;
+        this.warm.set(index, tile);
+        this.load(tile, source, false);
+      }
+      tile.target = source;
+      tile.buffered?.ensure(source, rate / (clip.rate || 1));
+      if (tile.video.readyState >= 1 && Math.abs(tile.video.currentTime - this.expectedTime(tile)) > 0.008)
+        tile.video.currentTime = this.expectedTime(tile);
+    }
+  }
+  tick(time, playing, rate = 1, prefetch = playing) {
     if (!this.visible || !this.enabled) return;
     const state = this.getState(),
       p = state.project;
@@ -201,7 +264,15 @@ export class CameraMonitor {
       });
     const spare = this.tiles.filter((t) => !used.has(t));
     for (let i = 0; i < ordered.length; i++) {
-      if (!ordered[i]) ordered[i] = spare.shift() || this.makeTile();
+      if (!ordered[i]) {
+        const index = feeds[i].clip.index;
+        ordered[i] = this.warm.get(index);
+        if (ordered[i]) {
+          this.warm.delete(index);
+          if (ordered[i].failed) ordered[i].key = "";
+        } else ordered[i] = spare.shift() || this.makeTile();
+      }
+      ordered[i].el.hidden = false;
       ordered[i].el.style.order = i;
     }
     for (const t of spare) this.release(t);
@@ -236,6 +307,7 @@ export class CameraMonitor {
         tile.failed = false;
         tile.previewStart = 0;
         tile.target = source;
+        tile.joining = true;
         this.load(tile, source, false);
       }
       tile.target = source;
@@ -248,20 +320,21 @@ export class CameraMonitor {
       ) {
         this.load(tile, source, true);
       }
-      const expected = source - (tile.proxy ? tile.previewStart : 0),
+      const expected = this.expectedTime(tile),
         v = tile.video;
       // A new seek supersedes an unfinished seek. Waiting for HAVE_CURRENT_DATA
       // or !seeking deadlocks when the old target was evicted while the new
       // target is already buffered. Metadata is enough to move the seek target.
       if (
-        (!playing || rate < 0) &&
+        (!playing || rate < 0 || tile.joining) &&
         v.readyState >= 1 &&
-        Math.abs(v.currentTime - expected) > 0.008
+        Math.abs(v.currentTime - expected) > (tile.joining && playing ? 0.08 : 0.008)
       ) {
         v.pause();
         v.currentTime = Math.max(0, expected);
       }
-      if (v.readyState >= 2 && !tile.failed) {
+      if (v.readyState >= 2 && !v.seeking && !tile.failed) {
+        tile.joining = false;
         const error = v.currentTime - expected,
           dt =
             mapTime(c.mapping, Math.min(c.duration, source + 0.1)) -
@@ -292,7 +365,7 @@ export class CameraMonitor {
           : v.currentTime;
         const drift = (displayed - expected) * 1000;
         const buffer = this.bufferInfo(tile);
-        tile.detail.textContent = `${c.state.toUpperCase()} · source ${formatTime(source)} · frame Δ ${drift.toFixed(0)} ms · buffer ${(buffer.ahead / desired).toFixed(1)}s · ${tile.buffered ? "BUFFERED PREVIEW 640×360" : tile.proxy ? "SOFTWARE PREVIEW 25 fps" : "NATIVE VIDEO"}`;
+        tile.detail.textContent = `${c.state.toUpperCase()} · source ${formatTime(source)} · frame Δ ${drift.toFixed(0)} ms · buffer ${(buffer.ahead / desired).toFixed(1)}s · ${tile.buffered ? `${v.videoWidth}×${v.videoHeight} PREVIEW` : "VIDEO"}`;
         const now = performance.now();
         if (playing && Math.abs(drift) > 150) tile.lateSince ||= now;
         else tile.lateSince = 0;
@@ -312,6 +385,7 @@ export class CameraMonitor {
     }
     document.getElementById("monitorCount").textContent =
       `${feeds.length}/${this.maxFeeds} feeds · common timeline clock`;
+    this.prefetch(p, time, prefetch ? rate : 0, feeds);
   }
   load(tile, source, proxy) {
     const { generation } = this.getState();
@@ -319,6 +393,9 @@ export class CameraMonitor {
     tile.buffered = null;
     tile.proxy = proxy;
     tile.previewStart = proxy ? Math.max(0, source - 1) : 0;
+    tile.target = source;
+    tile.segmentStart = Math.floor(source / 12) * 12;
+    tile.failed = false;
     tile.frameTime = NaN;
     tile.lateSince = 0;
     tile.badClockSince = 0;
@@ -384,7 +461,7 @@ export class CameraMonitor {
     };
     el.ondblclick = () => tile.clip && this.onSelect(tile.clip);
     video.onloadedmetadata = () => {
-      video.currentTime = Math.max(0, tile.target - tile.previewStart);
+      video.currentTime = this.expectedTime(tile);
     };
     video.onerror = () => {
       if (!tile.key || !video.error) return;

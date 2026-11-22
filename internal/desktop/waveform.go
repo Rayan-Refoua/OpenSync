@@ -165,7 +165,7 @@ func (s *Service) loadPeakChunk(ctx context.Context, c Clip, index int64, dir, k
 		return nil, gateErr
 	}
 	defer done()
-	if dir != "" {
+	if key != "" {
 		// Validate the original's identity before reusing a project sidecar.
 		// Read only metadata here; a cache hit skips opening the audio stream.
 		actual, err := sourcePeakKey(c)
@@ -174,10 +174,19 @@ func (s *Service) loadPeakChunk(ctx context.Context, c Clip, index int64, dir, k
 		}
 		if actual+"\x00"+strconv.FormatInt(index, 10) != key {
 			dir = ""
+			key = ""
 		}
 	}
 	if cached := readPeakChunk(dir, key); cached != nil {
 		return cached, nil
+	}
+	if key != "" {
+		if cached := readRecentPeak(s.recentPeakDirs(), dir, key); cached != nil {
+			if dir != "" {
+				_ = writePeakChunk(dir, key, cached)
+			}
+			return cached, nil
+		}
 	}
 	if err := s.visual.acquire(ctx); err != nil {
 		return nil, err
@@ -259,26 +268,11 @@ func (s *Service) waveFromPeaks(ctx, life context.Context, c Clip, level, tile i
 		return nil, fmt.Errorf("waveform tile outside source")
 	}
 	start := int64(startFloat)
-	var identity string
-	var err error
-	if c.Metadata.SourceBytes > 0 && c.Metadata.SourceMtime > 0 {
-		identity, err = peakIdentity(c.Source, c.Metadata.SourceBytes, c.Metadata.SourceMtime)
-	} else {
-		identity, err = sourcePeakKey(c)
-	}
+	identity, err := sourcePeakKey(c)
 	if err != nil {
 		return nil, err
 	}
-	dir := ""
-	if p := s.Project(); p != nil && p.Path != "" {
-		path := p.Path
-		if revision, ok := p.Graph["solution_revision"].(map[string]any); ok {
-			if base, ok := revision["base_project"].(string); ok && base != "" {
-				path = base
-			}
-		}
-		dir = filepath.Join(filepath.Dir(path), "Waveform Peaks")
-	}
+	dir := projectPeakDir(s.Project())
 	out := make([]byte, bins*8)
 	// One tile can touch several source chunks. Hold local references only for
 	// the duration of this request; the shared LRU owns the bounded resident set.

@@ -86,6 +86,7 @@ func (c *byteCache) setLimit(limit int) {
 }
 
 type Service struct {
+	recent                   recentProjects
 	preview                  previewGate
 	mu                       sync.RWMutex
 	project                  *Project

@@ -490,6 +490,9 @@ aside {
   background: #080c10;
   border: 1px solid #34434f;
 }
+.cameraTile[hidden] {
+  display: none;
+}
 .cameraTile video {
   width: 100%;
   height: 100%;
@@ -1080,6 +1083,43 @@ main {
   display: grid;
   gap: 5px;
 }
+body:has(.workflow) { grid-template-rows: auto 27px auto minmax(0, 1fr) auto; }
+header:has(.workflow) { height: auto; padding-block: 7px; }
+.workflow { display: flex; flex: 1; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.workflowStep {
+  display: grid; gap: 4px; padding: 3px 7px 5px;
+  border: 1px solid var(--line); border-radius: 3px;
+  background: #171d23;
+}
+.workflowStep[aria-current="step"] { border-color: #52768a; }
+.stepLabel { font-size: 10px; color: var(--muted); }
+.workflowStep[aria-current="step"] .stepLabel { color: #a9d9e7; }
+.stepActions { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+.settingWithHelp { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.settingWithHelp > label { flex: 1; min-width: 0; }
+.settingWithHelp > .settingHelpButton {
+  display: inline-grid; place-items: center; flex: 0 0 26px;
+  width: 26px; height: 26px; padding: 0; color: #a9d9e7;
+}
+[data-settings="sync"] > .settingWithHelp { justify-content: start; margin-bottom: 12px; }
+[data-settings="sync"] > .settingWithHelp > label { flex: initial; }
+#settingHelpDialog {
+  width: min(490px, 90vw); padding: 18px; border: 1px solid #52768a;
+  border-radius: 3px; background: #1b222a; color: var(--text);
+}
+#settingHelpDialog::backdrop { background: #05090d99; }
+#settingHelpDialog h2 { margin: 0; font-size: 16px; }
+#settingHelpDialog h3 { margin-bottom: 0; color: #a9d9e7; font-size: 12px; }
+#settingHelpDialog p { line-height: 1.55; }
+#settingHelpDialog ul { padding-left: 18px; line-height: 1.45; }
+#settingHelpDialog li + li { margin-top: 10px; }
+#settingHelpDialog li strong { display: block; color: #dce3eb; }
+.stepActions button, .stepActions select { font-size: 11px; padding: 4px 6px; }
+.stepActions #sync { flex: 0 0 116px; }
+#settingsDialog [data-settings] + [data-settings]:not([hidden]) { margin-top: 14px; }
+#settingsDialog [data-settings="sync"] > label { display: block; margin-bottom: 12px; }
+#settingsDialog fieldset { grid-column: 1 / -1; min-width: 0; border: 1px solid var(--line); }
+#settingsDialog fieldset label { margin-block: 5px; }
 .relationReview {
   display: flex;
   align-items: center;
@@ -1120,6 +1160,12 @@ header #sync { flex: 0 0 138px; font-family: Consolas, monospace; }
 #currentState > div:first-child { display: contents; }
 #stateTitle, #stateDetail, #stateNext { min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #stateNext { display: none; }
+@media (min-width: 1400px) {
+  body:has(.workflow) #currentState {
+    grid-template-columns: 210px minmax(0, 1.35fr) minmax(0, 1fr) 105px;
+  }
+  body:has(.workflow) #stateNext { display: block; color: var(--muted); }
+}
 #stageProgress { position: static; width: 105px; height: 4px; border-radius: 2px; overflow: hidden; }
 #stageProgress.inactive { visibility: hidden; }
 main { height: auto; min-height: 0; min-width: 0; }

@@ -160,6 +160,7 @@ func nativeInputFiles(o NativeSyncOptions) ([]string, []map[string]any, error) {
 	}
 	output, _ := filepath.Abs(o.Output)
 	seen := map[string]bool{}
+	selectedFiles := map[string]bool{}
 	for _, selected := range explicit {
 		root, err := filepath.Abs(selected)
 		if err != nil {
@@ -197,6 +198,9 @@ func nativeInputFiles(o NativeSyncOptions) ([]string, []map[string]any, error) {
 				return nil
 			}
 			key := strings.ToLower(filepath.Clean(path))
+			if path == root {
+				selectedFiles[key] = true
+			}
 			if !seen[key] {
 				seen[key] = true
 				files = append(files, path)
@@ -207,6 +211,24 @@ func nativeInputFiles(o NativeSyncOptions) ([]string, []map[string]any, error) {
 			return nil, nil, err
 		}
 	}
+	media := files[:0]
+	for _, path := range files {
+		key := strings.ToLower(filepath.Clean(path))
+		if !selectedFiles[key] && strings.HasSuffix(key, "t01.jpg") {
+			stem := strings.TrimSuffix(key, "t01.jpg")
+			movieStem := stem
+			if folder := filepath.Dir(key); filepath.Base(folder) == "thmbnl" {
+				movieStem = filepath.Join(filepath.Dir(folder), "clip", filepath.Base(stem))
+			}
+			if seen[stem+".mp4"] || seen[stem+".mov"] || seen[stem+".mxf"] ||
+				seen[movieStem+".mp4"] || seen[movieStem+".mov"] || seen[movieStem+".mxf"] {
+				excluded = append(excluded, map[string]any{"path": path, "reason": "camera thumbnail sidecar with matching video"})
+				continue
+			}
+		}
+		media = append(media, path)
+	}
+	files = media
 	sort.SliceStable(files, func(i, j int) bool { return mediaPathLess(files[i], files[j]) })
 	if len(files) == 0 {
 		return nil, excluded, fmt.Errorf("empty source selection")

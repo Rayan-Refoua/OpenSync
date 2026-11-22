@@ -1073,7 +1073,6 @@ async function poll() {
     }
     $("engineStage").textContent = s.stage;
     $("activityDetail").textContent = s.detail;
-    $("build").textContent = `GO ${s.version}`;
     $("sync").textContent = s.running
       ? "Synchronizing…"
       : s.inputs

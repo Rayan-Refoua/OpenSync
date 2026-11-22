@@ -58,6 +58,7 @@ func (a *App) ReportPreviewState(active, ready int) {
 func newApp() *App {
 	a := &App{media: desktop.NewService(), stage: "Ready", clipActivity: map[int]string{}, resources: desktop.NewResourceMonitor(), stageStarted: time.Now()}
 	a.loadSettings()
+	a.media.LoadRecentProjects()
 	return a
 }
 func (a *App) startup(ctx context.Context) {
@@ -96,6 +97,9 @@ func (a *App) OpenProject(path string) (*desktop.Project, error) {
 		return nil, e
 	}
 	a.media.SetProject(p)
+	if err := a.media.RememberProject(p); err != nil {
+		a.log("warning", "Could not save recent project history: "+err.Error())
+	}
 	a.mu.Lock()
 	a.outcome = "ready"
 	a.stage = "Project ready"
