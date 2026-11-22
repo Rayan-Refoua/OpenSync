@@ -112,7 +112,9 @@ func (s *Service) SetProject(p *Project) *Project {
 	s.cancel()
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 	s.generation++
-	p.Generation = s.generation
+	if p != nil {
+		p.Generation = s.generation
+	}
 	s.project = p
 	return p
 }
@@ -281,6 +283,27 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	c := p.Clips[idx]
 	if c.Missing {
 		http.Error(w, "source media is missing; locate its folder", 404)
+		return
+	}
+	if r.URL.Path == "/media/review-audio" {
+		if !c.Audio {
+			http.Error(w, "recording has no audio", 422)
+			return
+		}
+		job, done, err := s.preview.enter(ctx)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusServiceUnavailable)
+			return
+		}
+		defer done()
+		c.Start, c.End = 0, c.Duration
+		c.Mapping = []autosync.TimePoint{{0, 0}, {c.Duration, c.Duration}}
+		isolated := &Project{Duration: c.Duration, Clips: []Clip{c}, Tracks: []Track{{Clips: []int{0}}}}
+		q := r.URL.Query()
+		q.Set("tracks", "[0]")
+		request := r.Clone(job)
+		request.URL.RawQuery = q.Encode()
+		s.serveAudio(job, w, request, isolated)
 		return
 	}
 	key := fmt.Sprintf("%d:%s?%s", g, r.URL.Path, r.URL.RawQuery)

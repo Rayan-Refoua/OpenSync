@@ -58,7 +58,7 @@
         </section>
         <section class="workflowStep" data-step="review" aria-label="Review">
           <span class="stepLabel">3 · Review</span>
-          <div class="stepActions" id="reviewActions"></div>
+          <div class="stepActions" id="reviewActions"><button id="openMatchReview" disabled>Review matches</button></div>
         </section>
         <section class="workflowStep" data-step="export" aria-label="Export">
           <span class="stepLabel">4 · Export</span>
@@ -74,6 +74,7 @@
       >
         Workstation
       </button>
+      <button id="resetWorkstation" title="Clear the open timeline and inputs, and restore settings defaults">Reset</button>
     </header>
       <section
         id="currentState"
@@ -157,6 +158,27 @@
         </div>
       </details>
     </section>
+    <dialog id="matchReviewDialog" aria-labelledby="matchReviewTitle">
+      <div class="matchReviewHeader"><h2 id="matchReviewTitle">Match review</h2><button id="closeMatchReview">Close</button></div>
+      <label>Candidate placement <select id="matchCandidates"></select></label>
+      <div class="matchTimeline">
+        <div id="matchReference"></div>
+        <div id="matchQuery"></div>
+        <canvas id="matchWaveforms" width="1000" height="160" aria-label="Aligned reference and candidate audio waveforms"></canvas>
+      </div>
+      <label>Audition position <input id="matchPosition" type="range" min="0" max="0" step="any"></label>
+      <output id="matchWindow"></output>
+      <div class="matchReviewHeader">
+        <label>Listen <select id="matchListen"><option value="both">Both tracks</option><option value="0">Reference only</option><option value="1">Candidate only</option></select></label>
+        <button id="matchPlay">Play window</button><button id="matchStop">Stop</button>
+        <span id="matchReviewStatus" role="status"></span>
+      </div>
+      <div class="dialogActions">
+        <button id="matchReject">Reject candidate</button>
+        <button id="matchRejectNext">Reject and next</button>
+        <button id="matchAccept" class="primary">Accept placement</button>
+      </div>
+    </dialog>
     <dialog id="findClipDialog">
       <h3>Find recording</h3>
       <input id="findClipInput" type="search" aria-label="Recording filename" placeholder="Type part of a filename" autofocus />

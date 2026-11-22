@@ -365,7 +365,18 @@ export class CameraMonitor {
           : v.currentTime;
         const drift = (displayed - expected) * 1000;
         const buffer = this.bufferInfo(tile);
-        tile.detail.textContent = `${c.state.toUpperCase()} · source ${formatTime(source)} · frame Δ ${drift.toFixed(0)} ms · buffer ${(buffer.ahead / desired).toFixed(1)}s · ${tile.buffered ? `${v.videoWidth}×${v.videoHeight} PREVIEW` : "VIDEO"}`;
+        const values = [
+          c.state.toUpperCase(),
+          `SRC ${formatTime(source)}`,
+          `Δ ${drift.toFixed(0)} ms`,
+          `BUF ${(buffer.ahead / desired).toFixed(1)}s`,
+          tile.buffered ? `${v.videoWidth}×${v.videoHeight}` : "VIDEO",
+        ];
+        if (tile.detail.firstChild !== tile.detailGrid) tile.detail.replaceChildren(tile.detailGrid);
+        values.forEach((value, i) => {
+          const field = tile.detailGrid.children[i];
+          if (field.textContent !== value) field.textContent = field.title = value;
+        });
         const now = performance.now();
         if (playing && Math.abs(drift) > 150) tile.lateSince ||= now;
         else tile.lateSince = 0;
@@ -433,6 +444,9 @@ export class CameraMonitor {
     title.className = "cameraTitle";
     const detail = document.createElement("div");
     detail.className = "cameraDetail";
+    const detailGrid = document.createElement("div");
+    detailGrid.className = "cameraTelemetry";
+    for (let i = 0; i < 5; i++) detailGrid.append(document.createElement("span"));
     const overlay = document.createElement("div");
     overlay.className = "cameraOverlay";
     const pin = document.createElement("button");
@@ -446,6 +460,7 @@ export class CameraMonitor {
       video,
       title,
       detail,
+      detailGrid,
       overlay,
       pin,
       key: "",

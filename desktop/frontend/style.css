@@ -523,6 +523,14 @@ aside {
   color: #8fa6b5;
   font-size: 9px;
 }
+.cameraTelemetry {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 17ch 11ch 10ch 9ch;
+  gap: 5px;
+  font-variant-numeric: tabular-nums;
+}
+.cameraTelemetry span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.cameraTelemetry span:nth-child(3), .cameraTelemetry span:nth-child(4) { text-align: right; }
 .cameraTile.late {
   border-color: #a27d48;
 }
@@ -1101,6 +1109,10 @@ header:has(.workflow) { height: auto; padding-block: 7px; }
   display: inline-grid; place-items: center; flex: 0 0 26px;
   width: 26px; height: 26px; padding: 0; color: #a9d9e7;
 }
+.settingWithHelp > .resetSetting { width: 25px; padding: 3px 0; flex: 0 0 25px; }
+.settingWithHelp > .resetSetting:disabled { visibility: hidden; }
+.changedSetting > label, .changedSetting input, .changedSetting select,
+.changedSetting > .resetSetting { color: #ffad63; }
 [data-settings="sync"] > .settingWithHelp { justify-content: start; margin-bottom: 12px; }
 [data-settings="sync"] > .settingWithHelp > label { flex: initial; }
 #settingHelpDialog {
@@ -1218,3 +1230,13 @@ button.ui-icon::before {
 .engineSettings { margin-bottom: 12px; border: 1px solid var(--line); padding: 8px; }
 .engineSettings > summary { cursor: pointer; }
 .engineSettings[open] > summary { margin-bottom: 8px; }
+.matchReviewHeader { display: flex; align-items: center; gap: 8px; }
+#matchReviewDialog { width: min(1120px, 94vw); color: var(--text); background: #1b222a; border: 1px solid #52768a; }
+#matchReviewDialog::backdrop { background: #05090dcc; }
+#matchReviewTitle { flex: 1; margin: 0 0 10px; }
+#matchReviewDialog > label { display: flex; align-items: center; gap: 10px; margin-block: 10px; }
+#matchCandidates, #matchPosition { flex: 1; min-width: 0; }
+.matchTimeline { display: grid; grid-template: repeat(2, 80px) / minmax(100px, 22%) minmax(0, 1fr); align-items: center; gap: 0 8px; }
+.matchTimeline > div { grid-column: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+#matchWaveforms { grid-column: 2; grid-row: 1 / 3; width: 100%; height: 160px; }
+#matchWindow { display: block; font-family: Consolas, monospace; margin-bottom: 10px; }

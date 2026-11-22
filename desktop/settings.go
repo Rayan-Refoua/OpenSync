@@ -84,6 +84,7 @@ func normalizeLayout(s *WorkstationSettings) error {
 func defaultSettings() WorkstationSettings {
 	return WorkstationSettings{MaxResidualMS: 150, TrackLayout: "family", AudioEarlyMS: 50, AudioLateMS: 70, Mode: "clips", Resources: desktop.DefaultResourceSettings(), Shortcuts: map[string]string{}, Layout: MonitorLayout{Position: "right", Rows: 4}}
 }
+func (a *App) DefaultSettings() WorkstationSettings { return defaultSettings() }
 func settingsPath() string {
 	root, err := os.UserConfigDir()
 	if err != nil {
