@@ -65,14 +65,28 @@ func (a *NativeAnalyzer) Close() {
 		}
 	}
 }
+func pcmWindowFrames(start, length float64, total int64) (first, count int64) {
+	first, count = roundFrame(start*16000), roundFrame(length*16000)
+	// A window ending at the recording boundary can round up both its start
+	// and length even though its combined endpoint is within the PCM grid.
+	// Preserve the existing length for interior windows.
+	if first >= 0 && count > 0 && first+count == total+1 &&
+		(start+length)*16000 <= float64(total)+0.500001 {
+		count--
+	}
+	return first, count
+}
+
 func (a *NativeAnalyzer) read(record int, start, length float64) ([]float32, error) {
 	if err := a.ctx.Err(); err != nil {
 		return nil, err
 	}
 	if w := memoryWorkspace(a.ctx); w != nil {
-		samples, err := w.audio.read(a.ctx, a.records[record], roundFrame(start*16000), roundFrame(length*16000))
+		r := a.records[record]
+		first, count := pcmWindowFrames(start, length, roundFrame(r.Duration*16000))
+		samples, err := w.audio.read(a.ctx, r, first, count)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("%s: PCM window %.9fs + %.9fs: %w", r.Name, start, length, err)
 		}
 		values := make([]float32, len(samples))
 		for i, v := range samples {
@@ -93,9 +107,9 @@ func (a *NativeAnalyzer) read(record int, start, length float64) ([]float32, err
 	if err != nil {
 		return nil, err
 	}
-	first, count := roundFrame(start*16000), roundFrame(length*16000)
+	first, count := pcmWindowFrames(start, length, r.Frames())
 	if first < 0 || count < 0 || first+count > r.Frames() {
-		return nil, fmt.Errorf("PCM interval outside recording")
+		return nil, fmt.Errorf("%s: PCM interval outside recording (start %.9fs, length %.9fs, available %d samples)", a.records[record].Name, start, length, r.Frames())
 	}
 	a.io <- struct{}{}
 	samples, err := r.ReadFrames(first, count)
