@@ -46,11 +46,29 @@ func TestManualMatchRevisions(t *testing.T) {
 	if len(candidates) != 2 {
 		t.Fatalf("got %d competing candidates", len(candidates))
 	}
+	// A candidate can be confirmed even when accepting its placement would
+	// change an existing group. Confirmation does not rewrite timing models.
+	grouped := load(base)
+	for i := range grouped.Data.Models {
+		if grouped.Data.Models[i].Recording == 3 {
+			grouped.Data.Models[i].ComponentSize = 2
+		}
+	}
+	_, graph, _, err = reviewCandidate(grouped, candidates[0].ID, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := graph["manual_candidate_decisions"].(map[string]any)[candidates[0].ID]; got != "confirmed" {
+		t.Fatalf("want human confirmation, got %v", got)
+	}
 	rejected := revise(base, "reject_candidate", candidates[0].ID)
 	if _, err := CreateSolution(rejected, ReviewChange{Kind: "accept_candidate", Candidate: candidates[0].ID}); err == nil {
 		t.Fatal("rejected candidate can be accepted without undo")
 	}
 	accepted := revise(rejected, "accept_candidate", candidates[1].ID)
+	if got := ManualCandidates(load(accepted).Data); len(got) != 2 {
+		t.Fatalf("review queue lost saved decisions: %+v", got)
+	}
 	for _, path := range []string{accepted, revise(accepted, "rebuild", "")} {
 		p := load(path)
 		m, anchor := solutionModel(t, p, 3), solutionModel(t, p, 0)

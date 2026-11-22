@@ -59,6 +59,7 @@ func reapplyManualCandidates(records []MediaRecord, models []map[string]any, gra
 }
 
 func ManualCandidates(p NativePayload) []ManualCandidate {
+	decisions, _ := p.Graph["manual_candidate_decisions"].(map[string]any)
 	models := map[int]TimeModel{}
 	for _, m := range p.Models {
 		models[m.Recording] = m
@@ -83,7 +84,7 @@ func ManualCandidates(p NativePayload) []ManualCandidate {
 		reference, refOK := models[r]
 		query, queryOK := models[q]
 		if !refOK || !queryOK || r == q || r < 0 || q < 0 || r >= len(p.Records) || q >= len(p.Records) ||
-			p.Records[r].Audio == nil || p.Records[q].Audio == nil || (reference.Resolved && query.Resolved) {
+			p.Records[r].Audio == nil || p.Records[q].Audio == nil {
 			continue
 		}
 		for _, h := range pair.Hypotheses {
@@ -92,17 +93,22 @@ func ManualCandidates(p NativePayload) []ManualCandidate {
 				continue
 			}
 			shift := *h.Prior.Offset + reference.AudioOrigin - query.AudioOrigin
-			if query.Resolved && !reference.Resolved {
-				r, q, shift = pair.Query, pair.Reference, -shift
-			}
-			if math.Min(p.Records[q].Duration, p.Records[r].Duration-shift)-math.Max(0, -shift) < .25 {
-				continue
-			}
-			id := fmt.Sprintf("%d:%d:%.9f", r, q, shift)
-			if !seen[id] {
+			preferredReverse := query.Resolved && !reference.Resolved
+			for _, reversed := range []bool{false, true} {
+				r, q, offset := r, q, shift
+				if reversed {
+					r, q, offset = q, r, -offset
+				}
+				id := fmt.Sprintf("%d:%d:%.9f", r, q, offset)
+				pending := reversed == preferredReverse && !(reference.Resolved && query.Resolved)
+				if seen[id] || (!pending && decisions[id] == nil) ||
+					math.Min(p.Records[q].Duration, p.Records[r].Duration-offset)-math.Max(0, -offset) < .25 {
+					continue
+				}
 				seen[id] = true
-				canAccept := !strings.HasPrefix(models[r].Status, "provisional_") && models[q].ComponentSize == 1
-				result = append(result, ManualCandidate{id, r, q, shift, h.Status, canAccept})
+				canAccept := !models[q].Resolved && !strings.HasPrefix(models[r].Status, "provisional_") &&
+					models[q].ComponentSize == 1 && (models[r].Resolved || models[q].TimingBasis != "manual_local_audio_review")
+				result = append(result, ManualCandidate{id, r, q, offset, h.Status, canAccept})
 			}
 		}
 	}
@@ -134,8 +140,8 @@ func reviewCandidate(p *NativeProject, id string, accept bool) ([]map[string]any
 		decisions = map[string]any{}
 	}
 	graph["manual_candidate_decisions"] = decisions
-	if decisions[id] == "rejected" {
-		return nil, nil, "", fmt.Errorf("candidate was already rejected; undo the revision to review it again")
+	if decisions[id] != nil {
+		return nil, nil, "", fmt.Errorf("candidate was already reviewed; undo the revision to review it again")
 	}
 	label := "Reject candidate"
 	decisions[id] = "rejected"
@@ -161,11 +167,9 @@ func reviewCandidate(p *NativeProject, id string, accept bool) ([]map[string]any
 				target = m
 			}
 		}
-		if !candidate.CanAccept || target.Resolved {
-			return nil, nil, "", fmt.Errorf("acceptance requires a stable reference and a recording outside existing multi-clip groups")
-		}
-		if !anchor.Resolved && target.TimingBasis == "manual_local_audio_review" {
-			return nil, nil, "", fmt.Errorf("undo the existing local placement before accepting another")
+		if !candidate.CanAccept {
+			decisions[id] = "confirmed"
+			return models, graph, "Confirm match · " + p.Data.Records[q].Name, nil
 		}
 		length := p.Data.Records[q].Duration
 		point := func(x float64) float64 {

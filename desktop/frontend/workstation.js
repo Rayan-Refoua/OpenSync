@@ -394,7 +394,7 @@ export function setupWorkstation(h) {
     h.action(async () => {
       if (!$("historyList").value) return;
       h.stop();
-      h.setProject(await h.api().OpenProject($("historyList").value), false);
+      h.setProject(await h.api().SelectHistoryRevision($("historyList").value), false);
       $("historyDialog").close();
     });
   $("syncMode").onchange = () =>

@@ -1128,7 +1128,7 @@ async function poll() {
       const p = await api().GetProject();
       setProject(p, !state.project || !s.running);
     }
-    $("openMatchReview").disabled = s.running || !state.project?.path || !matchReview.available().length;
+    $("openMatchReview").disabled = s.running || !state.project?.path || !state.project?.manualCandidates?.length;
     let changed = false;
     if (s.running && state.project) {
       for (const [i, text] of Object.entries(s.clipActivity || {})) {

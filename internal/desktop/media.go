@@ -474,7 +474,11 @@ func (s *Service) serveAudio(ctx context.Context, w http.ResponseWriter, r *http
 	duration, e2 := strconv.ParseFloat(r.URL.Query().Get("duration"), 64)
 	var tracks []int
 	e3 := json.Unmarshal([]byte(r.URL.Query().Get("tracks")), &tracks)
-	if e != nil || e2 != nil || e3 != nil || math.IsNaN(start) || math.IsNaN(duration) || math.IsInf(start, 0) || start < 0 || start > p.Duration || duration <= 0 || duration > 4 || len(tracks) == 0 || len(tracks) > 2 {
+	maxDuration := 4.0
+	if r.URL.Path == "/media/review-audio" {
+		maxDuration = maxReviewDuration
+	}
+	if e != nil || e2 != nil || e3 != nil || math.IsNaN(start) || math.IsNaN(duration) || math.IsInf(start, 0) || start < 0 || start > p.Duration || duration <= 0 || duration > maxDuration || len(tracks) == 0 || len(tracks) > 2 {
 		http.Error(w, "invalid audition request", 400)
 		return
 	}

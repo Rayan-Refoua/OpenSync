@@ -86,6 +86,22 @@ func (a *App) logRecording(kind, message string, recording *int) {
 }
 func (a *App) GetProject() *desktop.Project { return a.media.Project() }
 func (a *App) OpenProject(path string) (*desktop.Project, error) {
+	active, err := activeReviewPath(path)
+	if err != nil {
+		return nil, err
+	}
+	return a.openProject(active, "")
+}
+
+func (a *App) SelectHistoryRevision(path string) (*desktop.Project, error) {
+	current := a.media.Project()
+	if current == nil {
+		return nil, fmt.Errorf("no project")
+	}
+	return a.openProject(path, reviewBase(current))
+}
+
+func (a *App) openProject(path, updateBase string) (*desktop.Project, error) {
 	a.mu.Lock()
 	busy := a.running
 	a.mu.Unlock()
@@ -95,6 +111,14 @@ func (a *App) OpenProject(path string) (*desktop.Project, error) {
 	p, e := desktop.LoadProject(path)
 	if e != nil {
 		return nil, e
+	}
+	if updateBase != "" {
+		if !strings.EqualFold(filepath.Clean(reviewBase(p)), filepath.Clean(updateBase)) {
+			return nil, fmt.Errorf("revision belongs to a different project")
+		}
+		if err := saveActiveReview(updateBase, path); err != nil {
+			return nil, err
+		}
 	}
 	a.media.SetProject(p)
 	if err := a.media.RememberProject(p); err != nil {

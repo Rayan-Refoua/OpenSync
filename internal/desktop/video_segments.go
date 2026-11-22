@@ -12,6 +12,8 @@ import (
 
 type segmentBuffer struct{ bytes.Buffer }
 
+const maxReviewDuration = 12
+
 func (b *segmentBuffer) Write(p []byte) (int, error) {
 	if b.Len()+len(p) > 16<<20 {
 		return 0, fmt.Errorf("preview segment exceeds 16 MiB limit")
@@ -40,6 +42,14 @@ func (s *Service) videoSegment(ctx context.Context, w http.ResponseWriter, r *ht
 	requestStart := start
 	start = math.Max(0, start-.2)
 	duration := math.Min(requestStart+12.2-start, c.Duration-start)
+	if value := r.URL.Query().Get("reviewDuration"); value != "" {
+		window, err := strconv.ParseFloat(value, 64)
+		if err != nil || math.IsNaN(window) || window <= 0 || window > maxReviewDuration {
+			http.Error(w, "invalid review preview duration", 400)
+			return
+		}
+		duration = math.Min(requestStart+window+.2-start, c.Duration-start)
+	}
 	cmd, err := command(job, "-hide_banner", "-v", "info", "-nostats", "-nostdin", "-threads", "2", "-filter_threads", "1", "-ss", fmt.Sprintf("%.9f", start), "-i", c.Source, "-t", fmt.Sprintf("%.9f", duration), "-map", "0:v:0", "-an", "-vf", "scale=640:640:force_original_aspect_ratio=decrease:force_divisible_by=2:reset_sar=1,showinfo", "-fps_mode", "passthrough", "-c:v", "libx264", "-profile:v", "baseline", "-level:v", "3.1", "-preset", "ultrafast", "-crf", "23", "-maxrate", "4M", "-bufsize", "8M", "-pix_fmt", "yuv420p", "-threads", "1", "-force_key_frames", "expr:gte(t,n_forced*1)", "-movflags", "frag_keyframe+empty_moov+default_base_moof", "-f", "mp4", "pipe:1")
 	if err != nil {
 		http.Error(w, err.Error(), 422)
