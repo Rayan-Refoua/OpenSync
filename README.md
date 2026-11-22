@@ -22,7 +22,7 @@ The project combines a native synchronization engine with a desktop timeline for
 >
 > This is an early alpha, not a production-certified release. The engine acceptance benchmark remains advisory and has known gaps; Premiere XML has structural checks but is not certified across all Premiere versions, media types, or production workflows. See [known limits and benchmark results](docs/ENGINE-ACCEPTANCE.md) before relying on a result without review.
 >
-> Download [OpenSync v0.1.0-alpha.1](https://github.com/Rayan-Refoua/OpenSync/releases/tag/v0.1.0-alpha.1) or browse [all releases](https://github.com/Rayan-Refoua/OpenSync/releases).
+> Download [OpenSync v0.1.0-alpha.2](https://github.com/Rayan-Refoua/OpenSync/releases/tag/v0.1.0-alpha.2) or browse [all releases](https://github.com/Rayan-Refoua/OpenSync/releases).
 
 ---
 
@@ -215,7 +215,7 @@ For a packaged release:
 4. Add recordings and run synchronization.
 5. Inspect uncertain or unresolved results before exporting.
 
-The current published build is [v0.1.0-alpha.1](https://github.com/Rayan-Refoua/OpenSync/releases/tag/v0.1.0-alpha.1). It is a portable alpha, not an installer; Windows file associations and an installer are not included.
+The current published build is [v0.1.0-alpha.2](https://github.com/Rayan-Refoua/OpenSync/releases/tag/v0.1.0-alpha.2). It is a portable alpha, not an installer; Windows file associations and an installer are not included.
 
 The package is designed to keep `ffmpeg.exe` and `ffprobe.exe` in `runtime/bin` beside the application executables.
 
