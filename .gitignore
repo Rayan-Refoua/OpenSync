@@ -2,6 +2,7 @@
 /build/
 /dist/
 /bin/
+/release/
 *.exe
 *.dll
 *.pdb

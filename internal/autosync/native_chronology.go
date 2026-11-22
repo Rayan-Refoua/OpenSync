@@ -389,7 +389,7 @@ func chronologicalPlacements(records []MediaRecord, layout []NativeLayout, block
 
 // Rehome estimated singleton placements without changing any acoustic edge or
 // another recording's timing model. A metadata estimate never becomes an anchor.
-func applyChronology(records []MediaRecord, layout []NativeLayout, graph map[string]any) []NativeLayout {
+func applyChronology(records []MediaRecord, layout []NativeLayout, graph map[string]any, analyzers ...*NativeAnalyzer) []NativeLayout {
 	blocked := map[int]bool{}
 	var decisions []map[string]any
 	if b, err := json.Marshal(graph["event_decisions"]); err == nil {
@@ -418,6 +418,10 @@ func applyChronology(records []MediaRecord, layout []NativeLayout, graph map[str
 		}
 	}
 	placements := chronologicalPlacements(records, layout, blocked)
+	placements = append(placements, trailingFilenamePlacements(records, layout, blocked, placements)...)
+	if len(analyzers) > 0 {
+		refineChronologicalAudio(analyzers[0], layout, placements)
+	}
 	graph["chronological_placements"] = placements
 	return placeChronological(layout, records, graph, placements)
 }
@@ -469,5 +473,66 @@ func placeChronological(layout []NativeLayout, records []MediaRecord, graph map[
 	}
 	graph["acoustic_components"] = oldGroups
 	graph["components"] = groups
+	return result
+}
+
+// Estimate the start of a trailing timestamp-named clip when several placed
+// clips on its source track agree on the clock and a placed clip covers it.
+func trailingFilenamePlacements(records []MediaRecord, layout []NativeLayout, blocked map[int]bool, existing []ChronologicalPlacement) []ChronologicalPlacement {
+	models := make(map[int]NativeLayout, len(layout))
+	for _, m := range layout {
+		models[m.Recording] = m
+	}
+	placed := map[int]bool{}
+	for _, p := range existing {
+		placed[p.Recording] = true
+	}
+	groups, keys := continuitySeries(records)
+	var result []ChronologicalPlacement
+	for _, key := range keys {
+		var latest time.Time
+		var offsets []float64
+		var anchors []int
+		for _, e := range groups[key] {
+			r, m := records[e.id], models[e.id]
+			stamp, err := time.Parse("20060102_150405", strings.TrimSuffix(r.Name, filepath.Ext(r.Name)))
+			if err != nil || blocked[e.id] || m.Component != 1 || m.Status != "acoustically_supported_not_certified" || len(m.Knots) < 2 {
+				continue
+			}
+			if stamp.After(latest) {
+				latest = stamp
+			}
+			offsets = append(offsets, MapTime(m.Knots, -sourceOrigin(r))-float64(stamp.Unix()))
+			anchors = append(anchors, e.id)
+		}
+		if len(anchors) < 3 {
+			continue
+		}
+		sort.Float64s(offsets)
+		spread := offsets[len(offsets)-1] - offsets[0]
+		if spread > 1.5 {
+			continue
+		}
+		for _, e := range groups[key] {
+			r, m := records[e.id], models[e.id]
+			if blocked[e.id] || placed[e.id] || m.ComponentSize != 1 || m.Status != "unresolved_no_supported_relation" || r.Duration <= 0 {
+				continue
+			}
+			stamp, err := time.Parse("20060102_150405", strings.TrimSuffix(r.Name, filepath.Ext(r.Name)))
+			if err != nil || !stamp.After(latest) || stamp.Sub(latest) > time.Minute {
+				continue
+			}
+			start := float64(stamp.Unix()) + median(offsets)
+			for _, i := range anchors {
+				ref := records[i]
+				points := models[i].Knots
+				origin := sourceOrigin(ref)
+				if start >= MapTime(points, -origin) && start+r.Duration <= MapTime(points, ref.Duration-origin) {
+					result = append(result, ChronologicalPlacement{e.id, start, 1 + spread, "filename_clock_trailing_estimate", anchors, "provisional_chronological_estimate"})
+					break
+				}
+			}
+		}
+	}
 	return result
 }

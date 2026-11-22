@@ -106,6 +106,12 @@ export function setupWorkstation(h) {
     f.elements.recovery.value = config.analysis?.recovery || "balanced";
     f.elements.readMode.value = config.analysis?.readMode || "auto";
     f.elements.readers.value = config.analysis?.readers || "auto";
+    f.elements.minWave.value = config.analysis?.verification?.minWave || 0.1;
+    f.elements.minFlux.value = config.analysis?.verification?.minFlux || 0.25;
+    f.elements.controlRatio.value = config.analysis?.verification?.controlRatio || 1.5;
+    f.elements.controlMargin.value = config.analysis?.verification?.controlMargin || 0.035;
+    f.elements.ambiguityRatio.value = config.analysis?.verification?.ambiguityRatio || 0.8;
+    f.elements.eventToleranceMS.value = config.analysis?.verification?.eventToleranceMS || 150;
     f.elements.longReferenceHours.value = config.analysis?.longReferenceHours || 0;
     f.elements.trackLayout.value = config.trackLayout || "family";
     f.elements.maxResidualMS.value = config.maxResidualMS || 150;
@@ -157,6 +163,14 @@ export function setupWorkstation(h) {
           recovery: e.target.elements.recovery.value,
           readMode: e.target.elements.readMode.value,
           readers: e.target.elements.readers.value,
+          verification: {
+            minWave: Number(e.target.elements.minWave.value),
+            minFlux: Number(e.target.elements.minFlux.value),
+            controlRatio: Number(e.target.elements.controlRatio.value),
+            controlMargin: Number(e.target.elements.controlMargin.value),
+            ambiguityRatio: Number(e.target.elements.ambiguityRatio.value),
+            eventToleranceMS: Number(e.target.elements.eventToleranceMS.value),
+          },
           longReferenceHours: Number(e.target.elements.longReferenceHours.value),
         },
         trackLayout: e.target.elements.trackLayout.value,

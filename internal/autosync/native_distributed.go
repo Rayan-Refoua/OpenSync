@@ -81,7 +81,7 @@ func runNativeDistributed(ctx context.Context, records []MediaRecord, layout []N
 	for _, r := range records {
 		identities = append(identities, []any{r.ID, r.CacheSHA})
 	}
-	raw, err := json.Marshal([]any{researchmatch.DistributedVersion, "heldout-onsets-v3", settings.Recovery, settings.LongReferenceHours, identities, layout})
+	raw, err := json.Marshal([]any{researchmatch.DistributedVersion, "heldout-onsets-v3", settings.Recovery, settings.LongReferenceHours, identities, layout, settings.Verification})
 	if err != nil {
 		return nil, err
 	}

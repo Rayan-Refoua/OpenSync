@@ -206,3 +206,68 @@ func spectralClockWindow(a *NativeAnalyzer, ref, q int, t, expected, length floa
 	}
 	return low - t + float64(best)*.01, scores[best] > .12 && scores[best]-competitor > .03, nil
 }
+
+// Refine short, metadata-placed clips using independent spectral windows.
+// Three agreeing windows are required. The result remains a review placement.
+func refineChronologicalAudio(a *NativeAnalyzer, layout []NativeLayout, placements []ChronologicalPlacement) {
+	for i, p := range placements {
+		q := a.records[p.Recording]
+		length := math.Min(1.5, (q.Duration-.25)/5)
+		if p.Basis == "chronological_estimate_refined_by_audio" || q.Audio == nil || length < .55 || p.Uncertainty > 3 || checkSource(q) != nil {
+			continue
+		}
+		start := p.Start + sourceOrigin(q)
+		ref := -1
+		offset := 0.
+		for _, m := range layout {
+			r := a.records[m.Recording]
+			if m.Component != 1 || m.Status != "acoustically_supported_not_certified" || r.Audio == nil || len(m.Knots) < 2 || checkSource(r) != nil {
+				continue
+			}
+			t := MapTime(InverseMapping(m.Knots), start)
+			if t < 2 || t+q.Duration+2 > r.Duration {
+				continue
+			}
+			if ref < 0 || r.Duration > a.records[layout[ref].Recording].Duration {
+				for j := range layout {
+					if layout[j].Recording == m.Recording {
+						ref = j
+						break
+					}
+				}
+				offset = t
+			}
+		}
+		if ref < 0 {
+			continue
+		}
+		m := layout[ref]
+		var hits []float64
+		for _, t := range linspace(.05, q.Duration-length-.05, 5) {
+			v, ok, err := spectralClockWindow(a, m.Recording, p.Recording, t, offset, length)
+			if err != nil {
+				break
+			}
+			if ok {
+				hits = append(hits, v)
+			}
+		}
+		var best []float64
+		for _, x := range hits {
+			var cluster []float64
+			for _, y := range hits {
+				if math.Abs(x-y) <= .025 {
+					cluster = append(cluster, y)
+				}
+			}
+			if len(cluster) > len(best) {
+				best = cluster
+			}
+		}
+		if len(best) < 3 {
+			continue
+		}
+		placements[i].Start = MapTime(m.Knots, median(best)) - sourceOrigin(q)
+		placements[i].Basis = "chronological_estimate_refined_by_audio"
+	}
+}

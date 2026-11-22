@@ -329,7 +329,7 @@ function drawClip(c, row) {
   if (width > 170) {
     const label = c.missing
       ? "MISSING SOURCE"
-      : chronological ? "CHRONOLOGICAL ESTIMATE"
+      : chronological ? (c.timingBasis === "chronological_estimate_refined_by_audio" ? "AUDIO REFINED" : "CHRONOLOGICAL ESTIMATE")
       : c.status === "unresolved_disconnected_group"
         ? `GROUP ${c.component} · LOCAL SYNC`
         : c.state === "provisional"

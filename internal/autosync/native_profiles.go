@@ -207,7 +207,12 @@ func (a *NativeAnalyzer) runProfiles(ctx context.Context, out string) ([]NativeP
 	runPair := func(i int) {
 		pair := pairs[i]
 		ref, query := a.records[pair.Reference], a.records[pair.Query]
-		raw, _ := json.Marshal(map[string]any{"version": "multilevel-profile-native-v2", "spectral_schedule": 2, "pair": pair, "sources": []string{ref.CacheSHA, query.CacheSHA}})
+		settings := analysisSettings(a.ctx).Verification
+		input := map[string]any{"version": "multilevel-profile-native-v2", "spectral_schedule": 2, "pair": pair, "sources": []string{ref.CacheSHA, query.CacheSHA}}
+		if settings.custom() {
+			input["verification"] = settings
+		}
+		raw, _ := json.Marshal(input)
 		identity := shaBytes(raw)
 		name := ref.ID + "_" + query.ID
 		path := filepath.Join(folder, name+"_"+identity[:16]+".json")
@@ -220,7 +225,7 @@ func (a *NativeAnalyzer) runProfiles(ctx context.Context, out string) ([]NativeP
 		}
 		reused := false
 		for _, version := range []string{"multilevel-profile-v7", "multilevel-profile-v3"} {
-			if query.Duration >= 2 && query.Duration <= 12 {
+			if settings.custom() || query.Duration >= 2 && query.Duration <= 12 {
 				continue
 			}
 			if version == "multilevel-profile-v3" && (ref.Duration < 70 || query.Duration < 30) {

@@ -367,6 +367,14 @@
             <label title="Total reference audio hours examined by the extra long-reference search; zero uses the preset">Long-reference search budget (hours)
               <input name="longReferenceHours" type="number" min="0" max="600" step="0.1" required />
             </label>
+            <fieldset><legend>Matching and verification</legend>
+<label>Minimum waveform correlation<input name="minWave" type="number" min="0.01" max="1" step="0.001" required /></label>
+<label>Minimum spectral flux correlation<input name="minFlux" type="number" min="0.01" max="1" step="0.001" required /></label>
+<label>Minimum ratio over wrong-offset controls<input name="controlRatio" type="number" min="1" max="10" step="0.001" required /></label>
+<label>Minimum correlation lead over controls<input name="controlMargin" type="number" min="0.001" max="1" step="0.001" required /></label>
+<label>Runner-up confidence ratio for ambiguity<input name="ambiguityRatio" type="number" min="0.01" max="1" step="0.001" required /></label>
+<label>Event grouping tolerance (ms)<input name="eventToleranceMS" type="number" min="1" max="1000" step="1" required /></label>
+</fieldset>
             <label title="Changes Premiere track grouping without changing clip placement">Premiere track grouping
               <select name="trackLayout"><option value="family">Folder and filename family</option><option value="folder">Folder only</option></select>
             </label>

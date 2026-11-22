@@ -47,6 +47,12 @@ func NativeSyncCommand(ctx context.Context, args []string) error {
 	}
 	var sources repeatedStrings
 	o.FileTimePlacement = f.Bool("file-time-placement", true, "use file dates and order in chronological mode")
+	f.Float64Var(&o.Analysis.Verification.MinWave, "min-wave", 0.1, "Minimum waveform correlation")
+	f.Float64Var(&o.Analysis.Verification.MinFlux, "min-flux", 0.25, "Minimum spectral flux correlation")
+	f.Float64Var(&o.Analysis.Verification.ControlRatio, "control-ratio", 1.5, "Minimum ratio over wrong-offset controls")
+	f.Float64Var(&o.Analysis.Verification.ControlMargin, "control-margin", 0.035, "Minimum correlation lead over controls")
+	f.Float64Var(&o.Analysis.Verification.AmbiguityRatio, "ambiguity-ratio", 0.8, "Runner-up confidence ratio that marks a pair ambiguous")
+	f.Float64Var(&o.Analysis.Verification.EventToleranceMS, "event-tolerance-ms", 150, "Maximum separation for grouping competing event positions (ms)")
 	var workers int
 	f.StringVar(&o.Input, "input", "", "recursively scan this input root (optionally restrict with --source)")
 	f.Var(&sources, "source", "source folder (repeatable)")
@@ -413,7 +419,7 @@ func NativeSync(ctx context.Context, o NativeSyncOptions) error {
 	stages["initial_timing_profiles_seconds"] = time.Since(stage).Seconds()
 	graphStarted := time.Now()
 	progress.set("Solving independent timing anchors")
-	preliminary, decisions := selectNativeEdges(records, edges, profiles)
+	preliminary, decisions := selectNativeEdges(records, edges, profiles, o.Analysis.Verification)
 	layout, _, err := nativeSolve(records, preliminary)
 	if err != nil {
 		return err
@@ -444,7 +450,7 @@ func NativeSync(ctx context.Context, o NativeSyncOptions) error {
 			fmt.Printf("CHRONOLOGY searched %d predicted overlaps; %d passed acoustic holdout\n", len(candidates), len(checked))
 			if len(checked) > 0 {
 				edges = append(edges, checked...)
-				preliminary, _ = selectNativeEdges(records, edges, profiles)
+				preliminary, _ = selectNativeEdges(records, edges, profiles, o.Analysis.Verification)
 				layout, _, err = nativeSolve(records, preliminary)
 				if err != nil {
 					return err
@@ -504,7 +510,7 @@ func nativeFinish(records []MediaRecord, edges []*PairEvidence, profiles []Nativ
 		}
 	}
 	profiles = filtered
-	edges, decisions := selectNativeEdges(records, edges, profiles)
+	edges, decisions := selectNativeEdges(records, edges, profiles, o.Analysis.Verification)
 	var predictions map[int]recorderPrediction
 	var conflicts []map[string]any
 	if o.Mode == "chronological" && (o.FileTimePlacement == nil || *o.FileTimePlacement) && len(analyzers) > 0 && len(ledger.Pairs)+len(ledger.Recordings) == 0 {
@@ -539,11 +545,12 @@ func nativeFinish(records []MediaRecord, edges []*PairEvidence, profiles []Nativ
 		mode = "clips"
 	}
 	graph["placement_mode"] = mode
+	graph["analysis_policy"] = o.Analysis
 	graph["recording_continuity"] = continuityEvidence(records, layout)
 	enabled := o.FileTimePlacement == nil || *o.FileTimePlacement
 	graph["file_time_placement"] = enabled
 	if mode == "chronological" && enabled {
-		layout = applyChronology(records, layout, graph)
+		layout = applyChronology(records, layout, graph, analyzers...)
 		existing, _ := graph["chronological_placements"].([]ChronologicalPlacement)
 		byID := map[int]NativeLayout{}
 		for _, m := range layout {

@@ -205,7 +205,7 @@ func (a *NativeAnalyzer) measure(ref, query int, center, length float64, prior N
 		m.Controls = count
 		m.Control = strongest
 		m.Radius = radius
-		m.Supported = !m.Boundary && signalSupported(m, count, strongest, m.Flux)
+		m.Supported = !m.Boundary && a.signalSupported(m, count, strongest, m.Flux)
 		m.Precise = m.Supported && (m.Distinct || m.PhaseAgrees) && (m.Stable || m.PhaseAgrees)
 		if best == nil || (m.Supported && !best.Supported) || (m.Supported == best.Supported && m.Wave-m.Control > best.Wave-best.Control) {
 			best = m

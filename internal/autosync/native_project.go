@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -230,6 +231,13 @@ func LoadNativeProject(path string) (*NativeProject, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
+	}
+	content := bytes.TrimSpace(bytes.TrimPrefix(data, []byte{0xef, 0xbb, 0xbf}))
+	if bytes.HasPrefix(content, []byte("<")) {
+		if bytes.Contains(content[:min(len(content), 1024)], []byte("<xmeml")) {
+			return nil, fmt.Errorf("%s is a Premiere XML export. Open the corresponding .opensync project in OpenSync, or import the XML in Premiere", filepath.Base(path))
+		}
+		return nil, fmt.Errorf("%s contains XML or HTML. Select a saved .opensync project", filepath.Base(path))
 	}
 	return decodeNativeProject(path, data)
 }

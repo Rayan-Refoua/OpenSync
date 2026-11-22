@@ -261,12 +261,19 @@ func envelopeCandidatesScheduled(ctx context.Context, reference, query [3][]floa
 }
 func (a *NativeAnalyzer) recover(ctx context.Context, edges []*PairEvidence, out string) ([]NativePair, error) {
 	path := filepath.Join(out, "recovery-discovery.json")
+	settings := analysisSettings(a.ctx).Verification
 	if data, err := workspaceRead(a.ctx, path); err == nil {
-		var saved struct{ Pairs []NativePair }
+		var saved struct {
+			Pairs        []NativePair
+			Verification VerificationSettings
+		}
 		if err = json.Unmarshal(data, &saved); err != nil {
 			return nil, err
 		}
-		return saved.Pairs, nil
+		_ = saved.Verification.normalize()
+		if saved.Verification == settings {
+			return saved.Pairs, nil
+		}
 	}
 	adjacency := make([][]int, len(a.records))
 	for _, e := range edges {
@@ -367,7 +374,7 @@ func (a *NativeAnalyzer) recover(ctx context.Context, edges []*PairEvidence, out
 			selected = append(selected, p)
 		}
 	}
-	if err := workspaceJSON(a.ctx, path, map[string]any{"version": "envelope-recovery-v1", "target_recordings": targetIDs, "pairs": selected, "baseline_used": false}); err != nil {
+	if err := workspaceJSON(a.ctx, path, map[string]any{"version": "envelope-recovery-v1", "verification": settings, "target_recordings": targetIDs, "pairs": selected, "baseline_used": false}); err != nil {
 		return nil, err
 	}
 	fmt.Printf("RECOVERY: %d full-range pairs\n", len(selected))

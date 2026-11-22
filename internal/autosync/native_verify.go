@@ -48,8 +48,9 @@ type PairEvidence struct {
 	Profile    *NativeProfile       `json:"multilevel_profile,omitempty"`
 }
 
-func signalSupported(m *Measurement, controls int, strongest, flux float64) bool {
-	return controls >= 2 && m.Wave >= .1 && m.Wave >= strongest*1.5 && m.Wave-strongest >= .035 && (flux >= .25 || m.Wave >= .65)
+func (a *NativeAnalyzer) signalSupported(m *Measurement, controls int, strongest, flux float64) bool {
+	v := analysisSettings(a.ctx).Verification
+	return controls >= 2 && m.Wave >= v.MinWave && m.Wave >= strongest*v.ControlRatio && m.Wave-strongest >= v.ControlMargin && (flux >= v.MinFlux || m.Wave >= .65)
 }
 func (a *NativeAnalyzer) controls(ref, query int, start, offset, length, radius float64, shifts []float64) (int, float64, error) {
 	count, strongest := 0, 0.
@@ -130,7 +131,7 @@ func (a *NativeAnalyzer) assessCandidate(ref, query int, c NativeCandidate) (*Ca
 			errors[i] = err
 			return
 		}
-		m.Supported = signalSupported(m, m.Controls, m.Control, m.Flux)
+		m.Supported = a.signalSupported(m, m.Controls, m.Control, m.Flux)
 		observations[i] = m
 	})
 	for i, m := range observations {
@@ -203,6 +204,7 @@ func (a *NativeAnalyzer) assessCandidate(ref, query int, c NativeCandidate) (*Ca
 	return result, nil
 }
 func (a *NativeAnalyzer) verify(ctx context.Context, pairs []NativePair, out, namespace string) ([]*PairEvidence, error) {
+	settings := analysisSettings(a.ctx).Verification
 	folder := filepath.Join(out, namespace)
 	if err := workspaceMkdir(a.ctx, folder, 0755); err != nil {
 		return nil, err
@@ -234,13 +236,16 @@ func (a *NativeAnalyzer) verify(ctx context.Context, pairs []NativePair, out, na
 				pair := pairs[i]
 				ref, query := a.records[pair.Reference], a.records[pair.Query]
 				input := map[string]any{"pair": pair, "reference": ref.CacheSHA, "query": query.CacheSHA, "verifier": "native-v1"}
+				if settings.custom() {
+					input["verification"] = settings
+				}
 				encoded, _ := json.Marshal(input)
 				sum := sha256.Sum256(encoded)
 				digest := hex.EncodeToString(sum[:])
 				path := filepath.Join(folder, ref.ID+"_"+query.ID+".json")
 				if data, err := workspaceRead(a.ctx, path); err == nil {
 					var cached PairEvidence
-					if json.Unmarshal(data, &cached) == nil && cached.Reference == pair.Reference && cached.Query == pair.Query && (cached.Digest == digest || cached.Digest == legacyPairDigest(pair, ref.CacheSHA, query.CacheSHA)) {
+					if json.Unmarshal(data, &cached) == nil && cached.Reference == pair.Reference && cached.Query == pair.Query && (cached.Digest == digest || !settings.custom() && cached.Digest == legacyPairDigest(pair, ref.CacheSHA, query.CacheSHA)) {
 						results[i] = &cached
 						reportProgress(i)
 						continue
@@ -266,7 +271,7 @@ func (a *NativeAnalyzer) verify(ctx context.Context, pairs []NativePair, out, na
 				}
 				sort.SliceStable(supported, func(i, j int) bool { return supported[i].Confidence > supported[j].Confidence })
 				if len(supported) > 0 {
-					result.Ambiguous = len(supported) > 1 && supported[1].Confidence >= .8*supported[0].Confidence
+					result.Ambiguous = len(supported) > 1 && supported[1].Confidence >= settings.AmbiguityRatio*supported[0].Confidence
 					if !result.Ambiguous {
 						result.Selected = supported[0]
 					}
@@ -382,7 +387,7 @@ func (a *NativeAnalyzer) validateEdges(edges []*PairEvidence, out, namespace str
 				errors[j] = err
 				return
 			}
-			m.AcousticallySupported = m.Distinct && signalSupported(m, m.Controls, m.Control, m.Flux)
+			m.AcousticallySupported = m.Distinct && a.signalSupported(m, m.Controls, m.Control, m.Flux)
 			m.Expected = expected
 			m.Residual = m.Offset - expected
 			m.Passes = m.AcousticallySupported && math.Abs(m.Residual) <= .025

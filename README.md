@@ -51,10 +51,13 @@ OpenSync does not assume that every recording can be synchronized. A result that
 | Native Go synchronization engine                            | Implemented; reliability development ongoing         |
 | Acoustic fingerprint discovery                              | Implemented                                          |
 | Candidate offset verification and competing-offset controls | Implemented                                          |
+| User-configurable acoustic verification controls            | Implemented in GUI and CLI                           |
 | Multiband envelope and distributed recovery                 | Implemented                                          |
 | Multi-observation timing and drift analysis                 | Implemented; coverage varies with available evidence |
 | Global temporal evidence graph                              | Implemented                                          |
 | Filename-based recording continuity analysis                | Available; not treated as acoustic proof             |
+| File-time placement in chronological mode                    | Optional, bounded, and explicitly provisional         |
+| Audio refinement of eligible file-time estimates             | Implemented; retains chronological uncertainty        |
 | Native `.opensync` project format                           | Implemented                                          |
 | Windows desktop timeline                                    | Working alpha                                        |
 | Waveform rendering and navigation                           | Implemented                                          |
@@ -247,7 +250,7 @@ Analysis caching is disabled by default. Use `--cache` when you explicitly want 
 
 ### Chronological and review workflows
 
-The CLI supports acoustic clip placement and chronology-aware presentation.
+The CLI supports acoustic clip placement, chronology-aware presentation, and configurable verification thresholds.
 
 ```bash
 opensync-cli sync \
@@ -258,10 +261,15 @@ opensync-cli sync \
 
 Chronological mode can estimate bounded gaps from recording-order evidence. These estimates remain explicitly provisional and do not establish acoustic synchronization.
 
+When **File time Based placement** is enabled, OpenSync can use calibrated file dates and recording succession to estimate otherwise unresolved positions. On eligible short-overlap cases, agreeing acoustic windows can refine the estimate's position. The timeline identifies these as **AUDIO REFINED** while retaining their chronological, provisional status; this refinement is not an independently certified synchronization result. The GUI's **Add chronological placements** action and CLI's `revise --add-chronological` can apply the same process to a saved project revision. See [timeline preparation and export guidance](docs/SYNC-TIMELINE.md) for the evidence rules and examples.
+
+The GUI and CLI also expose user-configurable waveform, spectral-flux, wrong-offset-control, ambiguity, and event-grouping settings. These affect acoustic verification decisions; the export residual limit is a separate presentation constraint. A broader recovery search may discover more hypotheses, but it does not automatically weaken the verification criteria. Use `opensync-cli sync --help` for defaults and valid ranges.
+
 A saved project can also be re-evaluated:
 
 ```bash
 opensync-cli revise MyProject/OpenSync.opensync --mode chronological
+opensync-cli revise MyProject/OpenSync.opensync --mode chronological --add-chronological
 ```
 
 Review actions retain explicit recording and relationship rejections in project revisions.
@@ -298,13 +306,17 @@ On Windows, choose an `.exe` output filename.
 
 ### Build the Windows desktop distribution
 
-Use the repository's existing packaging script from PowerShell:
+Use the repeatable build-and-open script from PowerShell:
+
+```powershell
+python tools/build_open_windows.py
+```
+
+This closes existing OpenSync app instances, replaces the local package under `release/`, builds the desktop and CLI, and launches the newly built GUI. It removes only that named package directory and any stale adjacent ZIP archive; it does not remove or publish GitHub releases. The packaging script is also available directly when a separate empty destination is preferred:
 
 ```powershell
 .\tools\build_desktop_windows.ps1 -Output C:\OpenSync-Build
 ```
-
-The destination directory must be empty.
 
 This script builds both the desktop and CLI, bundles FFmpeg/FFprobe, generates Windows resources, records dependency licenses, and produces package integrity metadata.
 

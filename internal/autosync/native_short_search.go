@@ -213,7 +213,7 @@ func (a *NativeAnalyzer) shortGlobalWindow(ref, query int, start, length float64
 			return nil, err
 		}
 		candidate := &Measurement{QueryTime: start + length/2, Window: length, Offset: p.offset, Wave: p.score, Flux: flux, Controls: controls, Control: competitor, Competing: competitor, Distinct: p.score >= 1.5*competitor && p.score-competitor >= .035}
-		candidate.Supported = signalSupported(candidate, controls, competitor, flux)
+		candidate.Supported = a.signalSupported(candidate, controls, competitor, flux)
 		if m == nil || candidate.Supported {
 			m = candidate
 		}

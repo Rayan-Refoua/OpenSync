@@ -12,7 +12,13 @@ type eventEntry struct {
 	profile              *NativeProfile
 }
 
-func selectNativeEdges(records []MediaRecord, base []*PairEvidence, profiles []NativeProfilePair) ([]*PairEvidence, []map[string]any) {
+func selectNativeEdges(records []MediaRecord, base []*PairEvidence, profiles []NativeProfilePair, options ...VerificationSettings) ([]*PairEvidence, []map[string]any) {
+	var verification VerificationSettings
+	if len(options) > 0 {
+		verification = options[0]
+	}
+	_ = verification.normalize()
+	tolerance := verification.EventToleranceMS / 1000
 	base, rejected := rejectExcerptBridges(records, base)
 	anchorsByPair := map[[2]int]*PairEvidence{}
 	anchorOrder := [][2]int{}
@@ -168,7 +174,7 @@ func selectNativeEdges(records []MediaRecord, base []*PairEvidence, profiles []N
 		})
 		groups := [][]eventEntry{}
 		for _, e := range entries {
-			if len(groups) == 0 || groups[len(groups)-1][0].component != e.component || e.position-groups[len(groups)-1][0].position > .15 {
+			if len(groups) == 0 || groups[len(groups)-1][0].component != e.component || e.position-groups[len(groups)-1][0].position > tolerance {
 				groups = append(groups, nil)
 			}
 			groups[len(groups)-1] = append(groups[len(groups)-1], e)
@@ -230,7 +236,7 @@ func selectNativeEdges(records []MediaRecord, base []*PairEvidence, profiles []N
 		for _, w := range winner {
 			positions = append(positions, w.position)
 		}
-		return anchor.Component == winner[0].component && math.Abs(position-median(positions)) <= .15
+		return anchor.Component == winner[0].component && math.Abs(position-median(positions)) <= tolerance
 	}
 	selected := map[[2]int]*PairEvidence{}
 	for _, e := range base {
@@ -254,7 +260,7 @@ func selectNativeEdges(records []MediaRecord, base []*PairEvidence, profiles []N
 				if own != nil {
 					group := []eventEntry{}
 					for _, e := range candidates[pair.Query] {
-						if e.component == own.component && math.Abs(e.position-own.position) <= .15 {
+						if e.component == own.component && math.Abs(e.position-own.position) <= tolerance {
 							group = append(group, e)
 						}
 					}

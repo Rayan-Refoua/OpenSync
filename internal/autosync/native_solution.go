@@ -1,6 +1,7 @@
 package autosync
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -245,7 +246,7 @@ func CreateSolution(path string, change ReviewChange) (string, error) {
 		if added == 0 {
 			return path, nil
 		}
-		return writeSolutionRevision(path, basePath, base.Hash, fmt.Sprintf("Add %d chronological placements", added), models, graph)
+		return writeSolutionRevision(path, basePath, base.Hash, fmt.Sprintf("Update %d chronological placements", added), models, graph)
 	}
 	ledger, err := projectLedger(current)
 	if err != nil {
@@ -446,16 +447,41 @@ func addSavedChronology(project *NativeProject) ([]map[string]any, map[string]an
 	previousGroups := g["acoustic_components"]
 	updated := applyChronology(project.Data.Records, layout, g)
 	additions := g["chronological_placements"].([]ChronologicalPlacement)
-	if len(additions) == 0 {
+	workspace := &nativeWorkspace{data: map[string][]byte{}, limit: 512 << 20, audio: newDirectAudio()}
+	defer workspace.audio.Close()
+	analyzer := NewNativeAnalyzer(project.Data.Records)
+	defer analyzer.Close()
+	analyzer.ctx = context.WithValue(context.Background(), workspaceKey{}, workspace)
+	placements := append(old, additions...)
+	refineChronologicalAudio(analyzer, updated, placements)
+	moved := map[int]bool{}
+	for _, p := range additions {
+		moved[p.Recording] = true
+	}
+	for i := range updated {
+		item := &updated[i]
+		for _, p := range placements {
+			if p.Recording != item.Recording || item.Status != "provisional_chronological_estimate" || p.Basis != "chronological_estimate_refined_by_audio" {
+				continue
+			}
+			start := p.Start + sourceOrigin(project.Data.Records[item.Recording])
+			if start != item.Start {
+				delta := start - item.Start
+				item.Start = start
+				for j := range item.Knots {
+					item.Knots[j][1] += delta
+				}
+				moved[item.Recording] = true
+			}
+		}
+	}
+	if len(moved) == 0 {
 		return nil, nil, 0, nil
 	}
 	if previousGroups != nil {
 		g["acoustic_components"] = previousGroups
 	}
-	moved := map[int]bool{}
-	for _, p := range additions {
-		moved[p.Recording] = true
-	}
+	g["chronological_placements"] = placements
 	byID := map[int]map[string]any{}
 	for _, model := range payload.Models {
 		byID[int(number(model["recording"]))] = model
@@ -473,11 +499,11 @@ func addSavedChronology(project *NativeProject) ([]map[string]any, map[string]an
 			m["time_domain"] = fmt.Sprintf("component-%d", item.Component)
 		}
 	}
-	g["chronological_placements"] = append(old, additions...)
+
 	g["file_time_placement"] = true
 	g["placement_mode"] = "chronological"
 	delete(g, "solution_revision")
-	return payload.Models, g, len(additions), nil
+	return payload.Models, g, len(moved), nil
 }
 
 func NativeReviseCommand(args []string) error {
