@@ -213,7 +213,7 @@ func TestNativeAudioOnlyDriftRender(t *testing.T) {
 	if filepath.Dir(*placements[0].Derivative) != root || !strings.HasSuffix(*placements[0].Derivative, "_driftCorrection.wav") {
 		t.Fatal("correction was not written beside the original")
 	}
-	tolerated, _, err := nativePlacements(p, NativeExportOptions{Output: root, Unsynced: "append", MaxResidualMS: 150, AudioLateMS: 100})
+	tolerated, _, err := nativePlacements(p, NativeExportOptions{Output: root, Unsynced: "append", MaxResidualMS: 150, AudioEarlyMS: 100, AudioLateMS: 100})
 	if err != nil || len(tolerated) != 1 || tolerated[0].Derivative != nil {
 		t.Fatalf("drift within configured tolerance was corrected: %v", err)
 	}

@@ -38,7 +38,16 @@ func TestSyncPreviewDrainsReadsAndServesSharedPeaks(t *testing.T) {
 		t.Fatal("new read admitted", err)
 	}
 
-	r := autosync.MediaRecord{Source: filepath.Join(t.TempDir(), "original.wav"), SourceBytes: 64, SourceMtime: 1, Duration: 65.536}
+	source := filepath.Join(t.TempDir(), "original.wav")
+	// The peak cache checks source identity before accessing the waveform.
+	if err := os.WriteFile(source, make([]byte, 64), 0600); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := autosync.MediaRecord{Source: source, SourceBytes: info.Size(), SourceMtime: info.ModTime().UnixNano(), Duration: 65.536}
 	c := Clip{Source: r.Source, Metadata: r, Audio: true, Duration: r.Duration}
 	ctx := context.Background()
 	if _, err = s.waveFromPeaks(ctx, ctx, c, 0, 0); !errors.Is(err, errPreviewPaused) {

@@ -5,10 +5,17 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"strings"
 	"sync/atomic"
+
+	"opensync/internal/storageio"
 )
+
+// Tagged Windows builds register a library decoder. The executable remains
+// the default while codec, timing, and performance parity are evaluated.
+var openExperimentalPCM func(context.Context, string) (io.ReadCloser, error)
 
 // A bounded pool of live decoders continues forward reads instead of restarting
 // at sample zero for each window. Keeping the original resampler origin preserves
@@ -58,6 +65,7 @@ func (s *directDecoder) close() {
 	s.command = nil
 	s.output = nil
 	s.cancel = nil
+	s.ctx = nil
 	s.id = ""
 	s.position = 0
 }
@@ -68,26 +76,19 @@ func (s *directDecoder) read(ctx context.Context, r MediaRecord, first, count in
 	if s.id != r.ID || first < s.position || (s.ctx != nil && s.ctx.Err() != nil) {
 		s.close()
 		s.stderr.Reset()
-		tool, err := mediaTool("ffmpeg")
-		if err != nil {
-			return nil, err
-		}
-		child, cancel := context.WithCancel(ctx)
-		s.ctx = child
-		s.cancel = cancel
-		s.command = mediaCommandContext(child, tool, append(analysisAudioArgs(ctx, r.Source), "-f", "s16le", "-")...)
-		s.command.Stderr = &s.stderr
-		s.output, err = s.command.StdoutPipe()
-		if err != nil {
-			s.close()
-			return nil, err
-		}
-		if err = s.command.Start(); err != nil {
+		if err := s.open(ctx, r); err != nil {
 			s.close()
 			return nil, err
 		}
 		s.id = r.ID
 		starts.Add(1)
+	}
+	if s.command == nil {
+		release, err := storageio.Acquire(ctx, r.Source)
+		if err != nil {
+			return nil, err
+		}
+		defer release()
 	}
 	fail := func(err error) ([]int16, error) {
 		s.close()
@@ -114,4 +115,49 @@ func (s *directDecoder) read(ctx context.Context, r MediaRecord, first, count in
 		return fail(err)
 	}
 	return pcm, nil
+}
+
+func (s *directDecoder) open(ctx context.Context, r MediaRecord) error {
+	child, cancel := context.WithCancel(ctx)
+	s.ctx, s.cancel = child, cancel
+	reader, err := tryLibraryPCM(child, r.Source)
+	if err != nil {
+		return err
+	}
+	if reader != nil {
+		s.output = reader
+		return nil
+	}
+	tool, err := mediaTool("ffmpeg")
+	if err != nil {
+		return err
+	}
+	s.command = mediaCommandContext(child, tool, append(analysisAudioArgs(ctx, r.Source), "-f", "s16le", "-")...)
+	s.command.Stderr = &s.stderr
+	s.output, err = s.command.StdoutPipe()
+	if err != nil {
+		return err
+	}
+	return s.command.Start()
+}
+
+func libraryPCMEnabled() bool {
+	return openExperimentalPCM != nil && os.Getenv("OPENSYNC_EXPERIMENTAL_FFMPEG_LIB") == "1"
+}
+
+// A nil reader keeps the executable fallback available before any PCM is used.
+func tryLibraryPCM(ctx context.Context, source string) (io.ReadCloser, error) {
+	if !libraryPCMEnabled() {
+		return nil, nil
+	}
+	release, err := storageio.Acquire(ctx, source)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	reader, err := openExperimentalPCM(ctx, source)
+	if err != nil {
+		return nil, ctx.Err()
+	}
+	return reader, nil
 }

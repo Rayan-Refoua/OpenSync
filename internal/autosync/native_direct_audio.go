@@ -104,7 +104,29 @@ func (d *directAudio) stream(ctx context.Context, r MediaRecord, consume func(io
 		}
 		return checkSource(r)
 	}
-	return decodedStream(ctx, r, 0, -1, consume)
+	if !libraryPCMEnabled() {
+		return decodedStream(ctx, r, 0, -1, consume)
+	}
+	if err := checkSource(r); err != nil {
+		return err
+	}
+	library, err := tryLibraryPCM(ctx, r.Source)
+	if err != nil {
+		return err
+	}
+	if library == nil {
+		return decodedStream(ctx, r, 0, -1, consume)
+	}
+	defer library.Close()
+	release, err := storageio.Acquire(ctx, r.Source)
+	if err != nil {
+		return err
+	}
+	defer release()
+	if err := consume(library); err != nil {
+		return err
+	}
+	return checkSource(r)
 }
 func (d *directAudio) retain(key string, pcm []int16) {
 	size := int64(len(pcm) * 2)
