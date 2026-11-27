@@ -15,6 +15,8 @@ import (
 type WorkstationSettings struct {
 	FileTimePlacement  *bool                     `json:"fileTimePlacement,omitempty"`
 	Analysis           autosync.AnalysisSettings `json:"analysis"`
+	OmitProjectMarker  bool                      `json:"omitProjectMarker"`
+	KeepTrackOrder     bool                      `json:"keepTrackOrder"`
 	TrackLayout        string                    `json:"trackLayout"`
 	MaxResidualMS      float64                   `json:"maxResidualMS"`
 	IncludeProvisional bool                      `json:"includeProvisional"`

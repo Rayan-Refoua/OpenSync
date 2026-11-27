@@ -73,6 +73,8 @@ func NativeSyncCommand(ctx context.Context, args []string) error {
 	f.Float64Var(&o.Analysis.LongReferenceHours, "long-reference-hours", 0, "total long-reference search budget in hours; 0 uses the recovery preset")
 	f.IntVar(&workers, "workers", 0, "Go CPU concurrency ceiling (0 uses the runtime default)")
 	f.IntVar(&o.ManagedMemoryMiB, "memory-mib", 0, "in-memory analysis budget in MiB (0 uses automatic sizing)")
+	f.BoolVar(&o.OmitProjectMarker, "omit-project-marker", false, "Omit the OpenSync project summary marker at time zero in Premiere XML")
+	f.BoolVar(&o.KeepTrackOrder, "keep-track-order", false, "Keep OpenSync track order in Premiere XML (default reverses tracks)")
 	f.StringVar(&o.TrackLayout, "track-layout", "family", "Premiere track grouping: family or folder")
 	f.BoolVar(&o.CacheEnabled, "cache", false, "explicitly retain analysis cache for reuse; never copy originals")
 	f.BoolVar(&o.Resume, "resume", false, "resume compatible cached work")
@@ -618,5 +620,5 @@ func nativeFinish(records []MediaRecord, edges []*PairEvidence, profiles []Nativ
 	if err = saveNativeProject(path, o.Name, records, edges, layout, graph); err != nil {
 		return err
 	}
-	return ExportNative(path, NativeExportOptions{TrackLayout: o.TrackLayout, AudioEarlyMS: o.AudioEarlyMS, AudioLateMS: o.AudioLateMS, Output: o.Output, Unsynced: o.Unsynced, MaxResidualMS: o.MaxResidualMS, IncludeProvisional: o.IncludeProvisional})
+	return ExportNative(path, NativeExportOptions{TrackLayout: o.TrackLayout, KeepTrackOrder: o.KeepTrackOrder, OmitProjectMarker: o.OmitProjectMarker, AudioEarlyMS: o.AudioEarlyMS, AudioLateMS: o.AudioLateMS, Output: o.Output, Unsynced: o.Unsynced, MaxResidualMS: o.MaxResidualMS, IncludeProvisional: o.IncludeProvisional})
 }

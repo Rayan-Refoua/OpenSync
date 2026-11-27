@@ -132,6 +132,8 @@ type NativePlacement struct {
 }
 type NativeExportOptions struct {
 	TrackLayout               string
+	KeepTrackOrder            bool
+	OmitProjectMarker         bool
 	AudioEarlyMS, AudioLateMS float64
 	Output, Unsynced          string
 	MaxResidualMS             float64
@@ -165,6 +167,8 @@ func NativeExportCommand(args []string) error {
 		f.PrintDefaults()
 	}
 	o := NativeExportOptions{}
+	f.BoolVar(&o.OmitProjectMarker, "omit-project-marker", false, "Omit the OpenSync project summary marker at time zero in Premiere XML")
+	f.BoolVar(&o.KeepTrackOrder, "keep-track-order", false, "Keep OpenSync track order in Premiere XML (default reverses tracks)")
 	f.StringVar(&o.TrackLayout, "track-layout", "family", "Premiere track grouping: family or folder")
 	f.StringVar(&o.Output, "output", filepath.Dir(project), "output directory")
 	f.StringVar(&o.Unsynced, "unsynced", "append", "append, separate-sequence, order_only, disabled, remove, or local-tracks")
@@ -477,9 +481,9 @@ func addFile(n *xnode, r MediaRecord, rate FrameRate, defined map[string]bool) e
 	return nil
 }
 func buildNativeXML(p *NativeProject, placements []NativePlacement, seqRate FrameRate) ([]byte, error) {
-	return buildNativeXMLWithTracks(p, placements, seqRate, "family")
+	return buildNativeXMLWithTracks(p, placements, seqRate, NativeExportOptions{TrackLayout: "family"})
 }
-func buildNativeXMLWithTracks(p *NativeProject, placements []NativePlacement, seqRate FrameRate, trackLayout string) ([]byte, error) {
+func buildNativeXMLWithTracks(p *NativeProject, placements []NativePlacement, seqRate FrameRate, options NativeExportOptions) ([]byte, error) {
 	root := xn("xmeml", nil).attr("version", "4")
 	project := root.add("project", nil)
 	project.add("name", p.Data.Name)
@@ -626,7 +630,7 @@ func buildNativeXMLWithTracks(p *NativeProject, placements []NativePlacement, se
 			byPlacement[i] = entries
 			for _, in := range entries {
 				group := recordGroup[v.Recording]
-				if trackLayout != "folder" {
+				if options.TrackLayout != "folder" {
 					group += "|" + TrackFamily(r.Name)
 				}
 				k := fmt.Sprintf("%s|%s|%04d|%04d", in.Kind, group, in.Channel, channelCount(r))
@@ -652,24 +656,31 @@ func buildNativeXMLWithTracks(p *NativeProject, placements []NativePlacement, se
 			laneKeys = append(laneKeys, k)
 		}
 		sort.Strings(laneKeys)
+		var orderedLanes [][]*nativeInstance
+		for _, key := range laneKeys {
+			orderedLanes = append(orderedLanes, lanes[key]...)
+		}
+		if !options.KeepTrackOrder {
+			for left, right := 0, len(orderedLanes)-1; left < right; left, right = left+1, right-1 {
+				orderedLanes[left], orderedLanes[right] = orderedLanes[right], orderedLanes[left]
+			}
+		}
 		trackCounts := map[string]int{}
 		type renderedLane struct {
 			node  *xnode
 			items []*nativeInstance
 		}
 		var rendered []renderedLane
-		for _, k := range laneKeys {
-			for _, lane := range lanes[k] {
-				kind := lane[0].Kind
-				trackCounts[kind]++
-				r := p.Data.Records[placements[lane[0].Placement].Recording]
-				tr := addTrack(sections[kind], kind, channelCount(r), lane[0].Channel)
-				for j, in := range lane {
-					in.Track = trackCounts[kind]
-					in.Index = j + 1
-				}
-				rendered = append(rendered, renderedLane{tr, lane})
+		for _, lane := range orderedLanes {
+			kind := lane[0].Kind
+			trackCounts[kind]++
+			r := p.Data.Records[placements[lane[0].Placement].Recording]
+			tr := addTrack(sections[kind], kind, channelCount(r), lane[0].Channel)
+			for j, in := range lane {
+				in.Track = trackCounts[kind]
+				in.Index = j + 1
 			}
+			rendered = append(rendered, renderedLane{tr, lane})
 		}
 		for _, lane := range rendered {
 			for _, in := range lane.items {
@@ -732,6 +743,18 @@ func buildNativeXMLWithTracks(p *NativeProject, placements []NativePlacement, se
 			lane.node.add("enabled", "TRUE")
 			lane.node.add("locked", "FALSE")
 		}
+		if !options.OmitProjectMarker {
+			recordings := make(map[int]struct{})
+			for _, i := range indices {
+				recordings[placements[i].Recording] = struct{}{}
+			}
+			marker := s.add("marker", nil)
+			marker.add("name", "OpenSync project summary")
+			marker.add("comment", fmt.Sprintf("Project: %s\nEngine: %s\nSequence: %s at %s fps\nRecordings: %d in this sequence, %d in the project\nExported clip placements: %d\nUnmatched media policy: %s",
+				p.Data.Name, p.Data.Engine, name, seqRate.String(), len(recordings), len(p.Data.Records), len(indices), options.Unsynced))
+			marker.add("in", 0)
+			marker.add("out", -1)
+		}
 		unresolvedStart := int64(-1)
 		for _, i := range indices {
 			v := placements[i]
@@ -782,7 +805,7 @@ func ExportNative(projectPath string, o NativeExportOptions) error {
 	if err != nil {
 		return err
 	}
-	data, err := buildNativeXMLWithTracks(p, placements, seq, o.TrackLayout)
+	data, err := buildNativeXMLWithTracks(p, placements, seq, o)
 	if err != nil {
 		return err
 	}
@@ -840,7 +863,7 @@ func ExportNative(projectPath string, o NativeExportOptions) error {
 			derivatives = append(derivatives, map[string]any{"recording_id": r.ID, "original": r.Source, "derivative": *v.Derivative, "sha256": digest, "actual_duration_seconds": v.DerivativeDuration})
 		}
 	}
-	manifest := map[string]any{"status": "EXPORTED_REQUIRES_PREMIERE_AND_ACCURACY_REVIEW", "project": projectPath, "project_content_sha256": p.Hash, "xml": path, "xml_sha256": hex.EncodeToString(sum[:]), "recordings": len(p.Data.Records), "sequence_fps": seq.String(), "unsynced_policy": o.Unsynced, "track_layout": o.TrackLayout, "include_provisional": o.IncludeProvisional, "placements": placements, "omitted_recording_ids": omitted, "derivatives": derivatives, "unresolved_recordings": unresolved, "provisional_recordings": provisional, "source_media_modified": false, "engine": "native_go"}
+	manifest := map[string]any{"status": "EXPORTED_REQUIRES_PREMIERE_AND_ACCURACY_REVIEW", "project": projectPath, "project_content_sha256": p.Hash, "xml": path, "xml_sha256": hex.EncodeToString(sum[:]), "recordings": len(p.Data.Records), "sequence_fps": seq.String(), "unsynced_policy": o.Unsynced, "track_layout": o.TrackLayout, "reverse_track_order": !o.KeepTrackOrder, "project_summary_marker": !o.OmitProjectMarker, "include_provisional": o.IncludeProvisional, "placements": placements, "omitted_recording_ids": omitted, "derivatives": derivatives, "unresolved_recordings": unresolved, "provisional_recordings": provisional, "source_media_modified": false, "engine": "native_go"}
 	if err = writeJSON(filepath.Join(out, "timeline-manifest.json"), manifest); err != nil {
 		return err
 	}

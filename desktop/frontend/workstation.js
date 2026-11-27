@@ -125,6 +125,8 @@ export function setupWorkstation(h) {
     f.elements.ambiguityRatio.value = config.analysis?.verification?.ambiguityRatio || 0.8;
     f.elements.eventToleranceMS.value = config.analysis?.verification?.eventToleranceMS || 150;
     f.elements.longReferenceHours.value = config.analysis?.longReferenceHours || 0;
+    f.elements.projectSummaryMarker.checked = !config.omitProjectMarker;
+    f.elements.reverseTrackOrder.checked = !config.keepTrackOrder;
     f.elements.trackLayout.value = config.trackLayout || "family";
     f.elements.maxResidualMS.value = config.maxResidualMS || 150;
     f.elements.includeProvisional.checked = !!config.includeProvisional;
@@ -261,6 +263,8 @@ export function setupWorkstation(h) {
           longReferenceHours: Number(e.target.elements.longReferenceHours.value),
         },
         trackLayout: e.target.elements.trackLayout.value,
+        keepTrackOrder: !e.target.elements.reverseTrackOrder.checked,
+        omitProjectMarker: !e.target.elements.projectSummaryMarker.checked,
         maxResidualMS: Number(e.target.elements.maxResidualMS.value),
         includeProvisional: e.target.elements.includeProvisional.checked,
         unmatchedPolicy: e.target.elements.unmatchedPolicy.value,

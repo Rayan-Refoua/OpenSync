@@ -171,7 +171,7 @@ func (a *App) ExportProjectXML() (output string, err error) {
 	if settings.MaxResidualMS == 0 {
 		settings.MaxResidualMS = 150
 	}
-	if err = autosync.ExportNative(p.Path, autosync.NativeExportOptions{AudioEarlyMS: settings.AudioEarlyMS, AudioLateMS: settings.AudioLateMS, Output: out, Unsynced: settings.UnmatchedPolicy, TrackLayout: settings.TrackLayout, MaxResidualMS: settings.MaxResidualMS, IncludeProvisional: settings.IncludeProvisional}); err != nil {
+	if err = autosync.ExportNative(p.Path, autosync.NativeExportOptions{AudioEarlyMS: settings.AudioEarlyMS, AudioLateMS: settings.AudioLateMS, Output: out, Unsynced: settings.UnmatchedPolicy, TrackLayout: settings.TrackLayout, KeepTrackOrder: settings.KeepTrackOrder, OmitProjectMarker: settings.OmitProjectMarker, MaxResidualMS: settings.MaxResidualMS, IncludeProvisional: settings.IncludeProvisional}); err != nil {
 		a.log("error", err.Error())
 		return "", err
 	}

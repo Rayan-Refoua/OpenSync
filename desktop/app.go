@@ -370,6 +370,8 @@ func (a *App) startSync(override []string, corrections string) error {
 		o.FileTimePlacement = settings.FileTimePlacement
 		o.Analysis = settings.Analysis
 		o.TrackLayout = settings.TrackLayout
+		o.KeepTrackOrder = settings.KeepTrackOrder
+		o.OmitProjectMarker = settings.OmitProjectMarker
 		o.IncludeProvisional = settings.IncludeProvisional
 		if settings.MaxResidualMS > 0 {
 			o.MaxResidualMS = settings.MaxResidualMS
