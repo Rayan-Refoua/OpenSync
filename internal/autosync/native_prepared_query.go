@@ -41,7 +41,7 @@ func (a *NativeAnalyzer) prepareQuery(query int, start, length float64) (*prepar
 	p.correlation = researchmatch.PrepareCorrelationQuery(center)
 	return p, nil
 }
-func (p *preparedQuery) correlate(r []float64) (int, float64, float64, error) {
+func (p *preparedQuery) correlate(r []float64, needCompeting bool) (int, float64, float64, error) {
 	n := len(p.wave)
 	if n < 8 || len(r) < n || p.energy < 1e-10 {
 		return 0, 0, 0, nil
@@ -55,16 +55,23 @@ func (p *preparedQuery) correlate(r []float64) (int, float64, float64, error) {
 		sums[i+1] = sums[i] + v
 		squares[i+1] = squares[i] + v*v
 	}
-	values := make([]float64, len(r)-n+1)
-	best := 0
-	for i := range values {
+	var values []float64
+	if needCompeting {
+		values = make([]float64, len(r)-n+1)
+	}
+	best, peak := 0, 0.
+	for i := 0; i <= len(r)-n; i++ {
 		sum := sums[i+n] - sums[i]
 		variance := squares[i+n] - squares[i] - sum*sum/float64(n)
+		value := 0.
 		if variance >= 1e-10 {
-			values[i] = dots[i+n-1] / math.Sqrt(math.Max(variance, 1e-20)*p.energy)
+			value = dots[i+n-1] / math.Sqrt(math.Max(variance, 1e-20)*p.energy)
 		}
-		if math.Abs(values[i]) > math.Abs(values[best]) {
-			best = i
+		if needCompeting {
+			values[i] = value
+		}
+		if math.Abs(value) > math.Abs(peak) {
+			best, peak = i, value
 		}
 	}
 	competing := 0.
@@ -73,9 +80,13 @@ func (p *preparedQuery) correlate(r []float64) (int, float64, float64, error) {
 			competing = math.Max(competing, math.Abs(v))
 		}
 	}
-	return best, math.Max(-1, math.Min(1, values[best])), math.Min(1, competing), nil
+	return best, math.Max(-1, math.Min(1, peak)), math.Min(1, competing), nil
 }
 func (a *NativeAnalyzer) waveformPrepared(ref int, p *preparedQuery, offset, radius float64) (*Measurement, error) {
+	return a.correlatePrepared(ref, p, offset, radius, true)
+}
+
+func (a *NativeAnalyzer) correlatePrepared(ref int, p *preparedQuery, offset, radius float64, needCompeting bool) (*Measurement, error) {
 	if p == nil {
 		return nil, nil
 	}
@@ -88,7 +99,12 @@ func (a *NativeAnalyzer) waveformPrepared(ref int, p *preparedQuery, offset, rad
 	if err != nil {
 		return nil, err
 	}
-	lag, corr, competing, err := p.correlate(prepareWave(r))
+	if needCompeting {
+		a.preparedWaveformCorrelations.Add(1)
+	} else {
+		a.negativeControlCorrelations.Add(1)
+	}
+	lag, corr, competing, err := p.correlate(prepareWave(r), needCompeting)
 	if err != nil {
 		return nil, err
 	}
@@ -101,7 +117,7 @@ func (a *NativeAnalyzer) waveformPrepared(ref int, p *preparedQuery, offset, rad
 func (a *NativeAnalyzer) controlsPrepared(ref int, p *preparedQuery, offset, radius float64, shifts []float64) (int, float64, error) {
 	count, strongest := 0, 0.
 	for _, shift := range shifts {
-		m, err := a.waveformPrepared(ref, p, offset+shift, radius)
+		m, err := a.correlatePrepared(ref, p, offset+shift, radius, false)
 		if err != nil {
 			return 0, 0, err
 		}

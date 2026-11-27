@@ -5,13 +5,17 @@ import "math"
 // Look for independent audio spanning a bracketed camera clip. The reference
 // mapping converts timeline seconds back into the reference audio clock.
 func dateGuidedPairs(records []MediaRecord, layout []NativeLayout, blocked map[int]bool, discovery []NativePair) []NativePair {
+	return dateGuidedPairsForEstimates(records, layout, blocked, discovery, acousticSearchEstimates(records, layout, blocked), false)
+}
+
+func dateGuidedPairsForEstimates(records []MediaRecord, layout []NativeLayout, blocked map[int]bool, discovery []NativePair, estimates []ChronologicalPlacement, independentSource bool) []NativePair {
 	priors := map[[2]int][]NativeCandidate{}
 	for _, pair := range discovery {
 		key := [2]int{pair.Reference, pair.Query}
 		priors[key] = append(priors[key], pair.Candidates...)
 	}
 	var pairs []NativePair
-	for _, estimate := range acousticSearchEstimates(records, layout, blocked) {
+	for _, estimate := range estimates {
 		q := estimate.Recording
 		if records[q].Audio == nil || estimate.Uncertainty > 2 {
 			continue
@@ -22,6 +26,13 @@ func dateGuidedPairs(records []MediaRecord, layout []NativeLayout, blocked map[i
 			r := m.Recording
 			if blocked[r] || r == q || m.Component != 1 || m.Status != "acoustically_supported_not_certified" || records[r].Audio == nil || len(m.Knots) < 2 || records[r].Duration < records[q].Duration {
 				continue
+			}
+			if independentSource {
+				reference, _ := SourceTrackGroup(records[r])
+				query, _ := SourceTrackGroup(records[q])
+				if reference == query {
+					continue
+				}
 			}
 			offset := MapTime(InverseMapping(m.Knots), estimate.Start+sourceOrigin(records[q]))
 			overlap := math.Min(records[q].Duration, records[r].Duration-offset) - math.Max(0, -offset)

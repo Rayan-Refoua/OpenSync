@@ -19,6 +19,7 @@ import (
 type directAudio struct {
 	mu                            sync.Mutex
 	clips                         map[string][]int16
+	blockRequests                 map[string]map[int64]*pcmBlockRequest
 	age                           map[string]uint64
 	tick                          uint64
 	used, limit                   int64
@@ -29,6 +30,7 @@ type directAudio struct {
 	pcmOpening                    map[string]chan struct{}
 	readSlots                     chan struct{}
 	waiting, reading, nativeReads atomic.Int64
+	sharedReads                   atomic.Int64
 }
 
 func newDirectAudio() *directAudio {
@@ -268,27 +270,9 @@ func (d *directAudio) read(ctx context.Context, r MediaRecord, first, count int6
 	for copied := int64(0); copied < count; {
 		position := first + copied
 		blockFirst := position / (50 * 16000) * (50 * 16000)
-		key := audioWindowKey(r.ID, blockFirst)
-		pcm := d.window(key)
-		if pcm == nil {
-			session, err := d.acquire(ctx, r.ID)
-			if err != nil {
-				return nil, err
-			}
-			pcm = d.window(key)
-			if pcm == nil {
-				size := min(int64(50*16000), total-blockFirst)
-				d.misses.Add(1)
-				d.reading.Add(1)
-				pcm, err = session.read(ctx, r, blockFirst, size, &d.starts)
-				d.reading.Add(-1)
-				if err != nil {
-					d.decoders <- session
-					return nil, err
-				}
-				d.retain(key, pcm)
-			}
-			d.decoders <- session
+		pcm, err := d.sharedBlock(ctx, r, blockFirst, min(int64(50*16000), total-blockFirst))
+		if err != nil {
+			return nil, err
 		}
 		offset := position - blockFirst
 		take := min(count-copied, int64(len(pcm))-offset)

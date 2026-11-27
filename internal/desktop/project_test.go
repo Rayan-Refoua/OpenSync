@@ -67,3 +67,17 @@ func TestBoundedCache(t *testing.T) {
 		t.Fatal("budget exceeded")
 	}
 }
+
+func TestTimelineSeparatesAudioAndVideoWithSameSourceAssignment(t *testing.T) {
+	assignment := &autosync.SourceAssignment{Group: "legacy-shared", Label: "Shared"}
+	project := BuildProject(autosync.NativePayload{Records: []autosync.MediaRecord{
+		{ID: "audio", Name: "clip.wav", Duration: 5, Audio: map[string]any{}, SourceAssignment: assignment},
+		{ID: "video", Name: "clip.mov", Duration: 5, Video: map[string]any{}, SourceAssignment: assignment},
+	}})
+	if len(project.Tracks) != 2 || project.Tracks[0].Kind != "video" || project.Tracks[1].Kind != "audio" {
+		t.Fatalf("expected separate tracks with video first: %+v", project.Tracks)
+	}
+	if project.Clips[0].Track != 1 || project.Clips[1].Track != 0 {
+		t.Fatal("recording placed on the wrong track")
+	}
+}

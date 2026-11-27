@@ -9,6 +9,7 @@ import (
 )
 
 type ManualCandidate struct {
+	AuditOnly bool    `json:"auditOnly,omitempty"`
 	ID        string  `json:"id"`
 	Reference int     `json:"reference"`
 	Query     int     `json:"query"`
@@ -74,9 +75,7 @@ func ManualCandidates(p NativePayload) []ManualCandidate {
 		}
 	}
 	raw, _ := json.Marshal(p.Graph["unresolved_timing_hypotheses"])
-	if json.Unmarshal(raw, &pairs) != nil {
-		return nil
-	}
+	_ = json.Unmarshal(raw, &pairs)
 	var result []ManualCandidate
 	seen := map[string]bool{}
 	for _, pair := range pairs {
@@ -93,24 +92,84 @@ func ManualCandidates(p NativePayload) []ManualCandidate {
 				continue
 			}
 			shift := *h.Prior.Offset + reference.AudioOrigin - query.AudioOrigin
-			preferredReverse := query.Resolved && !reference.Resolved
+			preferredReverse := !reviewPlacementOpen(query) && reviewPlacementOpen(reference)
 			for _, reversed := range []bool{false, true} {
 				r, q, offset := r, q, shift
 				if reversed {
 					r, q, offset = q, r, -offset
 				}
 				id := fmt.Sprintf("%d:%d:%.9f", r, q, offset)
-				pending := reversed == preferredReverse && !(reference.Resolved && query.Resolved)
+				pending := reversed == preferredReverse && (reviewPlacementOpen(reference) || reviewPlacementOpen(query))
 				if seen[id] || (!pending && decisions[id] == nil) ||
 					math.Min(p.Records[q].Duration, p.Records[r].Duration-offset)-math.Max(0, -offset) < .25 {
 					continue
 				}
 				seen[id] = true
-				canAccept := !models[q].Resolved && !strings.HasPrefix(models[r].Status, "provisional_") &&
+				canAccept := reviewPlacementOpen(models[q]) && !strings.HasPrefix(models[r].Status, "provisional_") &&
 					models[q].ComponentSize == 1 && (models[r].Resolved || models[q].TimingBasis != "manual_local_audio_review")
-				result = append(result, ManualCandidate{id, r, q, offset, h.Status, canAccept})
+				result = append(result, ManualCandidate{ID: id, Reference: r, Query: q, Shift: offset, Status: h.Status, CanAccept: canAccept})
 			}
 		}
+	}
+	for _, query := range p.Models {
+		q := query.Recording
+		if query.Status != "provisional_chronological_estimate" || q < 0 || q >= len(p.Records) || p.Records[q].Audio == nil {
+			continue
+		}
+		bestOverlap := 0.
+		var best ManualCandidate
+		for _, reference := range p.Models {
+			r := reference.Recording
+			if r == q || r < 0 || r >= len(p.Records) || !reference.Resolved ||
+				reference.Component != query.Component || strings.HasPrefix(reference.Status, "provisional_") ||
+				p.Records[r].Audio == nil || len(reference.Knots) < 2 {
+				continue
+			}
+			shift := MapTime(InverseMapping(reference.Knots), query.Offset)
+			overlap := math.Min(p.Records[q].Duration, p.Records[r].Duration-shift) - math.Max(0, -shift)
+			if overlap < 2 || overlap <= bestOverlap {
+				continue
+			}
+			id := fmt.Sprintf("%d:%d:%.9f", r, q, shift)
+			if seen[id] || decisions[id] != nil {
+				continue
+			}
+			bestOverlap = overlap
+			best = ManualCandidate{ID: id, Reference: r, Query: q, Shift: shift, Status: "chronology_waveform_candidate", CanAccept: true}
+		}
+		if bestOverlap > 0 {
+			seen[best.ID] = true
+			result = append(result, best)
+		}
+	}
+	for _, edge := range p.ValidatedRelations {
+		if edge == nil || edge.Selected == nil {
+			continue
+		}
+		method := edge.Selected.Method
+		if edge.Profile != nil && method != "calibrated_chronology_audio_search" {
+			method = edge.Profile.Prior.Method
+		}
+		r, q := edge.Reference, edge.Query
+		reference, query := models[r], models[q]
+		if method != "calibrated_chronology_audio_search" || r < 0 || q < 0 || r >= len(p.Records) || q >= len(p.Records) ||
+			!reference.Resolved || !query.Resolved || reference.Component != query.Component ||
+			p.Records[r].Audio == nil || p.Records[q].Audio == nil {
+			continue
+		}
+		shift := edge.Selected.Offset + reference.AudioOrigin - query.AudioOrigin
+		if math.Min(p.Records[q].Duration, p.Records[r].Duration-shift)-math.Max(0, -shift) < .25 {
+			continue
+		}
+		if len(reference.Knots) >= 2 && math.Abs(MapTime(reference.Knots, shift)-query.Offset) > .25 {
+			continue
+		}
+		id := fmt.Sprintf("audit:%d:%d:%.9f", r, q, shift)
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		result = append(result, ManualCandidate{ID: id, Reference: r, Query: q, Shift: shift, Status: "chronology_and_acoustics_verified", AuditOnly: true})
 	}
 	return result
 }
@@ -123,7 +182,7 @@ func reviewCandidate(p *NativeProject, id string, accept bool) ([]map[string]any
 			break
 		}
 	}
-	if candidate == nil {
+	if candidate == nil || candidate.AuditOnly {
 		return nil, nil, "", fmt.Errorf("candidate is no longer available")
 	}
 	payload, err := rawObject(p.Payload)
@@ -142,6 +201,20 @@ func reviewCandidate(p *NativeProject, id string, accept bool) ([]map[string]any
 	graph["manual_candidate_decisions"] = decisions
 	if decisions[id] != nil {
 		return nil, nil, "", fmt.Errorf("candidate was already reviewed; undo the revision to review it again")
+	}
+	if candidate.Status == "chronology_waveform_candidate" {
+		r, q := candidate.Reference, candidate.Query
+		var origins = map[int]float64{}
+		for _, model := range p.Data.Models {
+			origins[model.Recording] = model.AudioOrigin
+		}
+		offset := candidate.Shift - origins[r] + origins[q]
+		hypotheses, _ := graph["unresolved_timing_hypotheses"].([]any)
+		graph["unresolved_timing_hypotheses"] = append(hypotheses, map[string]any{
+			"reference": r, "query": q, "hypotheses": []map[string]any{
+				{"prior": map[string]any{"offset": offset}, "status": candidate.Status},
+			},
+		})
 	}
 	label := "Reject candidate"
 	decisions[id] = "rejected"
@@ -171,16 +244,24 @@ func reviewCandidate(p *NativeProject, id string, accept bool) ([]map[string]any
 			decisions[id] = "confirmed"
 			return models, graph, "Confirm match · " + p.Data.Records[q].Name, nil
 		}
+		shift := candidate.Shift
+		status, basis := "manually_accepted", "manual_audio_review"
+		if proofs, ok := graph["automatic_waveform_matches"].(map[string]any); ok {
+			if proof, ok := proofs[id].(map[string]any); ok {
+				shift = number(proof["shift"])
+				status, basis = "acoustically_supported_not_certified", "waveform_verified_review"
+			}
+		}
 		length := p.Data.Records[q].Duration
 		point := func(x float64) float64 {
 			if len(anchor.Knots) >= 2 {
-				return MapTime(anchor.Knots, x+candidate.Shift)
+				return MapTime(anchor.Knots, x+shift)
 			}
-			return anchor.Offset + anchor.Rate*(x+candidate.Shift)
+			return anchor.Offset + anchor.Rate*(x+shift)
 		}
 		knots := []TimePoint{{0, point(0)}}
 		for _, knot := range anchor.Knots {
-			x := knot[0] - candidate.Shift
+			x := knot[0] - shift
 			if x > 0 && x < length {
 				knots = append(knots, TimePoint{x, knot[1]})
 			}
@@ -194,7 +275,9 @@ func reviewCandidate(p *NativeProject, id string, accept bool) ([]map[string]any
 			for i := range analysis {
 				analysis[i][0] -= target.AudioOrigin
 			}
-			m["status"], m["timing_basis"], m["globally_resolved"] = "manually_accepted", "manual_audio_review", anchor.Resolved
+			m["status"], m["timing_basis"], m["globally_resolved"] = status, basis, anchor.Resolved
+			delete(m, "acoustic_verification")
+			delete(m, "uncertainty_interpretation")
 			if !anchor.Resolved {
 				m["status"], m["timing_basis"] = "unresolved_disconnected_group", "manual_local_audio_review"
 			}
@@ -228,4 +311,8 @@ func reviewCandidate(p *NativeProject, id string, accept bool) ([]map[string]any
 		label = "Accept candidate"
 	}
 	return models, graph, label + " · " + p.Data.Records[candidate.Query].Name, nil
+}
+
+func reviewPlacementOpen(model TimeModel) bool {
+	return !model.Resolved || model.Status == "provisional_chronological_estimate"
 }

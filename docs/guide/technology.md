@@ -13,7 +13,7 @@
 
 The shipped synchronization engine runs in Go. Python source remains in the repository for research and development workflows. FFmpeg tools are external dependencies in the public alpha. Experimental CGO library work is separately gated.
 
-For Windows development, `python tools/dev_desktop.py --run` builds and launches the desktop app. `python tools/build_open_windows.py` builds and opens the packaged release. See `AGENTS.md` and the scripts for current options.
+For Windows development, `Build and Open OpenSync.cmd` builds and opens the app. Add `--debug-ui` to launch the same executable with WebView2 DevTools, or choose **Restart with GUI debug** in Workstation settings. `python tools/build_open_windows.py` builds the packaged release. See `AGENTS.md` and the scripts for current options.
 
 ## Documentation site
 

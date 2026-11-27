@@ -25,6 +25,8 @@ type Event struct {
 	Recording *int   `json:"recording,omitempty"`
 }
 type App struct {
+	sourceReview                *pendingSourceReview
+	sourceReviewID              int
 	ctx                         context.Context
 	media                       *desktop.Service
 	mu                          sync.Mutex
@@ -108,7 +110,7 @@ func (a *App) openProject(path, updateBase string) (*desktop.Project, error) {
 	if busy {
 		return nil, fmt.Errorf("stop the active sync before opening another project")
 	}
-	p, e := desktop.LoadProject(path)
+	p, e := desktop.LoadProject(path, a.GetSettings().QueueUncertain)
 	if e != nil {
 		return nil, e
 	}
@@ -230,6 +232,9 @@ func (a *App) SelectInputs(folder bool) (int, error) {
 	a.log("input", fmt.Sprintf("%d files/folders selected for next sync", n))
 	return n, nil
 }
+func (a *App) PickSyncReference() (string, error) {
+	return wr.OpenFileDialog(a.ctx, wr.OpenDialogOptions{Title: "Choose an input recording as timing reference"})
+}
 func (a *App) ClearInputs() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -268,6 +273,7 @@ func (a *App) Status(after int64) map[string]any {
 		activity[k] = v
 	}
 	r["clipActivity"] = activity
+	r["sourceReview"] = a.sourceReview
 	r["stageSeconds"] = time.Since(a.stageStarted).Seconds()
 	r["outcome"] = a.outcome
 	r["stageCompleted"], r["stageTotal"] = a.stageCompleted, a.stageTotal
@@ -367,6 +373,8 @@ func (a *App) startSync(override []string, corrections string) error {
 		defer cancel()
 		o := autosync.NativeSyncOptions{Output: out, Name: "OpenSync", Stage: "all", Unsynced: "append", MaxResidualMS: 150}
 		o.Mode = settings.Mode
+		o.ReferenceSource, o.UseOriginalAudio = settings.ReferenceSource, settings.UseOriginalAudio
+		o.ReviewSources = a.sourceReviewer(settings.SourceReview)
 		o.FileTimePlacement = settings.FileTimePlacement
 		o.Analysis = settings.Analysis
 		o.TrackLayout = settings.TrackLayout
@@ -431,6 +439,10 @@ func (a *App) startSync(override []string, corrections string) error {
 	return nil
 }
 func (a *App) progress(e autosync.ProgressEvent) {
+	if e.Kind == "source" {
+		a.log("source", e.Detail)
+		return
+	}
 	if e.Kind == "io_read" {
 		a.mu.Lock()
 		a.ioProgress = e.IO
@@ -449,8 +461,10 @@ func (a *App) progress(e autosync.ProgressEvent) {
 	}
 	if e.Kind == "stage" || e.Kind == "heartbeat" {
 		a.mu.Lock()
-		a.stage = e.Stage
-		a.detail = e.Detail
+		if a.sourceReview == nil {
+			a.stage = e.Stage
+			a.detail = e.Detail
+		}
 		a.mu.Unlock()
 	}
 	if e.Kind == "stage" {

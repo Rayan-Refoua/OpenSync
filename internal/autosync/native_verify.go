@@ -252,6 +252,7 @@ func (a *NativeAnalyzer) verify(ctx context.Context, pairs []NativePair, out, na
 				if data, err := workspaceRead(a.ctx, path); err == nil {
 					var cached PairEvidence
 					if json.Unmarshal(data, &cached) == nil && cached.Reference == pair.Reference && cached.Query == pair.Query && (cached.Digest == digest || !settings.custom() && cached.Digest == legacyPairDigest(pair, ref.CacheSHA, query.CacheSHA)) {
+						a.reusedVerificationCandidates.Add(int64(len(cached.Candidates)))
 						results[i] = &cached
 						reportProgress(i)
 						continue
@@ -278,8 +279,10 @@ func (a *NativeAnalyzer) verify(ctx context.Context, pairs []NativePair, out, na
 					if previous := prior[c]; previous != nil {
 						result.Candidates = append(result.Candidates, previous)
 						reused.Add(1)
+						a.reusedVerificationCandidates.Add(1)
 						continue
 					}
+					a.verificationCandidates.Add(1)
 					e, err := a.assessCandidate(pair.Reference, pair.Query, c)
 					if err != nil {
 						errs[i] = err
@@ -341,7 +344,7 @@ func (a *NativeAnalyzer) validateEdges(edges []*PairEvidence, out, namespace str
 	work := func(edge *PairEvidence) (*HoldoutReport, error) {
 		// Final validation receives the unchanged, already accepted edges plus
 		// newly refined edges. Only the latter require fresh holdout windows.
-		if namespace == "" && edge.Validation != nil && edge.Validation.Status == "pass_disjoint_windows" {
+		if (namespace == "" || namespace == "initial-") && edge.Validation != nil && edge.Validation.Status == "pass_disjoint_windows" {
 			return edge.Validation, nil
 		}
 		ref, query := edge.Reference, edge.Query
@@ -465,23 +468,11 @@ func (a *NativeAnalyzer) validateEdges(edges []*PairEvidence, out, namespace str
 		}
 		return report, nil
 	}
-	jobs := make(chan int)
 	errs := make([]error, len(edges))
-	var wg sync.WaitGroup
-	for worker := 0; worker < nativeWorkers(len(edges)); worker++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for i := range jobs {
-				reports[i], errs[i] = work(edges[i])
-			}
-		}()
-	}
-	for i := range edges {
-		jobs <- i
-	}
-	close(jobs)
-	wg.Wait()
+	scheduleNativeHoldouts(len(a.records), nativeWorkers(len(edges)), edges, namespace == "" || namespace == "initial-", func(i int) bool {
+		reports[i], errs[i] = work(edges[i])
+		return errs[i] == nil && reports[i].Status == "pass_disjoint_windows"
+	})
 	for i, report := range reports {
 		if errs[i] != nil {
 			return nil, errs[i]

@@ -252,3 +252,42 @@ func TestDistributedLongQueryCrossesReferenceTileBoundary(t *testing.T) {
 		t.Fatalf("long query did not recover expected start: %+v", got.Peaks)
 	}
 }
+
+func TestOccupiedOffsetSearchKeepsFreeMatch(t *testing.T) {
+	root := t.TempDir()
+	ref, query := make([][]float64, 5), make([][]float64, 5)
+	for b := range ref {
+		ref[b] = make([]float64, 30000)
+		random := rand.New(rand.NewSource(int64(55 + b)))
+		for i := range ref[b] {
+			ref[b][i] = random.NormFloat64()
+		}
+		query[b] = append([]float64(nil), ref[b][23000:23400]...)
+	}
+	r := featureFixture(t, filepath.Join(root, "reference.features"), 1, ref)
+	q := featureFixture(t, filepath.Join(root, "query.features"), 1, query)
+	run := func(excluded []OffsetSpan) DistributedResult {
+		t.Helper()
+		result, err := SearchDistributedExcluding(r, q, func(n int, work func(int)) {
+			for i := 0; i < n; i++ {
+				work(i)
+			}
+		}, false, excluded)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return result
+	}
+	full, constrained := run(nil), run([]OffsetSpan{{2000, 20000}})
+	if full.Peaks[0].Offset != 230 || constrained.Peaks[0].Offset != 230 {
+		t.Fatal("known free match was lost")
+	}
+	if full.OffsetsExamined-constrained.OffsetsExamined != 18000 {
+		t.Fatalf("expected 18000 fewer offsets, got %d", full.OffsetsExamined-constrained.OffsetsExamined)
+	}
+	for _, peak := range constrained.Peaks {
+		if peak.Offset >= 20 && peak.Offset < 200 {
+			t.Fatalf("occupied offset evaluated: %+v", peak)
+		}
+	}
+}

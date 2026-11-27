@@ -217,6 +217,10 @@ func TestNativeAudioOnlyDriftRender(t *testing.T) {
 	if err != nil || len(tolerated) != 1 || tolerated[0].Derivative != nil {
 		t.Fatalf("drift within configured tolerance was corrected: %v", err)
 	}
+	original, _, err := nativePlacements(p, NativeExportOptions{Output: root, Unsynced: "append", MaxResidualMS: 60, UseOriginalAudio: true})
+	if err != nil || len(original) != 1 || original[0].Derivative != nil || original[0].Status != "unresolved_timing_uncertainty" {
+		t.Fatalf("original-only export did not preserve the source and flag excessive drift: %+v, %v", original, err)
+	}
 	data, err := buildNativeXML(p, placements, rate)
 	if err != nil {
 		t.Fatal(err)

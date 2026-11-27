@@ -56,8 +56,11 @@ func nativePrepareDirect(ctx context.Context, o NativeSyncOptions, files []strin
 					if s["codec_type"] == "video" && r.Video == nil && number(disp["attached_pic"]) == 0 {
 						r.Video = s
 					}
-					if s["codec_type"] == "audio" && r.Audio == nil {
-						r.Audio = s
+					if s["codec_type"] == "audio" {
+						r.AudioStreams = append(r.AudioStreams, s)
+						if r.Audio == nil {
+							r.Audio = s
+						}
 					}
 				}
 				if r.Audio == nil && r.Video == nil {

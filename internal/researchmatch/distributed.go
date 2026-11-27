@@ -276,13 +276,47 @@ const MaxDistributedQueryFrames = 30000
 const distributedReferenceTile = 12000
 
 func SearchDistributedScheduled(ref, query *DistributedFile, omitBand, omitSection int, schedule func(int, func(int))) (DistributedResult, error) {
-	return searchDistributed(ref, query, omitBand, omitSection, schedule, false)
+	return searchDistributed(ref, query, omitBand, omitSection, schedule, false, nil)
 }
 
 // SearchDistributedOnsets ranks offsets using three sections. The two
 // intervening sections are reserved for evaluating the proposed offset.
 func SearchDistributedOnsets(ref, query *DistributedFile, schedule func(int, func(int))) (DistributedResult, error) {
-	return searchDistributed(ref, query, -1, -1, schedule, true)
+	return searchDistributed(ref, query, -1, -1, schedule, true, nil)
+}
+
+// OffsetSpan is a half-open range on the 100 Hz offset grid.
+type OffsetSpan struct {
+	First int `json:"first_frame"`
+	End   int `json:"end_frame_exclusive"`
+}
+
+// SearchDistributedExcluding runs the ordinary search over unoccupied offsets.
+// Pass exclusions in ascending start order.
+func SearchDistributedExcluding(ref, query *DistributedFile, schedule func(int, func(int)), onsets bool, excluded []OffsetSpan) (DistributedResult, error) {
+	return searchDistributed(ref, query, -1, -1, schedule, onsets, excluded)
+}
+
+func distributedTiles(ref, query int, excluded []OffsetSpan) []OffsetSpan {
+	var tiles []OffsetSpan
+	appendRange := func(first, end int) {
+		for first < end {
+			last := min(end, first+distributedReferenceTile)
+			tiles = append(tiles, OffsetSpan{first, last})
+			first = last
+		}
+	}
+	first := -query
+	for _, span := range excluded {
+		end := min(span.First, ref)
+		appendRange(first, end)
+		first = max(first, span.End)
+		if first >= ref {
+			return tiles
+		}
+	}
+	appendRange(first, ref)
+	return tiles
 }
 
 const onsetLag = 24
@@ -303,7 +337,7 @@ func integrateOnsets(channels [][]float64) {
 	}
 }
 
-func searchDistributed(ref, query *DistributedFile, omitBand, omitSection int, schedule func(int, func(int)), onsets bool) (DistributedResult, error) {
+func searchDistributed(ref, query *DistributedFile, omitBand, omitSection int, schedule func(int, func(int)), onsets bool, excluded []OffsetSpan) (DistributedResult, error) {
 	result := DistributedResult{Version: DistributedVersion, Status: "DISCOVERY_ONLY", GridSeconds: .01, Certification: "not_assessed", Peaks: []DistributedPeak{}}
 	if query.Frames > MaxDistributedQueryFrames {
 		return result, fmt.Errorf("distributed short-query stage is bounded to 300 seconds")
@@ -329,7 +363,6 @@ func searchDistributed(ref, query *DistributedFile, omitBand, omitSection int, s
 	if len(sections) < 3 {
 		return result, nil
 	}
-	const tile = distributedReferenceTile
 	var candidates []DistributedPeak
 	backgroundCount, backgroundMean, backgroundM2 := 0, 0., 0.
 	type tileResult struct {
@@ -337,15 +370,16 @@ func searchDistributed(ref, query *DistributedFile, omitBand, omitSection int, s
 		background []float64
 		examined   int
 	}
-	tileCount := (ref.Frames + query.Frames + tile - 1) / tile
+	tiles := distributedTiles(ref.Frames, query.Frames, excluded)
+	tileCount := len(tiles)
 	for batch := 0; batch < tileCount; batch += 32 {
 		count := min(32, tileCount-batch)
 		outputs := make([]tileResult, count)
 		errors := make([]error, count)
 		compute := func(index int) error {
-			base := (batch+index)*tile - query.Frames
+			span := tiles[batch+index]
+			base, last := span.First, span.End
 			output := &outputs[index]
-			last := min(base+tile, ref.Frames)
 			rstart := max(0, base)
 			if onsets {
 				rstart = max(0, rstart-onsetLag)

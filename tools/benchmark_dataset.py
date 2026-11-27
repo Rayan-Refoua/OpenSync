@@ -9,7 +9,7 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def compare(baseline: Path, candidate: Path) -> dict:
+def compare(baseline: Path, candidate: Path, *, policy_field: str | None = None) -> dict:
     report = {}
     for name in ("OpenSync.opensync", "OpenSync.xml"):
         old = baseline / name
@@ -18,6 +18,14 @@ def compare(baseline: Path, candidate: Path) -> dict:
             a = json.loads(old.read_text(encoding="utf-8"))
             b = json.loads(new.read_text(encoding="utf-8"))
             report["project_payload_identical"] = a["content_sha256"] == b["content_sha256"]
+            if policy_field:
+                # This setting is input provenance. Compare everything else,
+                # including all graph edges and timing models.
+                for doc in (a, b):
+                    doc["payload"]["graph"]["analysis_policy"].pop(policy_field, None)
+                report["project_payload_identical_except_policy_setting"] = (
+                    a["payload"] == b["payload"]
+                )
             for key in ("timing_models", "validated_relations", "graph"):
                 report[key + "_identical"] = a["payload"].get(key) == b["payload"].get(key)
         else:
@@ -42,6 +50,9 @@ def main() -> None:
     parser.add_argument("--anchor", action="append", type=Path, default=[], help="add a reference recording")
     parser.add_argument("--baseline", type=Path, help="previous benchmark directory")
     parser.add_argument("--compare-only", action="store_true", help="compare existing output")
+    policy = parser.add_mutually_exclusive_group()
+    policy.add_argument("--discovery-ab", dest="policy_field", action="store_const", const="discovery", help="allow only the logged discovery mode to differ in project comparison")
+    policy.add_argument("--timing-ab", dest="policy_field", action="store_const", const="timingProfiles", help="allow only the logged timing-profile policy to differ in project comparison")
     args = parser.parse_args()
     out = args.output.resolve()
     if args.compare_only and not args.baseline:
@@ -73,11 +84,14 @@ def main() -> None:
                 cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT, check=True,
             )
     if args.baseline:
-        report = compare(args.baseline.resolve() / "project", out / "project")
+        report = compare(args.baseline.resolve() / "project", out / "project", policy_field=args.policy_field)
         data = json.dumps(report, indent=2)
         (out / "comparison.json").write_text(data + "\n", encoding="utf-8")
         print(data)
-        if not all(value for key, value in report.items() if key.endswith("_identical")):
+        identity_checks = {key: value for key, value in report.items() if key.endswith("_identical")}
+        if args.policy_field:
+            identity_checks["project_payload_identical"] = report["project_payload_identical_except_policy_setting"]
+        if not all(identity_checks.values()):
             raise SystemExit("Benchmark outputs differ; see comparison.json")
 
 

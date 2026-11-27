@@ -42,14 +42,21 @@ type PhaseEvidence struct {
 	Distinct   bool    `json:"distinct"`
 }
 type NativeAnalyzer struct {
-	ctx          context.Context
-	records      []MediaRecord
-	readers      []*audio.Reader
-	io           chan struct{}
-	lock         sync.Mutex
-	computeOnce  sync.Once
-	compute      *nativeComputePool
-	computeStats atomic.Pointer[nativeComputePool]
+	ctx                          context.Context
+	records                      []MediaRecord
+	readers                      []*audio.Reader
+	io                           chan struct{}
+	lock                         sync.Mutex
+	computeOnce                  sync.Once
+	compute                      *nativeComputePool
+	computeStats                 atomic.Pointer[nativeComputePool]
+	verificationCandidates       atomic.Int64
+	reusedVerificationCandidates atomic.Int64
+	preparedWaveformCorrelations atomic.Int64
+	negativeControlCorrelations  atomic.Int64
+	profileWindows               [3]atomic.Int64
+	sparseProfilesCompleted      atomic.Int64
+	sparseProfilesEscalated      atomic.Int64
 }
 
 func NewNativeAnalyzer(records []MediaRecord) *NativeAnalyzer {

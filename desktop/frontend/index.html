@@ -40,7 +40,8 @@
           <option value="clips">Clips / takes</option>
           <option value="chronological">Chronological event</option>
         </select>
-        <button id="syncSettings" aria-label="Synchronization options" title="File-time placement, recovery, verification and processing limits">Options</button>
+        <button id="syncSetup" title="Choose project structure, matching confidence and recovery effort">Setup</button>
+        <button id="syncSettings" aria-label="Advanced synchronization options" title="Fine-tune synchronization and verification">Advanced</button>
         <button
           id="sync"
           class="primary ui-icon"
@@ -58,7 +59,7 @@
         </section>
         <section class="workflowStep" data-step="review" aria-label="Review">
           <span class="stepLabel">3 · Review</span>
-          <div class="stepActions" id="reviewActions"><button id="openMatchReview" disabled>Review matches</button></div>
+          <div class="stepActions" id="reviewActions"><button id="openMatchReview" disabled>Review matches</button><button id="retrySelected" disabled>Retry selected clips</button></div>
         </section>
         <section class="workflowStep" data-step="export" aria-label="Export">
           <span class="stepLabel">4 · Export</span>
@@ -99,7 +100,7 @@
     <section class="projectbar">
       <strong id="projectName">No project open</strong
       ><span id="counts">Open a project to inspect its synchronization</span
-      ><span class="legend"
+      ><span id="singleSourceNotice" hidden title="One detected source can contain overlapping recordings. Review Source Review if these clips came from multiple devices.">One detected source</span><span class="legend"
         ><i class="supported"></i>Supported <i class="validated"></i>Validated
         <i class="provisional"></i>Provisional
         <i class="unresolved"></i>Unresolved</span
@@ -119,7 +120,7 @@
         id="nextAttention" class="ui-icon"
         title="Jump to the next unresolved or provisional recording"
       >
-        Next attention
+        Needs attention
       </button>
       <button id="findClip" title="Find a recording by filename · Ctrl+F">Find clip</button>
       <details class="projectActions">
@@ -187,6 +188,7 @@
         <button id="matchPlay">Play window <kbd>Space</kbd></button><button id="matchStop">Stop</button>
         <button id="matchAB" aria-label="Switch between reference and candidate audio">Audio A <kbd>S</kbd></button>
         <button id="matchBoth" aria-pressed="false">Mix A + B <kbd>W</kbd></button>
+        <button id="verifyReviewMatches" type="button">Verify matches with waveform</button>
         <span id="matchReviewStatus" role="status"></span>
       </div>
       <div class="dialogActions">
@@ -195,6 +197,35 @@
         <button id="matchAccept" class="primary">Accept placement</button>
       </div>
       </section>
+      </div>
+    </dialog>
+    <dialog id="attentionDialog" aria-labelledby="attentionTitle">
+      <h2 id="attentionTitle">Recordings to review</h2>
+      <p>Choose clips to retry here, or Ctrl-click clips on the timeline before opening this panel.</p>
+      <div id="attentionList"></div>
+      <div class="dialogActions">
+        <label>Reference <select id="retryReference"></select></label>
+        <label title="Add a distributed audio search for clips shorter than five minutes"><input id="retryBroader" type="checkbox" checked /> Broader search</label>
+      </div>
+      <div class="dialogActions">
+        <button id="attentionClose">Close</button>
+        <button id="attentionRetry" class="primary">Search selected clips</button>
+      </div>
+    </dialog>
+    <dialog id="sourceReviewDialog" aria-labelledby="sourceReviewTitle">
+      <h2 id="sourceReviewTitle">Review recording sources</h2>
+      <p id="sourceReviewWarnings"></p>
+      <p>Select clips to move them into an existing source or split them into a new source.</p>
+      <div id="sourceReviewGroups"></div>
+      <div class="dialogActions">
+        <select id="sourceReviewDestination" aria-label="Destination source"></select>
+        <button id="sourceReviewMerge">Move to source</button>
+        <button id="sourceReviewSplit">Split to new source</button>
+      </div>
+      <p id="sourceReviewError" role="alert"></p>
+      <div class="dialogActions">
+        <button id="sourceReviewCancel">Cancel sync</button>
+        <button id="sourceReviewContinue" class="primary">Continue sync</button>
       </div>
     </dialog>
     <dialog id="findClipDialog">
@@ -396,17 +427,95 @@
     </footer>
     <div id="tooltip" hidden></div>
     <div id="toast" hidden role="alert"></div>
+    <dialog id="syncSetupDialog" aria-labelledby="syncSetupTitle">
+      <form id="syncSetupForm">
+        <header class="syncSetupHeader">
+          <h2 id="syncSetupTitle">Synchronization setup</h2>
+          <label>Load preset
+            <select name="preset">
+              <option value="">Current settings</option>
+              <option value="event">Continuous event</option>
+              <option value="takes">Repeated takes</option>
+              <option value="difficult">Difficult audio</option>
+            </select>
+          </label>
+        </header>
+        <div class="syncSetupQuestions">
+          <label>How was the project recorded?
+            <select name="structure"><option value="chronological">Continuous event</option><option value="clips">Independent clips or repeated takes</option></select>
+          </label>
+          <label>How conservative should matching be?
+            <select name="confidence"><option value="strict">Strict · prioritize avoiding false matches</option><option value="balanced">Balanced · standard verification</option><option value="loose">Loose · investigate weaker audio</option><option value="custom">Keep current verification values</option></select>
+          </label>
+          <label>How far should recovery search?
+            <select name="effort"><option value="quick">Quick · narrower recovery</option><option value="balanced">Standard coverage</option><option value="deep">Deep · investigate more unresolved clips</option><option value="forensic">Forensic · all eligible distributed pairs</option><option value="off">Skip distributed recovery</option></select>
+          </label>
+          <label id="setupTimestampField">How should gaps in audio evidence be handled?
+            <select name="timestamps"><option value="estimate">Use calibrated recording order and dates</option><option value="audio">Require acoustic placement</option></select>
+          </label>
+          <label>When should proposed recorder groups be reviewed?
+            <select name="review"><option value="automatic">Proceed automatically</option><option value="ambiguous">Pause on ambiguity</option><option value="always">Review every project</option></select>
+          </label>
+        </div>
+        <details id="projectExceptions">
+          <summary>Project exceptions</summary>
+          <div class="syncSetupQuestions">
+            <label>Timing reference
+              <span class="referenceChoice"><input name="referenceSource" readonly placeholder="Automatic" /><button id="pickTimingReference" type="button">Choose recording</button><button id="clearTimingReference" type="button">Auto</button></span>
+            </label>
+            <label id="setupRecorderOrder">Recorder order
+              <select name="recorderOrder"><option value="">Keep current guidance settings</option><option value="guided">Use supported order to guide search</option><option value="independent">Allow independent placement</option></select>
+            </label>
+            <label>Uncertain acoustic matches
+              <select name="uncertain"><option value="">Keep current handling</option><option value="queue">Queue for review</option><option value="flag">Show flagged proposals on the timeline</option><option value="separate">Keep out of main export · separate sequence</option></select>
+            </label>
+            <label>Audio drift on export
+              <select name="drift"><option value="corrected">Create corrected WAVs if needed</option><option value="original">Use original recordings</option></select>
+            </label>
+            <label data-drift-tolerance>Allowed audio lead (ms)<input name="early" type="number" min="0" max="10000" step="any" required /></label>
+            <label data-drift-tolerance>Allowed audio lag (ms)<input name="late" type="number" min="0" max="10000" step="any" required /></label>
+          </div>
+          <div class="sourceException">
+            <button id="reviewSourceOverlap" type="button">Enable recorder overlap review</button>
+            <small>Mark specific sources as non-overlapping in Source review. Other recordings remain eligible to overlap.</small>
+          </div>
+        </details>
+        <p id="syncSetupSummary" aria-live="polite"></p>
+        <p id="syncSetupError" role="alert"></p>
+        <div class="syncSetupActions"><button id="closeSyncSetup" type="button">Cancel</button><button type="submit" class="primary">Apply settings</button></div>
+      </form>
+    </dialog>
     <dialog id="settingsDialog" aria-labelledby="settingsTitle">
       <form id="settingsForm">
         <h2 id="settingsTitle">Workstation preferences</h2>
+        <section data-settings="workstation"><button id="restartDebugUI" type="button">Restart with GUI debug</button></section>
         <section data-settings="sync">
+          <label>Source review before synchronization
+            <select name="sourceReview">
+              <option value="automatic">Automatic</option>
+              <option value="ambiguous">Pause on ambiguity</option>
+              <option value="always">Always review</option>
+            </select>
+          </label>
           <label title="Estimate placements from file dates and recording order"><input id="fileTimePlacement" type="checkbox" disabled /> File time Based placement</label>
           <div class="settingsGrid">
+            <label title="Use verified chronology to reduce recovery work. Turn this off to search the usual ranges.">
+              <span>Use chronological search shortcuts</span><input name="searchShortcuts" type="checkbox" checked />
+            </label>
+            <label>Timing profiles
+              <select name="timingProfiles">
+                <option value="auto">Automatic (default)</option>
+                <option value="dense">Dense</option>
+                <option value="adaptive">Adaptive (experimental)</option>
+              </select>
+            </label>
+            <label><span>Guarded global timing (experimental)</span><input name="globalTiming" type="checkbox" /></label>
             <label title="Controls the extra search pass for unresolved recordings">Acoustic recovery
               <select name="recovery">
                 <option value="balanced">Balanced (default)</option>
                 <option value="quick">Quick</option>
                 <option value="deep">Deep search</option>
+                <option value="forensic">Forensic (all eligible pairs)</option>
                 <option value="off">Skip distributed search</option>
               </select>
             </label>
@@ -418,6 +527,9 @@
             </label>
             <label title="Total reference audio hours examined by the extra long-reference search; zero uses the preset">Long-reference search budget (hours)
               <input name="longReferenceHours" type="number" min="0" max="600" step="0.1" required />
+            </label>
+            <label>Distributed recovery cap (reference hours)
+              <input name="recoveryReferenceHours" type="number" min="0" max="10000" step="any" required />
             </label>
             <fieldset><legend>Matching and verification</legend>
 <label>Minimum waveform correlation<input name="minWave" type="number" min="0.01" max="1" step="0.001" required /></label>
@@ -502,6 +614,9 @@
               max="16"
               required
           /></label>
+          <label title="Use up to two other lanes when the selected audition lanes have no audio at the playhead.">
+            <span>Auto-switch audio in gaps</span><input name="autoAudioFallback" type="checkbox" />
+          </label>
           <label
             >Monitor position<select name="monitorPosition">
               <option value="right">Right of timeline</option>

@@ -181,7 +181,7 @@ func matchingLegacyProfiles(data []byte, pair NativePriorPair, ref, query MediaR
 	}
 	return &saved, true
 }
-func (a *NativeAnalyzer) runProfiles(ctx context.Context, out string) ([]NativeProfilePair, error) {
+func (a *NativeAnalyzer) runProfiles(ctx context.Context, out string, edges []*PairEvidence) ([]NativeProfilePair, error) {
 	pairs, err := nativeReservoir(a.ctx, a.records, out)
 	if err != nil {
 		return nil, err
@@ -195,6 +195,8 @@ func (a *NativeAnalyzer) runProfiles(ctx context.Context, out string) ([]NativeP
 	jobs := make(chan int)
 	var wg sync.WaitGroup
 	var completed atomic.Int64
+	policy := analysisSettings(a.ctx)
+	adaptivePairs := adaptiveTimingPairs(policy, a.records, pairs, edges)
 	fmt.Printf("TIMING: %d pairs: testing offsets, fitting models and checking independent audit windows\n", len(pairs))
 	reportPair := func(i int) {
 		n := int(completed.Add(1))
@@ -207,8 +209,12 @@ func (a *NativeAnalyzer) runProfiles(ctx context.Context, out string) ([]NativeP
 	runPair := func(i int) {
 		pair := pairs[i]
 		ref, query := a.records[pair.Reference], a.records[pair.Query]
-		settings := analysisSettings(a.ctx).Verification
+		settings := policy.Verification
 		input := map[string]any{"version": "multilevel-profile-native-v2", "spectral_schedule": 2, "pair": pair, "sources": []string{ref.CacheSHA, query.CacheSHA}}
+		adaptive := len(adaptivePairs) > 0 && adaptivePairs[i]
+		if adaptive {
+			input["adaptive_schedule"] = 2
+		}
 		if settings.custom() {
 			input["verification"] = settings
 		}
@@ -225,7 +231,7 @@ func (a *NativeAnalyzer) runProfiles(ctx context.Context, out string) ([]NativeP
 		}
 		reused := false
 		for _, version := range []string{"multilevel-profile-v7", "multilevel-profile-v3"} {
-			if settings.custom() || query.Duration >= 2 && query.Duration <= 12 {
+			if adaptive || settings.custom() || query.Duration >= 2 && query.Duration <= 12 {
 				continue
 			}
 			if version == "multilevel-profile-v3" && (ref.Duration < 70 || query.Duration < 30) {
@@ -262,7 +268,7 @@ func (a *NativeAnalyzer) runProfiles(ctx context.Context, out string) ([]NativeP
 			if ctx.Err() != nil {
 				break
 			}
-			p, err := a.profileCandidate(pair.Reference, pair.Query, prior)
+			p, err := a.profileCandidateWithPolicy(pair.Reference, pair.Query, prior, adaptive)
 			if err != nil {
 				errs[i] = err
 				break

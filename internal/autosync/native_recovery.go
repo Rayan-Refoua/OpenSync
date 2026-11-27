@@ -7,6 +7,7 @@ import (
 	"math"
 	"opensync/internal/researchmatch"
 	"path/filepath"
+	"slices"
 	"sort"
 	"sync"
 )
@@ -15,6 +16,39 @@ type envelopeCache struct {
 	Digest   string       `json:"digest"`
 	Version  string       `json:"version"`
 	Features [3][]float32 `json:"features"`
+}
+
+// Only the explicitly enabled disk cache retains pair checkpoints. Empty
+// candidates mean this exact full-range search finished without a proposal.
+func (a *NativeAnalyzer) cachedEnvelopePair(ctx context.Context, out string, pair NativePair, features [][3][]float32) ([]NativeCandidate, error) {
+	search := func() ([]NativeCandidate, error) {
+		return envelopeCandidatesScheduled(ctx, features[pair.Reference], features[pair.Query], a.computeTasks)
+	}
+	if memoryWorkspace(a.ctx) != nil {
+		return search()
+	}
+	ref, query := a.records[pair.Reference], a.records[pair.Query]
+	if ref.CacheSHA == "" || query.CacheSHA == "" {
+		return search()
+	}
+	input, _ := json.Marshal([]any{"envelope-pair-v1", ref.ID, ref.CacheSHA, ref.Duration, query.ID, query.CacheSHA, query.Duration})
+	path := filepath.Join(out, "recovery-pairs-v1", shaBytes(input)+".json")
+	var saved struct {
+		Complete   bool              `json:"complete"`
+		Candidates []NativeCandidate `json:"candidates"`
+	}
+	if data, err := workspaceRead(a.ctx, path); err == nil && json.Unmarshal(data, &saved) == nil && saved.Complete {
+		return saved.Candidates, nil
+	}
+	candidates, err := search()
+	if err != nil {
+		return nil, err
+	}
+	if err = ctx.Err(); err != nil {
+		return nil, err
+	}
+	saved.Complete, saved.Candidates = true, candidates
+	return candidates, workspaceJSON(a.ctx, path, saved)
 }
 
 func (a *NativeAnalyzer) envelopeFeatures(record int, out string) ([3][]float32, error) {
@@ -262,19 +296,7 @@ func envelopeCandidatesScheduled(ctx context.Context, reference, query [3][]floa
 func (a *NativeAnalyzer) recover(ctx context.Context, edges []*PairEvidence, out string) ([]NativePair, error) {
 	path := filepath.Join(out, "recovery-discovery.json")
 	settings := analysisSettings(a.ctx).Verification
-	if data, err := workspaceRead(a.ctx, path); err == nil {
-		var saved struct {
-			Pairs        []NativePair
-			Verification VerificationSettings
-		}
-		if err = json.Unmarshal(data, &saved); err != nil {
-			return nil, err
-		}
-		_ = saved.Verification.normalize()
-		if saved.Verification == settings {
-			return saved.Pairs, nil
-		}
-	}
+
 	adjacency := make([][]int, len(a.records))
 	for _, e := range edges {
 		adjacency[e.Reference] = append(adjacency[e.Reference], e.Query)
@@ -311,6 +333,20 @@ func (a *NativeAnalyzer) recover(ctx context.Context, edges []*PairEvidence, out
 		targetIDs = append(targetIDs, i)
 	}
 	sort.Ints(targetIDs)
+	if data, err := workspaceRead(a.ctx, path); err == nil {
+		var saved struct {
+			Pairs        []NativePair
+			Targets      []int `json:"target_recordings"`
+			Verification VerificationSettings
+		}
+		if err = json.Unmarshal(data, &saved); err != nil {
+			return nil, err
+		}
+		_ = saved.Verification.normalize()
+		if saved.Verification == settings && slices.Equal(saved.Targets, targetIDs) {
+			return saved.Pairs, nil
+		}
+	}
 	features := make([][3][]float32, len(a.records))
 	errs := make([]error, len(a.records))
 	jobs := make(chan int)
@@ -345,6 +381,11 @@ func (a *NativeAnalyzer) recover(ctx context.Context, edges []*PairEvidence, out
 			pairs = append(pairs, NativePair{Reference: r, Query: q})
 		}
 	}
+	if len(pairs) > 0 && memoryWorkspace(a.ctx) == nil {
+		if err := workspaceMkdir(a.ctx, filepath.Join(out, "recovery-pairs-v1"), 0755); err != nil {
+			return nil, err
+		}
+	}
 	errs = make([]error, len(pairs))
 	jobs = make(chan int)
 	for w := 0; w < min(8, nativeWorkers(len(pairs))); w++ {
@@ -353,7 +394,7 @@ func (a *NativeAnalyzer) recover(ctx context.Context, edges []*PairEvidence, out
 			defer wg.Done()
 			for i := range jobs {
 				p := &pairs[i]
-				p.Candidates, errs[i] = envelopeCandidatesScheduled(ctx, features[p.Reference], features[p.Query], a.computeTasks)
+				p.Candidates, errs[i] = a.cachedEnvelopePair(ctx, out, *p, features)
 			}
 		}()
 	}
@@ -374,7 +415,7 @@ func (a *NativeAnalyzer) recover(ctx context.Context, edges []*PairEvidence, out
 			selected = append(selected, p)
 		}
 	}
-	if err := workspaceJSON(a.ctx, path, map[string]any{"version": "envelope-recovery-v1", "verification": settings, "target_recordings": targetIDs, "pairs": selected, "baseline_used": false}); err != nil {
+	if err := workspaceJSON(a.ctx, path, map[string]any{"version": "envelope-recovery-v1", "verification": settings, "target_recordings": targetIDs, "pairs": selected, "searched_pairs": len(pairs), "searched_without_candidates": len(pairs) - len(selected), "baseline_used": false}); err != nil {
 		return nil, err
 	}
 	fmt.Printf("RECOVERY: %d full-range pairs\n", len(selected))

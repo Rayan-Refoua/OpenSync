@@ -3,10 +3,12 @@ package autosync
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 )
 
 func TestFolderInputsRecurseDeduplicateAndExcludeOutput(t *testing.T) {
@@ -262,5 +264,51 @@ func TestExplicitCacheFolderResume(t *testing.T) {
 	}
 	if len(inventory.Records) != 1 || len(inventory.Excluded) != 1 {
 		t.Fatal("resume lost the filtered input selection")
+	}
+}
+
+func TestConcurrentVerificationReadsShareOneUncachedBlock(t *testing.T) {
+	root := integrationFolder(t)
+	path := filepath.Join(root, "overlap.wav")
+	samples := fixtureNoise(4, 1927)
+	if err := writeFixtureWAV(path, samples); err != nil {
+		t.Fatal(err)
+	}
+	st, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := MediaRecord{ID: "overlap", Name: "overlap.wav", Source: path, Duration: 4, SourceBytes: st.Size(), SourceMtime: st.ModTime().UnixNano(), Audio: map[string]any{}}
+	d := newDirectAudio()
+	defer d.Close()
+	d.limit = 1
+	d.pcmChecked[r.ID] = true
+	// Occupy both decoder slots so all requests register before decoding.
+	firstSlot, secondSlot := <-d.decoders, <-d.decoders
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	errs := make(chan error, 8)
+	for i := 0; i < cap(errs); i++ {
+		go func(i int) {
+			first := int64(i * 500)
+			got, err := d.read(ctx, r, first, 1600)
+			if err == nil && !reflect.DeepEqual(got, samples[first:first+1600]) {
+				err = fmt.Errorf("shared PCM changed samples for request %d", i)
+			}
+			errs <- err
+		}(i)
+	}
+	for d.sharedReads.Load() < 7 && ctx.Err() == nil {
+		time.Sleep(time.Millisecond)
+	}
+	d.decoders <- firstSlot
+	d.decoders <- secondSlot
+	for i := 0; i < cap(errs); i++ {
+		if err := <-errs; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if d.misses.Load() != 1 || d.sharedReads.Load() != 7 {
+		t.Fatalf("got %d decodes and %d shares, want one decode and seven shares", d.misses.Load(), d.sharedReads.Load())
 	}
 }

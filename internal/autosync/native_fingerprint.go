@@ -69,25 +69,6 @@ func selectFloat(a []float32, k int) float32 {
 	}
 	return a[k]
 }
-func maxLine(src, dst []float32, stride, count, radius int, queue []int) {
-	head, tail, next := 0, 0, 0
-	for i := 0; i < count; i++ {
-		right := min(count-1, i+radius)
-		for next <= right {
-			v := src[next*stride]
-			for tail > head && src[queue[tail-1]*stride] <= v {
-				tail--
-			}
-			queue[tail] = next
-			tail++
-			next++
-		}
-		for tail > head && queue[head] < i-radius {
-			head++
-		}
-		dst[i*stride] = src[queue[head]*stride]
-	}
-}
 func fingerprintSpectrum(samples []int16) []float32 {
 	frames := 1 + (len(samples)-1024)/128
 	mag := make([]float32, 513*frames)
@@ -147,17 +128,6 @@ func fingerprintFromSpectrum(samples []int16, startSeconds float64, mag []float3
 	}
 	frames := 1 + (len(samples)-1024)/128
 	begin := time.Now()
-	temp := make([]float32, len(mag))
-	maximum := make([]float32, len(mag))
-	queue := make([]int, max(frames, 513))
-	for f := 8; f < 385; f++ {
-		maxLine(mag[f*frames:], temp[f*frames:], 1, frames, 5, queue)
-	}
-	for t := 0; t < frames; t++ {
-		maxLine(temp[8*frames+t:], maximum[8*frames+t:], frames, 377, 4, queue)
-	}
-	metrics.MaxFilter = time.Since(begin).Seconds()
-	begin = time.Now()
 	values := append([]float32(nil), mag[8*frames:385*frames]...)
 	position := .97 * float64(len(values)-1)
 	left := int(math.Floor(position))
@@ -174,6 +144,18 @@ func fingerprintFromSpectrum(samples []int16, startSeconds float64, mag []float3
 		strength float32
 	}
 	var peaks []peak
+	// Only bins above the percentile can become landmarks. Apply the same
+	// rectangular maximum test there, instead of filtering the entire grid.
+	// Equal neighbours remain eligible for the separate precise tie check.
+	for f := 8; f < 385; f++ {
+		for t, v := range mag[f*frames : (f+1)*frames] {
+			if float64(v) > threshold && isFingerprintMaximum(mag, frames, t, f, v) {
+				peaks = append(peaks, peak{t, f, v})
+			}
+		}
+	}
+	metrics.MaxFilter = time.Since(begin).Seconds()
+	begin = time.Now()
 	precise := map[int]float64{}
 	resolve := func(t, f int) float64 {
 		key := f*frames + t
@@ -184,29 +166,26 @@ func fingerprintFromSpectrum(samples []int16, startSeconds float64, mag []float3
 		precise[key] = v
 		return v
 	}
-	for f := 8; f < 385; f++ {
-		for t := 0; t < frames; t++ {
-			index := f*frames + t
-			if mag[index] == maximum[index] && float64(mag[index]) > threshold {
-				dominated := false
-				for ff := max(8, f-4); ff <= min(384, f+4) && !dominated; ff++ {
-					for tt := max(0, t-5); tt <= min(frames-1, t+5); tt++ {
-						if (ff != f || tt != t) && mag[ff*frames+tt] == mag[index] {
-							metrics.TiedPeaks++
-							if resolveTies && resolve(tt, ff) > resolve(t, f) {
-								dominated = true
-								break
-							}
-						}
+	remaining := peaks[:0]
+	for _, p := range peaks {
+		t, f := p.t, p.f
+		dominated := false
+		for ff := max(8, f-4); ff <= min(384, f+4) && !dominated; ff++ {
+			for tt := max(0, t-5); tt <= min(frames-1, t+5); tt++ {
+				if (ff != f || tt != t) && mag[ff*frames+tt] == p.strength {
+					metrics.TiedPeaks++
+					if resolveTies && resolve(tt, ff) > resolve(t, f) {
+						dominated = true
+						break
 					}
 				}
-				if dominated {
-					continue
-				}
-				peaks = append(peaks, peak{t, f, mag[index]})
 			}
 		}
+		if !dominated {
+			remaining = append(remaining, p)
+		}
 	}
+	peaks = remaining
 	sort.SliceStable(peaks, func(i, j int) bool { return peaks[i].strength > peaks[j].strength })
 	seconds := make(map[int]int)
 	selected := peaks[:0]
@@ -247,6 +226,18 @@ func fingerprintFromSpectrum(samples []int16, startSeconds float64, mag []float3
 	}
 	metrics.Pairing = time.Since(begin).Seconds()
 	return hashes, metrics
+}
+
+func isFingerprintMaximum(mag []float32, frames, t, f int, value float32) bool {
+	left, right := max(0, t-5), min(frames, t+6)
+	for ff := max(8, f-4); ff < min(385, f+5); ff++ {
+		for _, other := range mag[ff*frames+left : ff*frames+right] {
+			if other > value {
+				return false
+			}
+		}
+	}
+	return true
 }
 func extractNativeFingerprints(r MediaRecord) ([]Fingerprint, FingerprintMetrics, error) {
 	var metrics FingerprintMetrics
@@ -589,6 +580,38 @@ type NativePair struct {
 	raw        map[string]any
 }
 
+type landmarkVote struct {
+	count  int
+	bucket int64
+}
+
+// Each round selects the same winner as a descending full sort, then
+// removes only the offsets the existing distinct-peak rule would skip.
+// The input is disposable histogram scratch space.
+func landmarkCandidates(choices []landmarkVote) []NativeCandidate {
+	var candidates []NativeCandidate
+	for len(choices) > 0 && len(candidates) < 8 {
+		best := 0
+		for i, choice := range choices[1:] {
+			leader := choices[best]
+			if choice.count > leader.count || (choice.count == leader.count && choice.bucket < leader.bucket) {
+				best = i + 1
+			}
+		}
+		leader := choices[best]
+		offset := float64(leader.bucket) * 16 * 128 / 16000
+		candidates = append(candidates, NativeCandidate{Offset: offset, Votes: leader.count})
+		remaining := choices[:0]
+		for _, choice := range choices {
+			if math.Abs(float64(choice.bucket)*16*128/16000-offset) >= .75 {
+				remaining = append(remaining, choice)
+			}
+		}
+		choices = remaining
+	}
+	return candidates
+}
+
 func NativeDiscover(ctx context.Context, records []MediaRecord, hashes [][]Fingerprint) ([]NativePair, error) {
 	type posting struct {
 		record int
@@ -635,19 +658,12 @@ func NativeDiscover(ctx context.Context, records []MediaRecord, hashes [][]Finge
 						votes[k]++
 					}
 				}
-				byRef := map[int][]struct {
-					count  int
-					bucket int64
-				}{}
-				for k := range votes {
-					sum := 0
-					for d := int64(-1); d <= 1; d++ {
-						sum += votes[key{k.ref, k.bucket + d}]
+				byRef := map[int][]landmarkVote{}
+				for k, count := range votes {
+					sum := count + votes[key{k.ref, k.bucket - 1}] + votes[key{k.ref, k.bucket + 1}]
+					if sum >= 6 {
+						byRef[k.ref] = append(byRef[k.ref], landmarkVote{sum, k.bucket})
 					}
-					byRef[k.ref] = append(byRef[k.ref], struct {
-						count  int
-						bucket int64
-					}{sum, k.bucket})
 				}
 				refs := make([]int, 0, len(byRef))
 				for r := range byRef {
@@ -655,36 +671,9 @@ func NativeDiscover(ctx context.Context, records []MediaRecord, hashes [][]Finge
 				}
 				sort.Ints(refs)
 				for _, r := range refs {
-					choices := byRef[r]
-					sort.Slice(choices, func(i, j int) bool {
-						if choices[i].count != choices[j].count {
-							return choices[i].count > choices[j].count
-						}
-						return choices[i].bucket < choices[j].bucket
+					results[q] = append(results[q], NativePair{
+						Reference: r, Query: q, Candidates: landmarkCandidates(byRef[r]),
 					})
-					pair := NativePair{Reference: r, Query: q}
-					for _, c := range choices {
-						if c.count < 6 {
-							break
-						}
-						offset := float64(c.bucket) * 16 * 128 / 16000
-						distinct := true
-						for _, p := range pair.Candidates {
-							if math.Abs(offset-p.Offset) < .75 {
-								distinct = false
-								break
-							}
-						}
-						if distinct {
-							pair.Candidates = append(pair.Candidates, NativeCandidate{Offset: offset, Votes: c.count})
-						}
-						if len(pair.Candidates) == 8 {
-							break
-						}
-					}
-					if len(pair.Candidates) > 0 {
-						results[q] = append(results[q], pair)
-					}
 				}
 			}
 		}()

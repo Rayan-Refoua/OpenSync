@@ -80,3 +80,25 @@ func TestManualMatchRevisions(t *testing.T) {
 		t.Fatal("original project placement was changed")
 	}
 }
+
+func TestTimelineChronologyMatchesAppearForReview(t *testing.T) {
+	p := NativePayload{
+		Records: []MediaRecord{{Duration: 100, Audio: map[string]any{}}, {Duration: 10, Audio: map[string]any{}}, {Duration: 10, Audio: map[string]any{}}},
+		Models: []TimeModel{
+			{Recording: 0, Resolved: true, Component: 1, Rate: 1, Knots: []TimePoint{{0, 0}, {100, 100}}},
+			{Recording: 1, Resolved: true, Component: 1, Offset: 18},
+			{Recording: 2, Resolved: true, Component: 1, Offset: 24, Status: "provisional_chronological_estimate"},
+		},
+		ValidatedRelations: []*PairEvidence{{Reference: 0, Query: 1, Selected: &CandidateEvidence{NativeCandidate: NativeCandidate{
+			Offset: 18, Method: "calibrated_chronology_audio_search",
+		}}}},
+	}
+	var pending, audit bool
+	for _, c := range ManualCandidates(p) {
+		pending = pending || (c.Query == 2 && c.CanAccept && !c.AuditOnly && c.Shift == 24)
+		audit = audit || (c.Query == 1 && c.AuditOnly && !c.CanAccept && c.Shift == 18)
+	}
+	if !pending || !audit {
+		t.Fatalf("want an auditable verified match and an actionable chronology estimate: %+v", ManualCandidates(p))
+	}
+}

@@ -50,7 +50,7 @@ func TestShortMediaDiagnostic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	profiles, err := a.runProfiles(ctx, out)
+	profiles, err := a.runProfiles(ctx, out, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,11 +58,11 @@ func TestShortMediaDiagnostic(t *testing.T) {
 	for i := range records {
 		layout[i] = NativeLayout{Recording: i, Status: "unresolved"}
 	}
-	distributed, err := runNativeDistributed(ctx, records, layout, recovery, out, a.computeTasks, profiles)
+	distributed, err := runNativeDistributed(ctx, records, layout, recovery, out, a.computeTasks, profiles, occupiedSearch{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	profiles, err = a.runProfiles(ctx, out)
+	profiles, err = a.runProfiles(ctx, out, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

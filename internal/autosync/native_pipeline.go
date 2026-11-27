@@ -63,14 +63,23 @@ func NativeSyncCommand(ctx context.Context, args []string) error {
 	f.StringVar(&o.Mode, "mode", "clips", "clips (acoustic placement) or chronological (also estimate bounded gaps from calibrated recording order)")
 	f.StringVar(&o.Corrections, "corrections", "", "saved project/revision whose explicit rejected recordings and pairs must remain rejected")
 	f.StringVar(&o.Unsynced, "unsynced", "append", "append, separate-sequence, order_only, disabled, remove, or local-tracks")
-	f.StringVar(&o.Stage, "stage", "all", "cache, discover, verify, or all")
+	f.StringVar(&o.Stage, "stage", "all", "sources, cache, discover, verify, or all")
+	f.StringVar(&o.SourcePlanPath, "source-plan", "", "reviewed source-plan.json from a source-only run")
+	f.StringVar(&o.ReferenceSource, "reference", "", "prefer this input recording as the timing reference of its connected group")
+	f.BoolVar(&o.UseOriginalAudio, "original-audio", false, "use original audio media in the export without creating drift-corrected WAVs")
 	f.Float64Var(&o.AudioEarlyMS, "audio-early-ms", 50, "allowed audio lead in milliseconds")
 	f.Float64Var(&o.AudioLateMS, "audio-late-ms", 70, "allowed audio lag in milliseconds")
 	f.Float64Var(&o.MaxResidualMS, "max-residual-ms", 150, "maximum export presentation residual")
-	f.StringVar(&o.Analysis.Recovery, "recovery", "balanced", "distributed recovery: off, quick, balanced, or deep; verification rules stay the same")
+	f.BoolVar(&o.Analysis.DisableSearchShortcuts, "no-search-shortcuts", false, "Disable chronology-first recovery skips and occupied-range exclusions")
+	f.BoolVar(&o.Analysis.GuideRecorderOrder, "guide-recorder-order", false, "use tightly bracketed recording order as an acoustic search hint in chronological mode")
+	f.StringVar(&o.Analysis.Recovery, "recovery", "balanced", "distributed recovery: off, quick, balanced, deep, or forensic; verification rules stay the same")
+	f.StringVar(&o.Analysis.Discovery, "discovery", "", "deprecated compatibility option; the engine always searches full-resolution landmarks")
+	f.StringVar(&o.Analysis.TimingProfiles, "timing-profiles", "auto", "auto, dense, or adaptive; auto uses sparse timing only on costly projects with independently supported long overlaps")
+	f.BoolVar(&o.Analysis.GlobalTiming, "global-timing", false, "trial guarded global affine timing when holdouts improve")
 	f.StringVar(&o.Analysis.ReadMode, "read-mode", "auto", "auto uses direct MP4/MOV reads on confirmed SSDs; buffered overrides them")
 	f.StringVar(&o.Analysis.Readers, "readers", "auto", "fingerprint readers: adaptive (auto), serial, or parallel (up to two; disk scheduling still applies)")
 	f.Float64Var(&o.Analysis.LongReferenceHours, "long-reference-hours", 0, "total long-reference search budget in hours; 0 uses the recovery preset")
+	f.Float64Var(&o.Analysis.RecoveryReferenceHours, "recovery-reference-hours", 0, "maximum total reference hours scheduled for distributed recovery (0 adds no project cap)")
 	f.IntVar(&workers, "workers", 0, "Go CPU concurrency ceiling (0 uses the runtime default)")
 	f.IntVar(&o.ManagedMemoryMiB, "memory-mib", 0, "in-memory analysis budget in MiB (0 uses automatic sizing)")
 	f.BoolVar(&o.OmitProjectMarker, "omit-project-marker", false, "Omit the OpenSync project summary marker at time zero in Premiere XML")
@@ -121,11 +130,11 @@ func NativeSync(ctx context.Context, o NativeSyncOptions) error {
 			return fmt.Errorf("invalid audio drift tolerance")
 		}
 	}
-	fmt.Printf("POLICY recovery=%s read-mode=%s readers=%s\n", o.Analysis.Recovery, o.Analysis.ReadMode, o.Analysis.Readers)
+	fmt.Printf("POLICY recovery=%s timing-profiles=%s read-mode=%s readers=%s\n", o.Analysis.Recovery, o.Analysis.TimingProfiles, o.Analysis.ReadMode, o.Analysis.Readers)
 	// These switches are explicit requests to persist/reuse analysis.
 	o.CacheEnabled = o.CacheEnabled || o.CacheIndex != "" || o.Resume || o.Stage == "cache"
 	if !o.CacheEnabled {
-		if o.Stage != "all" {
+		if o.Stage != "all" && o.Stage != "sources" {
 			return fmt.Errorf("partial analysis stages require explicit --cache; normal sync runs all stages without caching")
 		}
 		workspace := &nativeWorkspace{data: map[string][]byte{}, limit: 512 << 20, audio: newDirectAudio()}
@@ -144,7 +153,7 @@ func NativeSync(ctx context.Context, o NativeSyncOptions) error {
 	if !validUnmatchedPolicy(o.Unsynced) {
 		return fmt.Errorf("invalid unresolved policy")
 	}
-	if o.Stage != "cache" && o.Stage != "discover" && o.Stage != "verify" && o.Stage != "all" {
+	if o.Stage != "sources" && o.Stage != "cache" && o.Stage != "discover" && o.Stage != "verify" && o.Stage != "all" {
 		return fmt.Errorf("invalid stage")
 	}
 	out, err := filepath.Abs(o.Output)
@@ -244,29 +253,100 @@ func NativeSync(ctx context.Context, o NativeSyncOptions) error {
 	start := time.Now()
 	stages := map[string]float64{}
 	stage := time.Now()
-	records, err := nativePrepare(ctx, o, files, excluded)
+	var records []MediaRecord
+	reviewBeforeCache := o.CacheEnabled && o.Stage != "sources" && (o.SourcePlanPath != "" || o.ReviewSources != nil)
+	if o.Stage == "sources" || reviewBeforeCache {
+		records, err = nativePrepareDirect(ctx, o, files, excluded)
+	} else {
+		records, err = nativePrepare(ctx, o, files, excluded)
+	}
 	if err != nil {
 		return err
 	}
-	stages["prepare_seconds"] = time.Since(stage).Seconds()
 	ledger, err := correctionsForRecords(o.Corrections, records)
 	if err != nil {
 		return err
 	}
+	if o.Corrections != "" {
+		prior, err := LoadNativeProject(o.Corrections)
+		if err != nil {
+			return err
+		}
+		byID := make(map[string]MediaRecord, len(prior.Data.Records))
+		for _, record := range prior.Data.Records {
+			byID[record.ID] = record
+		}
+		for i, record := range records {
+			if prior, ok := byID[record.ID]; ok && prior.SourceBytes == record.SourceBytes && prior.SourceMtime == record.SourceMtime {
+				records[i].SourceAssignment = prior.SourceAssignment
+			}
+		}
+	}
+	proposed := sourceInventory(records)
+	if o.SourcePlanPath != "" || o.ReviewSources != nil {
+		var reviewed SourcePlan
+		if o.SourcePlanPath != "" {
+			data, err := os.ReadFile(o.SourcePlanPath)
+			if err != nil {
+				return err
+			}
+			if err := json.Unmarshal(data, &reviewed); err != nil {
+				return fmt.Errorf("read source plan: %w", err)
+			}
+		} else {
+			reviewed, err = o.ReviewSources(ctx, proposed)
+			if err != nil {
+				return err
+			}
+		}
+		if err := applySourcePlan(records, proposed, reviewed); err != nil {
+			return err
+		}
+	}
+	if reviewBeforeCache {
+		inspected := sourceInventory(records)
+		progress.set("Preparing audio cache")
+		records, err = nativePrepare(ctx, o, files, excluded)
+		if err != nil {
+			return err
+		}
+		if err := applySourcePlan(records, sourceInventory(records), inspected); err != nil {
+			return err
+		}
+	}
+	stages["prepare_seconds"] = time.Since(stage).Seconds()
+	for _, warning := range proposed.Warnings {
+		fmt.Println("SOURCE:", warning)
+		observe(ctx, ProgressEvent{Kind: "source", Detail: warning})
+	}
+	audit := fmt.Sprintf("Source occupancy audit: %d potentially avoidable comparisons based on file timestamps.", sourceComparisonAudit(records, o.Mode))
+	fmt.Println(audit)
+	observe(ctx, ProgressEvent{Kind: "source", Detail: audit})
+	if o.Stage == "sources" {
+		return writeJSON(filepath.Join(out, "source-plan.json"), sourceInventory(records))
+	}
 	o.reviewLedger = &ledger
 	observe(ctx, ProgressEvent{Kind: "inventory", Records: records, Total: len(records)})
+	if o.ReferenceSource != "" && len(preferredReference(records, o.ReferenceSource)) == 0 {
+		detail := "Preferred reference is outside this input set. Using automatic reference selection."
+		fmt.Println(detail)
+		observe(ctx, ProgressEvent{Kind: "source", Detail: detail})
+	}
 	if o.Stage == "cache" {
 		return writeJSON(filepath.Join(out, "native-run-profile.json"), map[string]any{"stages": stages, "total_seconds": time.Since(start).Seconds()})
 	}
 	stage = time.Now()
 	discovery := filepath.Join(out, "discovery.json")
 	var pairs []NativePair
+	var fingerprintCount int
+	discoveryReused := false
 	if data, err := workspaceRead(ctx, discovery); err == nil {
 		var report struct{ Pairs []NativePair }
 		if err = json.Unmarshal(data, &report); err != nil {
 			return err
 		}
 		pairs = report.Pairs
+		discoveryReused = true
 	} else if !os.IsNotExist(err) {
 		return err
 	} else {
@@ -274,6 +354,9 @@ func NativeSync(ctx context.Context, o NativeSyncOptions) error {
 		hashes, metrics, err := NativeFingerprintIndex(ctx, records, out, false)
 		if err != nil {
 			return err
+		}
+		for _, recordingHashes := range hashes {
+			fingerprintCount += len(recordingHashes)
 		}
 		stages["fingerprint_seconds"] = time.Since(stage).Seconds()
 		if err = workspaceJSON(ctx, filepath.Join(out, "native-fingerprint-profile.json"), metrics); err != nil {
@@ -285,7 +368,8 @@ func NativeSync(ctx context.Context, o NativeSyncOptions) error {
 		if err != nil {
 			return err
 		}
-		if err = workspaceJSON(ctx, discovery, map[string]any{"version": "opensync-autonomous-v1", "pairs": pairs, "status": "discovery_only", "implementation": "native-go-v2"}); err != nil {
+		report := map[string]any{"version": "opensync-autonomous-v1", "pairs": pairs, "status": "discovery_only", "implementation": "native-go-v2"}
+		if err = workspaceJSON(ctx, discovery, report); err != nil {
 			return err
 		}
 	}
@@ -293,11 +377,34 @@ func NativeSync(ctx context.Context, o NativeSyncOptions) error {
 	var analyzer *NativeAnalyzer
 	profile := func() error {
 		report := map[string]any{"analysis_policy": o.Analysis, "managed_memory_mib": o.ManagedMemoryMiB, "cpu_concurrency": runtime.GOMAXPROCS(0), "build": BuildVersion, "stages": stages, "total_seconds": time.Since(start).Seconds(), "recordings": len(records), "python_runtime": false}
+		var audioSeconds float64
+		for _, r := range records {
+			if len(r.Audio) > 0 {
+				audioSeconds += r.Duration
+			}
+		}
+		hypotheses := 0
+		for _, pair := range pairs {
+			hypotheses += len(pair.Candidates)
+		}
+		report["discovery_work"] = map[string]any{"audio_seconds": audioSeconds, "pairs": len(pairs), "hypotheses": hypotheses, "reused": discoveryReused}
+		if !discoveryReused {
+			report["primary_fingerprints"] = fingerprintCount
+		}
+		if analyzer != nil {
+			report["verification_work"] = map[string]any{
+				"evaluated_hypotheses": analyzer.verificationCandidates.Load(), "reused_hypotheses": analyzer.reusedVerificationCandidates.Load(),
+				"prepared_waveform_comparisons": analyzer.preparedWaveformCorrelations.Load(), "prepared_negative_control_comparisons": analyzer.negativeControlCorrelations.Load(),
+				"timing_training_windows": analyzer.profileWindows[0].Load(), "timing_selection_windows": analyzer.profileWindows[1].Load(), "timing_audit_windows": analyzer.profileWindows[2].Load(),
+				"timing_sparse_completed": analyzer.sparseProfilesCompleted.Load(), "timing_sparse_escalated": analyzer.sparseProfilesEscalated.Load(),
+			}
+		}
 		if w := memoryWorkspace(ctx); w != nil {
 			fmt.Printf("AUDIO additional window decodes %d; decoder starts %d\n", w.audio.misses.Load(), w.audio.starts.Load())
 			report["additional_audio_window_decodes"] = w.audio.misses.Load()
 			report["additional_decoder_starts"] = w.audio.starts.Load()
 			report["direct_pcm_window_reads"] = w.audio.nativeReads.Load()
+			report["shared_pcm_block_requests"] = w.audio.sharedReads.Load()
 			report["fingerprint_pool"] = map[string]any{"limit": w.indexWorkers.Load(), "peak_active_tasks": w.indexPeak.Load(), "completed_tasks": w.indexCompleted.Load()}
 		}
 		if analyzer != nil && analyzer.compute != nil {
@@ -330,6 +437,17 @@ func NativeSync(ctx context.Context, o NativeSyncOptions) error {
 	}
 	stages["initial_verification_seconds"] = time.Since(stage).Seconds()
 	observe(ctx, ProgressEvent{Kind: "evidence", Stage: "Initial acoustic support", Completed: len(edges), Total: len(pairs)})
+	if o.Mode == "chronological" && (o.FileTimePlacement == nil || *o.FileTimePlacement || o.Analysis.GuideRecorderOrder) &&
+		o.Analysis.Recovery != "off" && !o.Analysis.DisableSearchShortcuts && !o.Analysis.Verification.custom() &&
+		len(ledger.Pairs)+len(ledger.Recordings) == 0 {
+		shortcutStarted := time.Now()
+		early, err := analyzer.chronologyFirst(ctx, edges, pairs, out, progress)
+		if err != nil {
+			return err
+		}
+		edges = append(edges, early...)
+		stages["chronology_first_seconds"] = time.Since(shortcutStarted).Seconds()
+	}
 	stage = time.Now()
 	progress.set("Searching unresolved recordings")
 	recovery, err := analyzer.recover(ctx, edges, out)
@@ -414,7 +532,7 @@ func NativeSync(ctx context.Context, o NativeSyncOptions) error {
 	stages["recovery_and_validation_seconds"] = time.Since(stage).Seconds()
 	stage = time.Now()
 	progress.set("Evaluating timing models")
-	profiles, err := analyzer.runProfiles(ctx, out)
+	profiles, err := analyzer.runProfiles(ctx, out, edges)
 	if err != nil {
 		return err
 	}
@@ -422,7 +540,7 @@ func NativeSync(ctx context.Context, o NativeSyncOptions) error {
 	graphStarted := time.Now()
 	progress.set("Solving independent timing anchors")
 	preliminary, decisions := selectNativeEdges(records, edges, profiles, o.Analysis.Verification)
-	layout, _, err := nativeSolve(records, preliminary)
+	layout, _, err := nativeSolve(records, preliminary, preferredReference(records, o.ReferenceSource)...)
 	if err != nil {
 		return err
 	}
@@ -452,8 +570,8 @@ func NativeSync(ctx context.Context, o NativeSyncOptions) error {
 			fmt.Printf("CHRONOLOGY searched %d predicted overlaps; %d passed acoustic holdout\n", len(candidates), len(checked))
 			if len(checked) > 0 {
 				edges = append(edges, checked...)
-				preliminary, _ = selectNativeEdges(records, edges, profiles, o.Analysis.Verification)
-				layout, _, err = nativeSolve(records, preliminary)
+				preliminary, decisions = selectNativeEdges(records, edges, profiles, o.Analysis.Verification)
+				layout, _, err = nativeSolve(records, preliminary, preferredReference(records, o.ReferenceSource)...)
 				if err != nil {
 					return err
 				}
@@ -463,12 +581,12 @@ func NativeSync(ctx context.Context, o NativeSyncOptions) error {
 	stages["preliminary_anchor_graph_seconds"] = time.Since(graphStarted).Seconds()
 	progress.set("Distributed acoustic search")
 	observe(ctx, ProgressEvent{Kind: "layout", Records: records, Layout: layout, Detail: "Preliminary timing; final graph validation pending"})
-	distributed, err := runNativeDistributed(ctx, records, layout, recovery, out, analyzer.computeTasks, profiles)
+	distributed, err := runNativeDistributed(ctx, records, layout, recovery, out, analyzer.computeTasks, profiles, buildOccupiedSearch(records, layout, preliminary, decisions, o))
 	if err != nil {
 		return err
 	}
 	progress.set("Refining timing models")
-	profiles, err = analyzer.runProfiles(ctx, out)
+	profiles, err = analyzer.runProfiles(ctx, out, edges)
 	if err != nil {
 		return err
 	}
@@ -536,11 +654,24 @@ func nativeFinish(records []MediaRecord, edges []*PairEvidence, profiles []Nativ
 		}
 		edges = kept
 	}
-	layout, graph, err := nativeSolve(records, edges)
+	preferred := preferredReference(records, o.ReferenceSource)
+	layout, graph, err := nativeSolve(records, edges, preferred...)
 	if err != nil {
 		return err
 	}
 	graph["event_decisions"] = decisions
+	if len(preferred) > 0 {
+		graph["preferred_reference_recording"] = preferred[0]
+		graph["clock_policy"] = "preferred_recording_then_video"
+	}
+	if active, _ := graph["active_edges"].([]int); len(active) > 0 {
+		if report := auditGlobalAffine(records, layout, edges, active); len(report) > 0 {
+			if o.Analysis.GlobalTiming {
+				applyGlobalAffine(layout, edges, graph, report)
+			}
+			graph["global_affine_audit"] = report
+		}
+	}
 	graph["review_ledger"] = ledger
 	mode := o.Mode
 	if mode == "" {
@@ -620,5 +751,20 @@ func nativeFinish(records []MediaRecord, edges []*PairEvidence, profiles []Nativ
 	if err = saveNativeProject(path, o.Name, records, edges, layout, graph); err != nil {
 		return err
 	}
-	return ExportNative(path, NativeExportOptions{TrackLayout: o.TrackLayout, KeepTrackOrder: o.KeepTrackOrder, OmitProjectMarker: o.OmitProjectMarker, AudioEarlyMS: o.AudioEarlyMS, AudioLateMS: o.AudioLateMS, Output: o.Output, Unsynced: o.Unsynced, MaxResidualMS: o.MaxResidualMS, IncludeProvisional: o.IncludeProvisional})
+	return ExportNative(path, NativeExportOptions{TrackLayout: o.TrackLayout, KeepTrackOrder: o.KeepTrackOrder, OmitProjectMarker: o.OmitProjectMarker, AudioEarlyMS: o.AudioEarlyMS, AudioLateMS: o.AudioLateMS, Output: o.Output, Unsynced: o.Unsynced, MaxResidualMS: o.MaxResidualMS, IncludeProvisional: o.IncludeProvisional, UseOriginalAudio: o.UseOriginalAudio})
+}
+
+func preferredReference(records []MediaRecord, path string) []int {
+	if path != "" {
+		target, err := filepath.Abs(path)
+		if err == nil {
+			for i, r := range records {
+				source := filepath.Clean(r.Source)
+				if source == target || (runtime.GOOS == "windows" && strings.EqualFold(source, target)) {
+					return []int{i}
+				}
+			}
+		}
+	}
+	return nil
 }

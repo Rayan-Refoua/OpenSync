@@ -29,6 +29,7 @@ type NativeRelationModel struct {
 	Selection ModelJudgment `json:"selection"`
 }
 type NativeProfile struct {
+	TimingSchedule   string                 `json:"timing_schedule,omitempty"`
 	VerificationMode string                 `json:"verification_mode,omitempty"`
 	ShortWindows     []*ShortWindowEvidence `json:"short_window_evidence,omitempty"`
 	Prior            NativePrior            `json:"prior"`
@@ -226,11 +227,15 @@ func (a *NativeAnalyzer) measure(ref, query int, center, length float64, prior N
 	return best, nil
 }
 func (a *NativeAnalyzer) profileCandidate(ref, query int, prior NativePrior) (*NativeProfile, error) {
-	profile, err := a.profileCandidateWindows(ref, query, prior, false)
+	return a.profileCandidateWithPolicy(ref, query, prior, false)
+}
+
+func (a *NativeAnalyzer) profileCandidateWithPolicy(ref, query int, prior NativePrior, adaptive bool) (*NativeProfile, error) {
+	profile, err := a.profileCandidateWindows(ref, query, prior, false, adaptive)
 	if err != nil || !longSpectralWindows(prior, profile.Overlap) || profile.Model != nil {
 		return profile, err
 	}
-	longer, err := a.profileCandidateWindows(ref, query, prior, true)
+	longer, err := a.profileCandidateWindows(ref, query, prior, true, false)
 	if err != nil || longer.Model != nil {
 		return longer, err
 	}
@@ -241,10 +246,19 @@ func longSpectralWindows(prior NativePrior, overlap float64) bool {
 	return prior.Method == "distributed_spectral" && prior.Score >= .18 && overlap >= 15 && overlap < 30
 }
 
-func (a *NativeAnalyzer) profileCandidateWindows(ref, query int, prior NativePrior, longer bool) (*NativeProfile, error) {
+var sparseTimingQuotas = [3]int{7, 6, 12}
+
+func timingBounds(refDuration, queryDuration float64, prior NativePrior) (begin, end float64) {
 	rate := 1 + prior.Slope
-	begin := math.Max(0, -prior.Offset/rate) + .15
-	end := math.Min(a.records[query].Duration, (a.records[ref].Duration-prior.Offset)/rate) - .15
+	return math.Max(0, -prior.Offset/rate) + .15, math.Min(queryDuration, (refDuration-prior.Offset)/rate) - .15
+}
+
+func sparseTimingEligible(prior NativePrior, overlap float64) bool {
+	return overlap >= 180 && prior.Method == "" && prior.Strength >= .15 && math.Abs(prior.Slope)*overlap <= .008
+}
+
+func (a *NativeAnalyzer) profileCandidateWindows(ref, query int, prior NativePrior, longer, adaptive bool) (*NativeProfile, error) {
+	begin, end := timingBounds(a.records[ref].Duration, a.records[query].Duration, prior)
 	overlap := end - begin
 	result := &NativeProfile{Prior: prior, Status: "insufficient_evidence", Overlap: overlap}
 	if overlap < 1.8 {
@@ -291,31 +305,84 @@ func (a *NativeAnalyzer) profileCandidateWindows(ref, query int, prior NativePri
 		window TimePoint
 	}
 	jobs := []measurementJob{}
+	var firstBatch, remaining []int
+	adaptive = adaptive && sparseTimingEligible(prior, overlap)
 	for role, schedule := range schedules {
-		for _, s := range schedule {
+		next, taken := 0, 0
+		quota := sparseTimingQuotas[role]
+		for i, s := range schedule {
+			if adaptive {
+				if i == next && taken < quota {
+					firstBatch = append(firstBatch, len(jobs))
+					taken++
+					next = taken * (len(schedule) - 1) / (quota - 1)
+				} else {
+					remaining = append(remaining, len(jobs))
+				}
+			}
 			jobs = append(jobs, measurementJob{role, s})
 		}
 	}
 	measurements := make([]*Measurement, len(jobs))
 	errs := make([]error, len(jobs))
-	a.computeTasks(len(jobs), func(i int) {
+	measureJob := func(i int) {
 		if err := a.ctx.Err(); err != nil {
 			errs[i] = err
 			return
 		}
 		s := jobs[i].window
+		a.profileWindows[jobs[i].role].Add(1)
 		measurements[i], errs[i] = a.measure(ref, query, s[0], s[1], prior)
-	})
-	for i, m := range measurements {
-		if errs[i] != nil {
-			return nil, errs[i]
+	}
+	collect := func() error {
+		result.Training, result.Selection, result.Audit = nil, nil, nil
+		for i, m := range measurements {
+			if errs[i] != nil {
+				return errs[i]
+			}
+			if m != nil {
+				*outputs[jobs[i].role] = append(*outputs[jobs[i].role], m)
+			}
 		}
-		if m != nil {
-			*outputs[jobs[i].role] = append(*outputs[jobs[i].role], m)
+		evaluateNativeProfile(result)
+		return nil
+	}
+	if adaptive {
+		a.computeTasks(len(firstBatch), func(i int) { measureJob(firstBatch[i]) })
+		if err := collect(); err != nil {
+			return nil, err
+		}
+		if sparseTimingAgrees(result) {
+			a.sparseProfilesCompleted.Add(1)
+			result.TimingSchedule = "adaptive_sparse_v2"
+			return result, nil
+		}
+		a.sparseProfilesEscalated.Add(1)
+		a.computeTasks(len(remaining), func(i int) { measureJob(remaining[i]) })
+		result.TimingSchedule = "adaptive_escalated_v2"
+	} else {
+		a.computeTasks(len(jobs), measureJob)
+	}
+	return result, collect()
+}
+
+// Fast completion requires broad, independently measured support for a
+// constant relationship. Any weak, missing, or contradictory window escalates.
+func sparseTimingAgrees(p *NativeProfile) bool {
+	if p.Status != "validated_relation" || p.Model == nil || p.Model.Kind != "constant" || math.Abs(p.Model.Offset-p.Prior.Offset) > .008 {
+		return false
+	}
+	for i, group := range [][]*Measurement{p.Training, p.Selection, p.Audit} {
+		if len(group) != sparseTimingQuotas[i] {
+			return false
+		}
+		for _, m := range group {
+			if !m.Precise || m.Boundary || m.Radius > .35 || math.Abs(m.Offset-p.Model.Offset) > .008 {
+				return false
+			}
 		}
 	}
-	evaluateNativeProfile(result)
-	return result, nil
+	return true
 }
 func evaluateNativeProfile(result *NativeProfile) {
 	result.Status = "insufficient_evidence"

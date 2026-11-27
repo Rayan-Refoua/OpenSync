@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"opensync/internal/researchmatch"
 	"os"
 
@@ -15,8 +16,9 @@ import (
 )
 
 type NativeDistributedPair struct {
-	Reference int `json:"reference"`
-	Query     int `json:"query"`
+	ExcludedOccupiedOffsets []researchmatch.OffsetSpan `json:"excluded_occupied_offsets,omitempty"`
+	Reference               int                        `json:"reference"`
+	Query                   int                        `json:"query"`
 	researchmatch.DistributedResult
 	Digest     string `json:"input_digest"`
 	ReviewOnly bool   `json:"review_only,omitempty"`
@@ -33,6 +35,8 @@ type NativeDistributedReport struct {
 	Channels               string                  `json:"channel_policy"`
 	Status                 string                  `json:"status"`
 	Baseline               bool                    `json:"baseline_positions_used"`
+	ProjectBudgetHours     float64                 `json:"project_budget_reference_hours,omitempty"`
+	ScheduledRefHours      float64                 `json:"scheduled_reference_hours,omitempty"`
 }
 
 func distributedFeatures(ctx context.Context, source, path string) error {
@@ -75,13 +79,24 @@ func distributedFeatures(ctx context.Context, source, path string) error {
 	}
 	return os.Rename(temp.Name(), path)
 }
-func runNativeDistributed(ctx context.Context, records []MediaRecord, layout []NativeLayout, envelope []NativePair, out string, schedule func(int, func(int)), profiles []NativeProfilePair) (*NativeDistributedReport, error) {
+func runNativeDistributed(ctx context.Context, records []MediaRecord, layout []NativeLayout, envelope []NativePair, out string, schedule func(int, func(int)), profiles []NativeProfilePair, occupancy occupiedSearch) (*NativeDistributedReport, error) {
 	settings := analysisSettings(ctx)
+	forensic := settings.Recovery == "forensic"
+	if forensic {
+		occupancy = occupiedSearch{}
+	}
 	identities := []any{}
 	for _, r := range records {
 		identities = append(identities, []any{r.ID, r.CacheSHA})
 	}
-	raw, err := json.Marshal([]any{researchmatch.DistributedVersion, "heldout-onsets-v3", settings.Recovery, settings.LongReferenceHours, identities, layout, settings.Verification})
+	inputs := []any{researchmatch.DistributedVersion, "heldout-onsets-v3", settings.Recovery, settings.LongReferenceHours, identities, layout, settings.Verification}
+	if settings.RecoveryReferenceHours > 0 {
+		inputs = append(inputs, []any{"project-budget-v1", settings.RecoveryReferenceHours})
+	}
+	if key := occupancy.cacheKey(records); key != nil {
+		inputs = append(inputs, key)
+	}
+	raw, err := json.Marshal(inputs)
 	if err != nil {
 		return nil, err
 	}
@@ -121,7 +136,7 @@ func runNativeDistributed(ctx context.Context, records []MediaRecord, layout []N
 	for _, m := range layout {
 		established[m.Recording] = !strings.HasPrefix(m.Status, "unresolved") && !strings.HasPrefix(m.Status, "provisional") && m.ComponentSize > 1
 		d := records[m.Recording].Duration
-		if strings.HasPrefix(m.Status, "unresolved") && d >= 1.2 && d <= maxDuration {
+		if strings.HasPrefix(m.Status, "unresolved") && d >= 1.2 && d <= maxDuration && (!forensic || records[m.Recording].Audio != nil) {
 			targets = append(targets, m.Recording)
 			bridgeSize[m.Recording] = m.ComponentSize
 		}
@@ -179,7 +194,10 @@ func runNativeDistributed(ctx context.Context, records []MediaRecord, layout []N
 		})
 		refsByQuery[q] = refs
 	}
-	longPairs := planLongReferenceCoverage(records, targets, refsByQuery, established, longBudget)
+	var longPairs [][2]int
+	if !forensic {
+		longPairs = planLongReferenceCoverage(records, targets, refsByQuery, established, longBudget)
+	}
 	anchors := make(map[[2]int]bool, len(longPairs))
 	for _, pair := range longPairs {
 		pairs = append(pairs, pair)
@@ -188,7 +206,7 @@ func runNativeDistributed(ctx context.Context, records []MediaRecord, layout []N
 		longBudget -= records[pair[0]].Duration
 	}
 	reviewPairs := map[[2]int]bool{}
-	if settings.Recovery != "quick" {
+	if settings.Recovery != "quick" && !forensic {
 		for _, pair := range longReviewSearches(records, layout, profiles, anchors, longBudget) {
 			pairs = append(pairs, pair)
 			anchors[pair] = true
@@ -204,11 +222,11 @@ func runNativeDistributed(ctx context.Context, records []MediaRecord, layout []N
 			limit = mediumBudget
 		}
 		for _, r := range refs {
-			if anchors[[2]int{r, q}] || (records[q].Duration > 60 && !established[r]) {
+			if anchors[[2]int{r, q}] || (!forensic && records[q].Duration > 60 && !established[r]) {
 				continue
 			}
-			if selected >= limit || used+records[r].Duration > secondsBudget {
-				deferred = append(deferred, map[string]any{"reference": r, "query": q, "reason": "discovery_compute_budget"})
+			if !forensic && (selected >= limit || used+records[r].Duration > secondsBudget) {
+				deferred = append(deferred, map[string]any{"reference": r, "query": q, "reason": "discovery_compute_budget", "coverage": "unsearched"})
 				continue
 			}
 			pairs = append(pairs, [2]int{r, q})
@@ -218,6 +236,15 @@ func runNativeDistributed(ctx context.Context, records []MediaRecord, layout []N
 			selected++
 		}
 	}
+	remaining := math.Inf(1)
+	if settings.RecoveryReferenceHours > 0 {
+		remaining = settings.RecoveryReferenceHours * 3600
+		pairs, deferred = capDistributedPairs(records, pairs, &remaining, deferred, "spectral")
+		clear(needed)
+		for _, pair := range pairs {
+			needed[pair[0]], needed[pair[1]] = true, true
+		}
+	}
 	ids := []int{}
 	paths := map[int]string{}
 	for i := range needed {
@@ -225,6 +252,15 @@ func runNativeDistributed(ctx context.Context, records []MediaRecord, layout []N
 		paths[i] = filepath.Join(folder, records[i].CacheSHA+".features")
 	}
 	sort.Ints(ids)
+	uniqueIDs := ids[:0]
+	seenPath := map[string]bool{}
+	for _, i := range ids {
+		if !seenPath[paths[i]] {
+			seenPath[paths[i]] = true
+			uniqueIDs = append(uniqueIDs, i)
+		}
+	}
+	ids = uniqueIDs
 	errs := make([]error, len(ids))
 	jobs := make(chan int)
 	var wg sync.WaitGroup
@@ -253,7 +289,7 @@ func runNativeDistributed(ctx context.Context, records []MediaRecord, layout []N
 			return nil, err
 		}
 	}
-	results, err := runDistributedPairs(ctx, records, pairs, paths, folder, schedule, false)
+	results, err := runDistributedPairs(ctx, records, pairs, paths, folder, schedule, false, occupancy)
 	if err != nil {
 		return nil, err
 	}
@@ -264,20 +300,59 @@ func runNativeDistributed(ctx context.Context, records []MediaRecord, layout []N
 	if settings.Recovery != "quick" {
 		nearby = neighboringOnsetSearches(records, layout, paths, results)
 	}
+	if settings.RecoveryReferenceHours > 0 {
+		nearby, deferred = capDistributedPairs(records, nearby, &remaining, deferred, "neighboring_onset")
+	}
 	if len(nearby) > 0 {
 		fmt.Printf("DISTRIBUTED: %d neighboring-recording searches\n", len(nearby))
-		additional, err := runDistributedPairs(ctx, records, nearby, paths, folder, schedule, true)
+		additional, err := runDistributedPairs(ctx, records, nearby, paths, folder, schedule, true, occupancy)
 		if err != nil {
 			return nil, err
 		}
 		results = append(results, additional...)
 	}
-	report := &NativeDistributedReport{researchmatch.DistributedVersion, identity, results, deferred, int(secondsBudget) + 18000, max(pairBudget+1, mediumBudget+2), 3, false, "cached_mono_first_pass", "DISCOVERY_ONLY", false}
+	report := &NativeDistributedReport{
+		Version: researchmatch.DistributedVersion, Digest: identity, Pairs: results, Deferred: deferred,
+		SecondsBudget: int(secondsBudget) + 18000, PairBudget: max(pairBudget+1, mediumBudget+2),
+		VerificationCandidates: 3, Channels: "cached_mono_first_pass", Status: "DISCOVERY_ONLY",
+		ProjectBudgetHours: settings.RecoveryReferenceHours,
+	}
+	if forensic {
+		report.SecondsBudget, report.PairBudget = 0, 0
+	}
+	if settings.RecoveryReferenceHours > 0 {
+		report.ScheduledRefHours = (settings.RecoveryReferenceHours*3600 - remaining) / 3600
+	}
 	if err := workspaceJSON(ctx, saved, report); err != nil {
 		return nil, err
 	}
-	fmt.Printf("DISTRIBUTED: %d blind searches\n", len(results))
+	pruned := 0
+	for _, result := range results {
+		if len(result.ExcludedOccupiedOffsets) > 0 {
+			pruned++
+		}
+	}
+	summary := fmt.Sprintf("Distributed recovery ran %d searches. %d searches skipped occupied time ranges.", len(results), pruned)
+	fmt.Println(summary)
+	observe(ctx, ProgressEvent{Kind: "source", Detail: summary})
 	return report, nil
+}
+
+func capDistributedPairs(records []MediaRecord, pairs [][2]int, remaining *float64, deferred []map[string]any, stage string) ([][2]int, []map[string]any) {
+	selected := pairs[:0]
+	for _, pair := range pairs {
+		cost := records[pair[0]].Duration
+		if cost > *remaining {
+			deferred = append(deferred, map[string]any{
+				"reference": pair[0], "query": pair[1], "reason": "project_reference_budget",
+				"coverage": "unsearched", "stage": stage, "reference_seconds": cost,
+			})
+			continue
+		}
+		*remaining -= cost
+		selected = append(selected, pair)
+	}
+	return selected, deferred
 }
 
 // Use spare long-reference capacity on acoustically promising pairs that
@@ -332,11 +407,57 @@ func longReviewSearches(records []MediaRecord, layout []NativeLayout, profiles [
 	return pairs
 }
 
-func runDistributedPairs(ctx context.Context, records []MediaRecord, pairs [][2]int, paths map[int]string, folder string, schedule func(int, func(int)), forceOnset bool) ([]NativeDistributedPair, error) {
+func runDistributedPairs(ctx context.Context, records []MediaRecord, pairs [][2]int, paths map[int]string, folder string, schedule func(int, func(int)), forceOnset bool, occupancy occupiedSearch) ([]NativeDistributedPair, error) {
 	results := make([]NativeDistributedPair, len(pairs))
 	errs := make([]error, len(pairs))
 	jobs := make(chan int)
 	var wg sync.WaitGroup
+	var checkpointLocks sync.Map
+	searchPair := func(i int) {
+		p := pairs[i]
+		excluded := occupancy.excluded(records, p[0], p[1])
+		identity := fmt.Sprintf("%s:heldout-onsets-v2:%t:%s:%s", researchmatch.DistributedVersion, forceOnset, records[p[0]].CacheSHA, records[p[1]].CacheSHA)
+		if len(excluded) != 0 {
+			identity += fmt.Sprintf(":occupied-v1:%v", excluded)
+		}
+		digest := shaBytes([]byte(identity))
+		path := filepath.Join(folder, digest+".json")
+		// Recordings can contain the same PCM. Serialize writers to the
+		// shared checkpoint so duplicates reuse the completed search.
+		entry, _ := checkpointLocks.LoadOrStore(digest, new(sync.Mutex))
+		lock := entry.(*sync.Mutex)
+		lock.Lock()
+		defer lock.Unlock()
+		if ctx.Err() != nil {
+			return
+		}
+		var result researchmatch.DistributedResult
+		if data, err := workspaceRead(ctx, path); err == nil {
+			errs[i] = json.Unmarshal(data, &result)
+		} else {
+			ref, err := openDistributedWorkspace(ctx, paths[p[0]])
+			if err != nil {
+				errs[i] = err
+				return
+			}
+			defer ref.Close()
+			query, err := openDistributedWorkspace(ctx, paths[p[1]])
+			if err != nil {
+				errs[i] = err
+				return
+			}
+			defer query.Close()
+			result, errs[i] = researchmatch.SearchDistributedExcluding(ref, query, schedule, false, excluded)
+			if errs[i] == nil && (forceOnset || shouldSearchOnsets(records[p[0]].Duration, records[p[1]].Duration, result.Peaks)) {
+				onset, err := researchmatch.SearchDistributedExcluding(ref, query, schedule, true, excluded)
+				result.OnsetPeaks, errs[i] = onset.Peaks, err
+			}
+			if errs[i] == nil {
+				errs[i] = workspaceJSON(ctx, path, result)
+			}
+		}
+		results[i] = NativeDistributedPair{Reference: p[0], Query: p[1], DistributedResult: result, Digest: digest, ExcludedOccupiedOffsets: excluded}
+	}
 	for w := 0; w < min(8, nativeWorkers(len(pairs))); w++ {
 		wg.Add(1)
 		go func() {
@@ -345,36 +466,7 @@ func runDistributedPairs(ctx context.Context, records []MediaRecord, pairs [][2]
 				if ctx.Err() != nil {
 					continue
 				}
-				p := pairs[i]
-				digest := shaBytes([]byte(fmt.Sprintf("%s:heldout-onsets-v2:%t:%s:%s", researchmatch.DistributedVersion, forceOnset, records[p[0]].CacheSHA, records[p[1]].CacheSHA)))
-				path := filepath.Join(folder, digest+".json")
-				var result researchmatch.DistributedResult
-				if data, err := workspaceRead(ctx, path); err == nil {
-					errs[i] = json.Unmarshal(data, &result)
-				} else {
-					ref, err := openDistributedWorkspace(ctx, paths[p[0]])
-					if err != nil {
-						errs[i] = err
-						continue
-					}
-					query, err := openDistributedWorkspace(ctx, paths[p[1]])
-					if err != nil {
-						ref.Close()
-						errs[i] = err
-						continue
-					}
-					result, errs[i] = researchmatch.SearchDistributedScheduled(ref, query, -1, -1, schedule)
-					if errs[i] == nil && (forceOnset || shouldSearchOnsets(records[p[0]].Duration, records[p[1]].Duration, result.Peaks)) {
-						onset, err := researchmatch.SearchDistributedOnsets(ref, query, schedule)
-						result.OnsetPeaks, errs[i] = onset.Peaks, err
-					}
-					ref.Close()
-					query.Close()
-					if errs[i] == nil {
-						errs[i] = workspaceJSON(ctx, path, result)
-					}
-				}
-				results[i] = NativeDistributedPair{Reference: p[0], Query: p[1], DistributedResult: result, Digest: digest}
+				searchPair(i)
 			}
 		}()
 	}

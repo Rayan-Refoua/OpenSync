@@ -46,16 +46,36 @@ func (v VerificationSettings) custom() bool {
 }
 
 type AnalysisSettings struct {
-	Verification       VerificationSettings `json:"verification"`
-	Recovery           string               `json:"recovery"`
-	ReadMode           string               `json:"readMode"`
-	Readers            string               `json:"readers"`
-	LongReferenceHours float64              `json:"longReferenceHours"`
+	GuideRecorderOrder     bool                 `json:"guideRecorderOrder,omitempty"`
+	GlobalTiming           bool                 `json:"globalTiming,omitempty"`
+	DisableSearchShortcuts bool                 `json:"disableSearchShortcuts,omitempty"`
+	Verification           VerificationSettings `json:"verification"`
+	Recovery               string               `json:"recovery"`
+	Discovery              string               `json:"discovery,omitempty"` // Legacy dispatch-only option.
+	TimingProfiles         string               `json:"timingProfiles"`
+	ReadMode               string               `json:"readMode"`
+	Readers                string               `json:"readers"`
+	LongReferenceHours     float64              `json:"longReferenceHours"`
+	RecoveryReferenceHours float64              `json:"recoveryReferenceHours,omitempty"`
 }
 
 func (s *AnalysisSettings) Normalize() error {
 	if s.Recovery == "" {
 		s.Recovery = "balanced"
+	}
+	switch s.Discovery {
+	case "", "full", "progressive":
+		s.Discovery = "" // Both modes complete the same landmark search.
+	default:
+		return fmt.Errorf("discovery must be full or progressive")
+	}
+	if s.TimingProfiles == "" {
+		s.TimingProfiles = "auto"
+	}
+	switch s.TimingProfiles {
+	case "auto", "dense", "adaptive":
+	default:
+		return fmt.Errorf("timing profiles must be auto, dense, or adaptive")
 	}
 	if s.ReadMode == "" {
 		s.ReadMode = "auto"
@@ -64,9 +84,9 @@ func (s *AnalysisSettings) Normalize() error {
 		s.Readers = "auto"
 	}
 	switch s.Recovery {
-	case "off", "quick", "balanced", "deep":
+	case "off", "quick", "balanced", "deep", "forensic":
 	default:
-		return fmt.Errorf("recovery must be off, quick, balanced, or deep")
+		return fmt.Errorf("recovery must be off, quick, balanced, deep, or forensic")
 	}
 	switch s.ReadMode {
 	case "auto", "buffered":
@@ -80,6 +100,9 @@ func (s *AnalysisSettings) Normalize() error {
 	}
 	if !(s.LongReferenceHours >= 0 && s.LongReferenceHours <= 600) {
 		return fmt.Errorf("long reference budget must be 0..600 hours")
+	}
+	if !(s.RecoveryReferenceHours >= 0 && s.RecoveryReferenceHours <= 10000) {
+		return fmt.Errorf("distributed recovery budget must be 0..10000 reference hours")
 	}
 	return s.Verification.normalize()
 }

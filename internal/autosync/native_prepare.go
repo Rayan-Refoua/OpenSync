@@ -19,6 +19,10 @@ import (
 )
 
 type NativeSyncOptions struct {
+	ReferenceSource           string
+	UseOriginalAudio          bool
+	SourcePlanPath            string
+	ReviewSources             func(context.Context, SourcePlan) (SourcePlan, error)
 	Analysis                  AnalysisSettings
 	TrackLayout               string
 	KeepTrackOrder            bool
@@ -326,6 +330,7 @@ func nativePrepare(ctx context.Context, o NativeSyncOptions, files []string, exc
 							r.Video = s
 						}
 					case "audio":
+						r.AudioStreams = append(r.AudioStreams, s)
 						if r.Audio == nil {
 							r.Audio = s
 						}
@@ -425,6 +430,7 @@ func nativePrepare(ctx context.Context, o NativeSyncOptions, files []string, exc
 			r.Duration = p.Duration
 			r.SourceTimecode = p.SourceTimecode
 			r.FormatTags = p.FormatTags
+			r.AudioStreams = p.AudioStreams
 		}
 		if o.Input != "" {
 			root, _ := filepath.Abs(o.Input)
@@ -438,6 +444,7 @@ func nativePrepare(ctx context.Context, o NativeSyncOptions, files []string, exc
 				r.Audio = prior.Audio
 				r.SourceTimecode = prior.SourceTimecode
 				r.FormatTags = prior.FormatTags
+				r.AudioStreams = prior.AudioStreams
 				r.CacheSHA = prior.CacheSHA
 				r.AnalysisAudio = prior.AnalysisAudio
 				if _, err = os.Stat(prior.LocalSource); err == nil {

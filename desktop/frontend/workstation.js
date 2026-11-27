@@ -8,6 +8,7 @@ import { CameraMonitor } from "./monitor.js";
 import { clamp } from "./core.js";
 import { currentReport } from "./status.js";
 import { addSettingHelp } from "./settings-help.js";
+import { applySyncSetup, syncPresets, syncSetupAnswers } from "./sync-setup.js";
 const defaultLayout = { position: "right", rows: 4, columns: 0 };
 const $ = (id) => document.getElementById(id);
 export function setupWorkstation(h) {
@@ -115,8 +116,12 @@ export function setupWorkstation(h) {
     $("fileTimePlacement").checked = config.fileTimePlacement !== false;
     for (const [k, v] of Object.entries(config.resources))
       f.elements[k].value = v;
+    f.elements.sourceReview.value = config.sourceReview || "automatic";
+    f.elements.searchShortcuts.checked = !config.analysis?.disableSearchShortcuts;
     f.elements.recovery.value = config.analysis?.recovery || "balanced";
     f.elements.readMode.value = config.analysis?.readMode || "auto";
+    f.elements.timingProfiles.value = config.analysis?.timingProfiles || "auto";
+    f.elements.globalTiming.checked = !!config.analysis?.globalTiming;
     f.elements.readers.value = config.analysis?.readers || "auto";
     f.elements.minWave.value = config.analysis?.verification?.minWave || 0.1;
     f.elements.minFlux.value = config.analysis?.verification?.minFlux || 0.25;
@@ -125,6 +130,7 @@ export function setupWorkstation(h) {
     f.elements.ambiguityRatio.value = config.analysis?.verification?.ambiguityRatio || 0.8;
     f.elements.eventToleranceMS.value = config.analysis?.verification?.eventToleranceMS || 150;
     f.elements.longReferenceHours.value = config.analysis?.longReferenceHours || 0;
+    f.elements.recoveryReferenceHours.value = config.analysis?.recoveryReferenceHours || 0;
     f.elements.projectSummaryMarker.checked = !config.omitProjectMarker;
     f.elements.reverseTrackOrder.checked = !config.keepTrackOrder;
     f.elements.trackLayout.value = config.trackLayout || "family";
@@ -133,6 +139,7 @@ export function setupWorkstation(h) {
     f.elements.audioEarlyMS.value = config.audioEarlyMS || 50;
     f.elements.audioLateMS.value = config.audioLateMS || 70;
     f.elements.unmatchedPolicy.value = config.unmatchedPolicy || "append";
+    f.elements.autoAudioFallback.checked = !!config.autoAudioFallback;
     f.elements.monitorPosition.value = config.layout.position;
     f.elements.monitorRows.value = config.layout.rows;
     f.elements.monitorColumns.value = config.layout.columns;
@@ -225,6 +232,78 @@ export function setupWorkstation(h) {
   }
   $("settingsButton").onclick = () => h.action(() => openSettings());
   $("syncSettings").onclick = () => h.action(() => openSettings("sync"));
+  const setupForm = $("syncSetupForm"), setupDialog = $("syncSetupDialog");
+  function showSetupAnswers(answers) {
+    for (const [name, value] of Object.entries(answers)) setupForm.elements[name].value = value;
+    updateSetupSummary();
+  }
+  function readSetupAnswers() {
+    return Object.fromEntries(["structure", "confidence", "effort", "timestamps", "review", "referenceSource", "recorderOrder", "uncertain", "drift", "early", "late"].map(name => [name, setupForm.elements[name].value]));
+  }
+  function updateSetupSummary() {
+    const answers = readSetupAnswers();
+    $("setupRecorderOrder").hidden = answers.structure !== "chronological";
+    $("setupTimestampField").hidden = answers.structure !== "chronological" || answers.recorderOrder === "independent";
+    for (const label of setupForm.querySelectorAll("[data-drift-tolerance]")) {
+      label.hidden = answers.drift === "original";
+      label.querySelector("input").disabled = label.hidden;
+    }
+    const placement = answers.structure === "chronological" && answers.timestamps === "estimate" && answers.recorderOrder !== "independent"
+      ? "Calibrated timestamp estimates are allowed and identified on the timeline."
+      : "Placement uses acoustic evidence.";
+    const confidence = answers.confidence === "loose" ? " Looser screening can admit more ambiguous leads. Independent checks still apply."
+      : answers.confidence === "strict" ? " Stricter screening can leave faint overlaps unresolved." : "";
+    const review = answers.review === "always" ? " Source review opens before synchronization." : "";
+    $("syncSetupSummary").textContent = placement + confidence + review;
+  }
+  $("syncSetup").onclick = () => h.action(async () => {
+    await load();
+    setupForm.elements.preset.value = "";
+    $("projectExceptions").open = false;
+    for (const [name, value] of Object.entries({
+      referenceSource: config.referenceSource || "", recorderOrder: config.analysis?.guideRecorderOrder ? "guided" : "", uncertain: "",
+      drift: config.useOriginalAudio ? "original" : "corrected",
+      early: config.audioEarlyMS ?? 50, late: config.audioLateMS ?? 70,
+    })) setupForm.elements[name].value = value;
+    showSetupAnswers(syncSetupAnswers(config));
+    $("syncSetupError").textContent = "";
+    setupDialog.showModal();
+  });
+  setupForm.onchange = event => {
+    if (event.target.name === "preset") {
+      showSetupAnswers(syncPresets[event.target.value] || syncSetupAnswers(config));
+    } else {
+      setupForm.elements.preset.value = "";
+      updateSetupSummary();
+    }
+  };
+  $("pickTimingReference").onclick = () => h.action(async () => {
+    const path = await h.api().PickSyncReference();
+    if (path) setupForm.elements.referenceSource.value = path;
+  });
+  $("clearTimingReference").onclick = () => { setupForm.elements.referenceSource.value = ""; };
+  $("reviewSourceOverlap").onclick = () => {
+    setupForm.elements.review.value = "always";
+    setupForm.elements.preset.value = "";
+    updateSetupSummary();
+  };
+  $("closeSyncSetup").onclick = () => setupDialog.close();
+  setupForm.onsubmit = async event => {
+    event.preventDefault();
+    const submit = setupForm.querySelector('button[type="submit"]');
+    submit.disabled = true;
+    try {
+      const next = applySyncSetup(config, readSetupAnswers());
+      await h.api().UpdateSettings(next);
+      config = next;
+      apply();
+      setupDialog.close();
+    } catch (error) {
+      $("syncSetupError").textContent = error.message || String(error);
+    } finally {
+      submit.disabled = false;
+    }
+  };
   $("exportSettings").onclick = () => h.action(() => openSettings("export"));
   $("resetWorkstation").onclick = () => h.action(async () => {
     if (!window.confirm("Clear the open timeline and input list, and restore all settings to defaults? Saved projects and source files stay on disk.")) return;
@@ -241,16 +320,25 @@ export function setupWorkstation(h) {
       input.dispatchEvent(new Event("input"));
     }
   };
+  $("restartDebugUI").onclick = () => h.action(() => h.api().RestartWithGUIDebug());
   $("settingsForm").onsubmit = async (e) => {
     e.preventDefault();
     try {
       const next = {
+        referenceSource: config.referenceSource,
+        useOriginalAudio: config.useOriginalAudio,
+        queueUncertain: config.queueUncertain,
         mode: config.mode,
+        sourceReview: e.target.elements.sourceReview.value,
         fileTimePlacement: config.mode === "chronological"
           ? $("fileTimePlacement").checked : config.fileTimePlacement !== false,
         analysis: {
+          guideRecorderOrder: config.analysis?.guideRecorderOrder,
           recovery: e.target.elements.recovery.value,
+          disableSearchShortcuts: !e.target.elements.searchShortcuts.checked,
           readMode: e.target.elements.readMode.value,
+          timingProfiles: e.target.elements.timingProfiles.value,
+          globalTiming: e.target.elements.globalTiming.checked,
           readers: e.target.elements.readers.value,
           verification: {
             minWave: Number(e.target.elements.minWave.value),
@@ -261,8 +349,10 @@ export function setupWorkstation(h) {
             eventToleranceMS: Number(e.target.elements.eventToleranceMS.value),
           },
           longReferenceHours: Number(e.target.elements.longReferenceHours.value),
+          recoveryReferenceHours: Number(e.target.elements.recoveryReferenceHours.value),
         },
         trackLayout: e.target.elements.trackLayout.value,
+        autoAudioFallback: e.target.elements.autoAudioFallback.checked,
         keepTrackOrder: !e.target.elements.reverseTrackOrder.checked,
         omitProjectMarker: !e.target.elements.projectSummaryMarker.checked,
         maxResidualMS: Number(e.target.elements.maxResidualMS.value),
@@ -288,9 +378,11 @@ export function setupWorkstation(h) {
       if (!h.api()?.UpdateSettings)
         throw Error("Native settings API is unavailable");
       await h.api().UpdateSettings(next);
+      const restartAudio = !!config.autoAudioFallback !== next.autoAudioFallback;
       config = next;
       apply();
       $("settingsDialog").close();
+      if (restartAudio) h.refreshAudition();
     } catch (e) {
       $("settingsError").textContent = e.message || String(e);
     }
@@ -345,23 +437,6 @@ export function setupWorkstation(h) {
       openFind();
     }
   });
-  $("nextAttention").onclick = () => {
-    const p = h.state.project;
-    if (!p) return;
-    const clips = p.clips
-      .filter((c) => c.state === "unresolved" || c.state === "provisional")
-      .sort((a, b) => a.start - b.start || a.index - b.index);
-    if (!clips.length) {
-      h.message("No unresolved or provisional recordings");
-      return;
-    }
-    const at = clips.findIndex((c) => c.index === h.state.selected),
-      c = clips[(at + 1) % clips.length];
-    h.stop();
-    h.inspect(c);
-    h.pan(c.start);
-    h.seek(c.start, false);
-  };
   $("addChronological").onclick = () => h.action(() => h.reviewSolution({kind:"add_chronological", mode:config.mode}));
   $("rebuildSolution").onclick = () =>
     h.action(() => h.reviewSolution({ kind: "mode", mode: config.mode, fileTimePlacement: config.fileTimePlacement !== false }));
@@ -611,6 +686,7 @@ export function setupWorkstation(h) {
     $("syncMode").dispatchEvent(new Event("input"));
     $("resetWorkstation").disabled = !!s.running;
     $("syncSettings").disabled = !!s.running;
+    $("syncSetup").disabled = !!s.running;
     $("exportSettings").disabled = !!s.running;
     const step = s.running
       ? s.stage === "Exporting Premiere XML" ? "export"

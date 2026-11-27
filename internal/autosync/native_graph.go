@@ -207,7 +207,7 @@ func orderGroups(groups [][]int, records []MediaRecord) {
 		return a[0] < b[0]
 	})
 }
-func nativeSolve(records []MediaRecord, edges []*PairEvidence) ([]NativeLayout, map[string]any, error) {
+func nativeSolve(records []MediaRecord, edges []*PairEvidence, preferred ...int) ([]NativeLayout, map[string]any, error) {
 	active := make([]bool, len(edges))
 	for i, e := range edges {
 		if e.Reference < 0 || e.Reference >= len(records) || e.Query < 0 || e.Query >= len(records) || e.Reference == e.Query || e.Selected == nil || len(edgeObservations(e)) == 0 {
@@ -223,6 +223,9 @@ func nativeSolve(records []MediaRecord, edges []*PairEvidence) ([]NativeLayout, 
 		rootsOrder[i] = i
 	}
 	sort.Slice(rootsOrder, func(i, j int) bool {
+		if len(preferred) > 0 && (rootsOrder[i] == preferred[0]) != (rootsOrder[j] == preferred[0]) {
+			return rootsOrder[i] == preferred[0]
+		}
 		a, b := records[rootsOrder[i]], records[rootsOrder[j]]
 		if (a.Video != nil) != (b.Video != nil) {
 			return a.Video != nil

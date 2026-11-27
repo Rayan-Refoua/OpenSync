@@ -99,7 +99,7 @@ export function setupMatchReview(h) {
   function available() {
     const project = h.state.project;
     const decisions = project?.graph?.manual_candidate_decisions || {};
-    return (project?.manualCandidates || []).filter((c) => !decisions[c.id]);
+    return (project?.manualCandidates || []).filter((c) => !c.auditOnly && !decisions[c.id]);
   }
   function draw() {
     const width = canvas.width, height = canvas.height;
@@ -197,11 +197,15 @@ export function setupMatchReview(h) {
     const decision = decisionFor(id);
     accept.replaceChildren(!active.canAccept ? "Confirm match & next " :
       r.state === "unresolved" ? "Accept within group & next " : "Accept placement & next ", shortcut);
-    accept.disabled = !!decision || r.missing || q.missing;
+    accept.disabled = !!decision || active.auditOnly || r.missing || q.missing;
     $("matchAccept").title = !active.canAccept
       ? "Save human confirmation in project history. The existing placement stays in place."
       : r.state === "unresolved" ? "Save relative timing in a group separate from the main timeline." : "Place the query at this offset in a new revision";
-    $("matchRejectNext").disabled = !!decision;
+    $("matchRejectNext").disabled = !!decision || active.auditOnly;
+    if (active.auditOnly) {
+      accept.textContent = "Verified placement · audition only";
+      accept.title = "Review the chronology-guided acoustic match";
+    }
     void load();
   }
   function open(index = h.state.selected, preferredID) {
@@ -213,7 +217,8 @@ export function setupMatchReview(h) {
     }
     const clips = h.state.project.clips;
     const pending = available();
-    $("matchQueueCount").textContent = `${pending.length} to review · ${candidates.length - pending.length} reviewed`;
+    $("verifyReviewMatches").disabled = !pending.some((c) => c.canAccept);
+    $("matchQueueCount").textContent = `${pending.length} to review · ${candidates.filter((c) => c.auditOnly).length} chronology-verified`;
     $("matchUndo").disabled = !h.state.project.graph?.solution_revision;
     list.replaceChildren(...candidates.map((c) => {
       const reference = clips[c.reference];
@@ -227,8 +232,8 @@ export function setupMatchReview(h) {
       for (const [tag, value] of [
         ["strong", clips[c.query].name], ["span", `↳ ${reference.name}`],
         ["small", `${position}  ·  Δ ${c.shift.toFixed(3)}s`],
-        ["small", c.status.replaceAll("_", " ")],
-        ...(decision ? [["small", `✓ ${reviewedLabels[decision]}`]] : []),
+        ["small", c.auditOnly ? "Chronology + acoustics verified" : c.status.replaceAll("_", " ")],
+        ...(decision ? [["small", h.state.project.graph?.automatic_waveform_matches?.[c.id] ? "✓ Accepted by waveform" : `✓ ${reviewedLabels[decision]}`]] : []),
       ]) {
         const line = document.createElement(tag);
         line.textContent = value;
@@ -362,6 +367,23 @@ export function setupMatchReview(h) {
       status.textContent = error.message || String(error);
     } finally { saving = false; list.inert = false; }
   }
+  $("verifyReviewMatches").onclick = async () => {
+    if (saving) return;
+    request?.abort();
+    stop();
+    saving = true;
+    dialog.close();
+    try {
+      const result = await h.api().VerifyReviewMatches();
+      if (result.project) h.setProject(result.project, false);
+      h.message(result.added ? `Placed ${result.added} verified recordings in an undoable revision` : "No pending matches passed automatic waveform verification");
+    } catch (error) {
+      h.message(String(error.message || error), true);
+    } finally {
+      saving = false;
+      open();
+    }
+  };
   $("matchAccept").onclick = () => decide("accept_candidate");
   $("matchUndo").onclick = () => decide("undo");
   $("matchRejectNext").onclick = () => decide("reject_candidate");

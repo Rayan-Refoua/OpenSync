@@ -1,4 +1,6 @@
+import { setupAttention } from "./attention.js";
 import { setupWorkstation } from "./workstation.js";
+import { setupSourceReview } from "./source-review.js";
 import { setupMatchReview } from "./match-review.js";
 import { placementLabel } from "./status.js";
 import { BUFFER_FLOOR, BUFFER_TARGET } from "./playback-buffer.js";
@@ -31,6 +33,7 @@ const state = {
   scroll: 0,
   selected: null,
   tracks: new Set(),
+  trackOrder: [],
   playhead: 0,
   dirty: false,
   frameTimes: [],
@@ -77,7 +80,7 @@ function log(
       if (c) {
         inspect(c);
         pan(c.start);
-        $("scroller").scrollTop = c.track * ROW;
+        $("scroller").scrollTop = trackRow(c.track) * ROW;
       }
     };
   }
@@ -191,11 +194,56 @@ function fit() {
   updateScroll();
   requestDraw();
 }
+const trackIcons = {
+  video: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="6" width="12" height="12" rx="2"/><path d="m15 10 6-4v12l-6-4"/></svg>',
+  audio: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11v2m4-6v10m5-13v16m5-13v10m4-6v2"/></svg>',
+};
+
+function trackOrderKey(project) {
+  const path = project.graph?.solution_revision?.base_project || project.path;
+  return path ? "opensync.trackOrder:" + path : "";
+}
+
+function loadTrackOrder(project) {
+  const defaults = project.tracks.map((_, index) => index);
+  const key = trackOrderKey(project);
+  if (!key) return defaults;
+  try {
+    const saved = JSON.parse(localStorage.getItem(key) || "[]");
+    const index = new Map(project.tracks.map((track, i) => [track.id, i]));
+    const ordered = saved.map((id) => index.get(id)).filter((i) => i != null);
+    return [...new Set([...ordered, ...defaults])];
+  } catch {
+    return defaults;
+  }
+}
+
+function trackRow(track) {
+  return Math.max(0, state.trackOrder.indexOf(track));
+}
+
+function moveTrack(from, to) {
+  if (from === to || to < 0 || to >= state.trackOrder.length) return;
+  const [track] = state.trackOrder.splice(from, 1);
+  state.trackOrder.splice(to, 0, track);
+  const key = trackOrderKey(state.project);
+  if (key) {
+    try {
+      localStorage.setItem(key, JSON.stringify(state.trackOrder.map((i) => state.project.tracks[i].id)));
+    } catch (error) {
+      log("warning", "Could not save this project's visual track order");
+    }
+  }
+  headerStamp = "";
+  requestDraw();
+}
+
 function setProject(p, fitView = true) {
   if (!p) return;
   stopPlayback();
   state.project = p;
   state.generation = p.generation;
+  state.trackOrder = loadTrackOrder(p);
   const fps = $("fps");
   fps.querySelector("option[data-project-rate]")?.remove();
   const matchingRate = Array.from(fps.options).find((o) => Math.abs(Number(o.value) - p.fps) < 0.00001);
@@ -206,6 +254,7 @@ function setProject(p, fitView = true) {
     fps.add(option);
   }
   state.selected = null;
+  state.retrySelection = new Set();
   state.tracks = new Set(p.tracks.length ? [0] : []);
   waves.clear();
   thumbs.clear();
@@ -220,6 +269,8 @@ function setProject(p, fitView = true) {
     missing = p.clips.filter((c) => c.missing).length;
   $("counts").textContent =
     `${p.clips.length} recordings · ${p.tracks.length} lanes · ${unresolved} unresolved${ambiguous ? ` · ${ambiguous} with match candidates` : ""}${review ? ` · ${review} to review` : ""}${missing ? ` · ${missing} missing` : ""}`;
+  const sourceNotice = $("singleSourceNotice");
+  sourceNotice.hidden = p.sourceGroups !== 1 || p.clips.length < 2;
   $("inspector").replaceChildren();
   const hint = document.createElement("p");
   hint.className = "muted";
@@ -293,13 +344,16 @@ function draw() {
       last = Math.min(p.tracks.length, Math.ceil((state.scroll + h) / ROW));
     for (let i = first; i < last; i++) {
       const y = i * ROW - state.scroll;
-      ctx.fillStyle = i % 2 ? "#171d23" : "#192027";
+      const track = p.tracks[state.trackOrder[i]];
+      ctx.fillStyle = track.kind === "audio"
+        ? (i % 2 ? "#191d2b" : "#1d2232")
+        : (i % 2 ? "#162128" : "#19252c");
       ctx.fillRect(0, y, w, ROW - 1);
       ctx.fillStyle = "#303944";
       ctx.fillRect(0, y + ROW - 1, w, 1);
       for (const c of visibleClips(
         p,
-        p.tracks[i],
+        track,
         state.left,
         state.left + w / state.pps,
       )) {
@@ -498,9 +552,9 @@ function drawClip(c, row) {
     ctx.fillText(c.activity, x + 7, y + height - 3);
   }
   if (clipped) ctx.restore();
-  ctx.strokeStyle = state.selected === c.index ? "#e3eff6" : ink;
-  ctx.globalAlpha = state.selected === c.index ? 1 : 0.55;
-  ctx.lineWidth = state.selected === c.index ? 2 : 1;
+  ctx.strokeStyle = (state.selected === c.index || state.retrySelection?.has(c.index)) ? "#e3eff6" : ink;
+  ctx.globalAlpha = (state.selected === c.index || state.retrySelection?.has(c.index)) ? 1 : 0.55;
+  ctx.lineWidth = (state.selected === c.index || state.retrySelection?.has(c.index)) ? 2 : 1;
   ctx.strokeRect(
     Math.max(-2, left) + 0.5,
     y + 0.5,
@@ -516,20 +570,26 @@ function drawHeaders(first, last) {
     headerStamp = stamp;
     el.replaceChildren();
     for (let i = first; i < last; i++) {
+      const trackIndex = state.trackOrder[i];
+      const track = state.project.tracks[trackIndex];
       const lane = document.createElement("div");
       lane.className = "track";
+      lane.dataset.kind = track.kind;
       lane.dataset.index = i;
       const name = document.createElement("div");
       name.className = "name";
-      name.textContent = state.project.tracks[i].name;
-      name.title = name.textContent;
+      name.innerHTML = trackIcons[track.kind] || "";
+      const trackLabel = document.createElement("span");
+      trackLabel.textContent = track.name.replace(/^\d+\s+/, "");
+      name.append(trackLabel);
+      name.title = trackLabel.textContent;
       const btn = document.createElement("button");
-      btn.textContent = state.tracks.has(i) ? "ON" : "OFF";
-      btn.className = state.tracks.has(i) ? "active" : "";
+      btn.textContent = state.tracks.has(trackIndex) ? "ON" : "OFF";
+      btn.className = state.tracks.has(trackIndex) ? "active" : "";
       btn.title = "Include this lane in audio audition (maximum two)";
       btn.onclick = () => {
-        if (state.tracks.has(i)) state.tracks.delete(i);
-        else if (state.tracks.size < 2) state.tracks.add(i);
+        if (state.tracks.has(trackIndex)) state.tracks.delete(trackIndex);
+        else if (state.tracks.size < 2) state.tracks.add(trackIndex);
         else {
           message(
             "Select at most two audition lanes. Turn one off first.",
@@ -542,11 +602,22 @@ function drawHeaders(first, last) {
         requestDraw();
       };
       const count = document.createElement("small");
-      count.textContent = `${state.project.tracks[i].clips.length} recordings`;
+      count.textContent = `${track.clips.length} recordings`;
       const hint = document.createElement("div");
       hint.className = "lanehint";
-      hint.textContent = "SOURCE AUDIO / VIDEO";
-      lane.append(name, btn, count, hint);
+      hint.textContent = track.kind === "audio" ? "AUDIO" : "VIDEO";
+      const move = document.createElement("span");
+      move.className = "track-order-controls";
+      for (const [direction, sign] of [[-1, "↑"], [1, "↓"]]) {
+        const button = document.createElement("button");
+        button.textContent = sign;
+        button.title = direction < 0 ? "Move track up" : "Move track down";
+        button.setAttribute("aria-label", button.title + ": " + trackLabel.textContent);
+        button.disabled = i + direction < 0 || i + direction >= state.trackOrder.length;
+        button.onclick = () => moveTrack(i, i + direction);
+        move.append(button);
+      }
+      lane.append(name, btn, count, hint, move);
       el.append(lane);
     }
   }
@@ -570,7 +641,7 @@ function hit(e) {
   return (
     visibleClips(
       state.project,
-      state.project.tracks[track],
+      state.project.tracks[state.trackOrder[track]],
       t,
       t + 0.000001,
     )[0] || null
@@ -834,6 +905,7 @@ async function decodeAudioBlock(token, at, duration) {
           start: at.toFixed(9),
           duration: duration.toFixed(9),
           tracks: JSON.stringify([...state.tracks]),
+          fallback: workstation.config().autoAudioFallback ? 1 : 0,
         }),
         playController.signal,
       )
@@ -989,7 +1061,19 @@ canvas.addEventListener("pointerdown", (e) => {
   }
   if (e.button !== 0) return;
   const c = hit(e);
-  if (c) inspect(c);
+  if (c) {
+    state.retrySelection ??= new Set();
+    if (e.ctrlKey) {
+      if (!state.retrySelection.size && state.selected != null && state.selected !== c.index) {
+        state.retrySelection.add(state.selected);
+      }
+      if (state.retrySelection.has(c.index)) state.retrySelection.delete(c.index);
+      else state.retrySelection.add(c.index);
+    } else {
+      state.retrySelection.clear();
+    }
+    inspect(c);
+  }
   const x = e.clientX - canvas.getBoundingClientRect().left;
   seek(state.left + x / state.pps);
 });
@@ -1100,12 +1184,14 @@ $("zoomIn").onclick = () => zoom(state.pps * 1.5);
 $("zoomOut").onclick = () => zoom(state.pps / 1.5);
 $("zoom").oninput = (e) => zoom(2 ** Number(e.target.value));
 $("thumbs").onchange = requestDraw;
+const updateSourceReview = setupSourceReview(api);
 let polling = false;
 async function poll() {
   if (polling || !api()) return;
   polling = true;
   try {
     const s = await api().Status(state.lastSeq);
+    updateSourceReview(s.sourceReview);
     for (const e of s.events) {
       state.lastSeq = Math.max(state.lastSeq, e.seq);
       log(e.kind, e.message, e.time, e.recording ?? null);
@@ -1128,6 +1214,8 @@ async function poll() {
       const p = await api().GetProject();
       setProject(p, !state.project || !s.running);
     }
+    $("retrySelected").disabled = s.running || !state.project?.path;
+    $("nextAttention").disabled = s.running || !state.project?.path;
     $("openMatchReview").disabled = s.running || !state.project?.path || !state.project?.manualCandidates?.length;
     let changed = false;
     if (s.running && state.project) {
@@ -1171,6 +1259,9 @@ const workstation = setupWorkstation({
   waves,
   thumbs,
   play: startPlayback,
+  refreshAudition: () => {
+    if (playing || buffering) action(() => startPlayback(playRate));
+  },
   stop: stopPlayback,
   togglePlay: () =>
     playing || buffering ? stopPlayback() : action(() => startPlayback()),
@@ -1182,6 +1273,7 @@ const workstation = setupWorkstation({
   }),
 });
 const matchReview = setupMatchReview({state, api, stop: stopPlayback, setProject, inspect, pan, message});
+setupAttention({state, api, action, setProject, inspect, pan, seek, message, stop: stopPlayback, matchReview, scrollToTrack: (track) => { $("scroller").scrollTop = trackRow(track) * ROW; }});
 window.runtime?.OnFileDrop?.((_x, _y, paths) => {
   action(async () => setProject(await api().OpenDroppedProject(paths)));
 }, false);

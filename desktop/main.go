@@ -10,6 +10,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options/windows"
 	"io/fs"
 	"os"
+	"slices"
 )
 
 //go:embed all:frontend
@@ -26,7 +27,7 @@ func main() {
 		OnStartup:        a.startup,
 		OnShutdown:       func(context.Context) { a.CancelSync(); a.media.Close() },
 		Bind:             []interface{}{a},
-		Debug:            options.Debug{OpenInspectorOnStartup: openDevTools == "true" && os.Getenv("OPENSYNC_DESKTOP_SMOKE") == ""},
+		Debug:            options.Debug{OpenInspectorOnStartup: slices.Contains(os.Args[1:], "--debug-ui") && os.Getenv("OPENSYNC_DESKTOP_SMOKE") == ""},
 		Windows:          &windows.Options{Theme: windows.Dark},
 		DragAndDrop:      &options.DragAndDrop{EnableFileDrop: true},
 	})

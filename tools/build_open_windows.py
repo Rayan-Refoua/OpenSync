@@ -10,7 +10,7 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE_DIR = ROOT / "release"
-PACKAGE_NAME = "OpenSync-0.1.0-alpha.4-windows-x64"
+PACKAGE_NAME = "OpenSync-0.1.0-beta.1-windows-x64"
 PROCESS_IMAGES = (
     "opensync.exe",
     "opensync-cli.exe",
@@ -53,17 +53,23 @@ def remove_local_release(path: Path, release_root: Path) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--project", type=Path, help="open this saved .opensync project after the build")
+    parser.add_argument("--local", action="store_true", help="replace the double-click build and skip ZIP packaging")
+    parser.add_argument("--debug-ui", action="store_true", help="open WebView2 DevTools in the same GUI build")
+    parser.add_argument("--build-only", action="store_true", help="build without launching the GUI")
+    parser.add_argument("--external-media-tools", action="store_true", help="package the app and CLI without redistributing FFmpeg binaries")
     args = parser.parse_args()
     if os.name != "nt":
         parser.error("this workflow builds and launches the Windows desktop app")
     if args.project and not args.project.is_file():
         parser.error("--project must name an existing .opensync project file")
 
-    release_root = RELEASE_DIR.resolve()
+    requested_root = RELEASE_DIR / "launcher" if args.local else RELEASE_DIR
+    release_root = requested_root.resolve()
+    if args.local and release_root != requested_root:
+        raise RuntimeError("Refusing to clean a redirected launcher directory")
     output = (release_root / PACKAGE_NAME).resolve()
     if output.parent != release_root or output == release_root:
         raise RuntimeError("Refusing to replace a package outside the repository release directory")
-    archive = release_root / f"{PACKAGE_NAME}.zip"
 
     close_instances()
     for old_release in release_root.iterdir() if release_root.exists() else ():
@@ -86,6 +92,7 @@ def main() -> None:
             str(ROOT / "tools" / "build_desktop_windows.ps1"),
             "-Output",
             str(output),
+            *(["-ExternalMediaTools"] if args.external_media_tools else []),
         ],
         cwd=ROOT,
         check=True,
@@ -94,18 +101,24 @@ def main() -> None:
     executable = output / "opensync.exe"
     if not executable.is_file():
         raise RuntimeError(f"Build completed without the desktop executable: {executable}")
-    archive_path = release_root / f"{PACKAGE_NAME}.zip"
-    with zipfile.ZipFile(
-        archive_path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=3, allowZip64=True
-    ) as package_zip:
-        for package_file in sorted(output.rglob("*")):
-            if package_file.is_file():
-                package_zip.write(package_file, package_file.relative_to(release_root))
+    if not args.local:
+        archive_path = release_root / f"{PACKAGE_NAME}.zip"
+        with zipfile.ZipFile(
+            archive_path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=3, allowZip64=True
+        ) as package_zip:
+            for package_file in sorted(output.rglob("*")):
+                if package_file.is_file():
+                    package_zip.write(package_file, package_file.relative_to(release_root))
+        print(f"Built package: {archive_path}", flush=True)
+    if args.build_only:
+        print(f"Built OpenSync: {executable}", flush=True)
+        return
     command = [str(executable)]
+    if args.debug_ui:
+        command.append("--debug-ui")
     if args.project:
         command.append(str(args.project.resolve()))
     subprocess.Popen(command, cwd=output)
-    print(f"Built package: {archive_path}", flush=True)
     print(f"Built and launched OpenSync: {executable}", flush=True)
 
 

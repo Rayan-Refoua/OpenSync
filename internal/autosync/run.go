@@ -4,7 +4,7 @@ package autosync
 
 import "context"
 
-const BuildVersion = "2026.11.16-r9"
+const BuildVersion = "0.1.0-beta.1"
 
 // Run retains the previous Go entry point for callers and saved workflows.
 func Run(ctx context.Context, args []string) error {

@@ -498,41 +498,35 @@ func (s *Service) serveAudio(ctx context.Context, w http.ResponseWriter, r *http
 	defer s.active.Add(-1)
 	const rate = 48000
 	out := make([]float32, int(math.Round(duration*rate))*2)
-	for _, track := range tracks {
-		for _, idx := range p.Tracks[track].Clips {
-			c := p.Clips[idx]
-			if c.Start >= start+duration {
-				break
+	for _, clip := range planAudition(p, tracks, start, start+duration, r.URL.Path == "/media/audio" && r.URL.Query().Get("fallback") == "1") {
+		c := p.Clips[clip.index]
+		if c.Missing {
+			http.Error(w, "selected track has missing media: "+c.Name, 404)
+			return
+		}
+		lo, hi := clip.spans[0].start, clip.spans[len(clip.spans)-1].end
+		inv := autosync.InverseMapping(c.Mapping)
+		a, b := autosync.MapTime(inv, lo), autosync.MapTime(inv, hi)
+		if b-a > 12 {
+			http.Error(w, "timing rate outside audition limits", 422)
+			return
+		}
+		var pcm []float32
+		// Decode a guard on both sides so resampler startup/ending transients
+		// stay outside adjoining audition blocks. Keep the grid sample-aligned.
+		decodeStart := math.Max(0, math.Floor((a-.05)*rate)/rate)
+		err := decode(ctx, c.Source, decodeStart, math.Min(c.Duration-decodeStart, b-decodeStart+.05), rate, func(data []byte) error {
+			for j := 0; j+3 < len(data); j += 4 {
+				pcm = append(pcm, sample(data[j:]))
 			}
-			if c.End <= start || !c.Audio {
-				continue
-			}
-			if c.Missing {
-				http.Error(w, "selected track has missing media: "+c.Name, 404)
-				return
-			}
-			lo, hi := math.Max(start, c.Start), math.Min(start+duration, c.End)
-			inv := autosync.InverseMapping(c.Mapping)
-			a, b := autosync.MapTime(inv, lo), autosync.MapTime(inv, hi)
-			if b-a > 12 {
-				http.Error(w, "timing rate outside audition limits", 422)
-				return
-			}
-			var pcm []float32
-			// Decode a guard on both sides so resampler startup/ending transients
-			// stay outside adjoining audition blocks. Keep the grid sample-aligned.
-			decodeStart := math.Max(0, math.Floor((a-.05)*rate)/rate)
-			err := decode(ctx, c.Source, decodeStart, math.Min(c.Duration-decodeStart, b-decodeStart+.05), rate, func(data []byte) error {
-				for j := 0; j+3 < len(data); j += 4 {
-					pcm = append(pcm, sample(data[j:]))
-				}
-				return nil
-			})
-			if err != nil {
-				http.Error(w, err.Error(), 422)
-				return
-			}
-			first, last := max(0, int(math.Ceil((lo-start)*rate-1e-7))), min(len(out)/2, int(math.Ceil((hi-start)*rate-1e-7)))
+			return nil
+		})
+		if err != nil {
+			http.Error(w, err.Error(), 422)
+			return
+		}
+		for _, span := range clip.spans {
+			first, last := max(0, int(math.Ceil((span.start-start)*rate-1e-7))), min(len(out)/2, int(math.Ceil((span.end-start)*rate-1e-7)))
 			for j := first; j < last; j++ {
 				src := (autosync.MapTime(inv, start+float64(j)/rate) - decodeStart) * rate
 				k := int(math.Floor(src))
@@ -542,7 +536,7 @@ func (s *Service) serveAudio(ctx context.Context, w http.ResponseWriter, r *http
 				}
 				next := min(k+1, len(pcm)/2-1)
 				for ch := 0; ch < 2; ch++ {
-					out[j*2+ch] += (pcm[k*2+ch]*(1-f) + pcm[next*2+ch]*f) / float32(len(tracks))
+					out[j*2+ch] += (pcm[k*2+ch]*(1-f) + pcm[next*2+ch]*f) * span.gain
 				}
 			}
 		}

@@ -7,10 +7,12 @@ import (
 
 // CorrelationQuery belongs to one measurement. Its query transform can be
 // reused for several reference positions. It is not shared between workers or
-// persisted. Only one padded transform is retained, bounding per-task storage.
+// persisted. One padded query transform and its reference scratch buffer are
+// retained. Returned dot products have independent storage.
 type CorrelationQuery struct {
 	query    []float64
 	spectrum []complex128
+	scratch  []complex128
 }
 
 func PrepareCorrelationQuery(query []float64) *CorrelationQuery {
@@ -31,10 +33,14 @@ func (q *CorrelationQuery) Dots(reference []float64) ([]float64, error) {
 			return nil, err
 		}
 	}
-	a := make([]complex128, size)
+	if len(q.scratch) != size {
+		q.scratch = make([]complex128, size)
+	}
+	a := q.scratch
 	for i, x := range reference {
 		a[i] = complex(x, 0)
 	}
+	clear(a[len(reference):])
 	if err = dsp.FFT(a); err != nil {
 		return nil, err
 	}

@@ -331,7 +331,14 @@ func CreateSolution(path string, change ReviewChange) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	layout, graph, err := nativeSolve(base.Data.Records, edges)
+	var preferred []int
+	if value, ok := base.Data.Graph["preferred_reference_recording"]; ok && value != nil {
+		i := int(number(value))
+		if i >= 0 && i < len(base.Data.Records) {
+			preferred = []int{i}
+		}
+	}
+	layout, graph, err := nativeSolve(base.Data.Records, edges, preferred...)
 	if err != nil {
 		return "", err
 	}
@@ -349,6 +356,10 @@ func CreateSolution(path string, change ReviewChange) (string, error) {
 		}
 	}
 	graph["placement_mode"] = mode
+	if len(preferred) > 0 {
+		graph["preferred_reference_recording"] = preferred[0]
+		graph["clock_policy"] = "preferred_recording_then_video"
+	}
 	graph["recording_continuity"] = continuityEvidence(base.Data.Records, layout)
 	graph["review_ledger"] = ledger
 	graph["manual_candidate_decisions"] = current.Data.Graph["manual_candidate_decisions"]
@@ -369,7 +380,8 @@ func CreateSolution(path string, change ReviewChange) (string, error) {
 		layout = applyChronology(base.Data.Records, layout, graph)
 	}
 	models, _ := nativeModelMaps(base.Data.Records, layout, graph)
-	graph["unresolved_timing_hypotheses"] = base.Data.Graph["unresolved_timing_hypotheses"]
+	graph["unresolved_timing_hypotheses"] = current.Data.Graph["unresolved_timing_hypotheses"]
+	graph["automatic_waveform_matches"] = current.Data.Graph["automatic_waveform_matches"]
 	models, graph, err = reapplyManualCandidates(base.Data.Records, models, graph)
 	if err != nil {
 		return "", err

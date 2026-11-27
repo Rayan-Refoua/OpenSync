@@ -38,10 +38,13 @@ type Clip struct {
 	Metadata             autosync.MediaRecord `json:"metadata"`
 }
 type Track struct {
+	ID    string `json:"id"`
+	Kind  string `json:"kind"`
 	Name  string `json:"name"`
 	Clips []int  `json:"clips"`
 }
 type Project struct {
+	SourceGroups     int                        `json:"sourceGroups"`
 	ManualCandidates []autosync.ManualCandidate `json:"manualCandidates"`
 	Name             string                     `json:"name"`
 	Path             string                     `json:"path"`
@@ -54,12 +57,12 @@ type Project struct {
 	Graph            map[string]any             `json:"graph"`
 }
 
-func LoadProject(path string) (*Project, error) {
+func LoadProject(path string, queueUncertain ...bool) (*Project, error) {
 	p, err := autosync.LoadNativeProject(path)
 	if err != nil {
 		return nil, err
 	}
-	v := BuildProject(p.Data)
+	v := BuildProject(p.Data, queueUncertain...)
 	v.Path = path
 	var extra struct {
 		Evidence json.RawMessage `json:"validated_relations"`
@@ -73,18 +76,22 @@ func LoadProject(path string) (*Project, error) {
 
 // BuildProject keeps binary64 timing and monotonic knots. Disconnected components
 // are appended for display, without claiming that they share a time origin.
-func BuildProject(p autosync.NativePayload) *Project {
+func BuildProject(p autosync.NativePayload, queueUncertain ...bool) *Project {
 	v := &Project{Name: p.Name, FPS: 50, Clips: []Clip{}, Tracks: []Track{}, Graph: p.Graph}
 	v.ManualCandidates = autosync.ManualCandidates(p)
 	reviewCounts := map[int]int{}
 	decisions, _ := p.Graph["manual_candidate_decisions"].(map[string]any)
 	for _, candidate := range v.ManualCandidates {
-		if decisions[candidate.ID] == nil {
+		if !candidate.AuditOnly && decisions[candidate.ID] == nil {
 			reviewCounts[candidate.Query]++
 		}
 	}
 	models := map[int]autosync.TimeModel{}
-	for _, m := range autosync.ReviewTimingModels(p) {
+	placements := p.Models
+	if len(queueUncertain) == 0 || !queueUncertain[0] {
+		placements = autosync.ReviewTimingModels(p)
+	}
+	for _, m := range placements {
 		models[m.Recording] = m
 	}
 	groups := map[int][]int{}
@@ -176,40 +183,65 @@ func BuildProject(p autosync.NativePayload) *Project {
 	for i := range order {
 		order[i] = i
 	}
-	type laneGroup struct{ parent, family string }
+	type laneGroup struct{ parent, family, source, kind string }
 	trackKeys := make([]laneGroup, len(v.Clips))
+	groupLabels := map[string]laneGroup{}
 	for i, c := range v.Clips {
 		source := c.Metadata.Source
 		if source == "" {
 			source = c.Source
 		}
-		trackKeys[i] = laneGroup{filepath.Dir(source), autosync.TrackFamily(c.Name)}
+		record := c.Metadata
+		record.Source, record.Name = source, c.Name
+		key, label := autosync.SourceTrackGroup(record)
+		kind := "audio"
+		if c.Video {
+			kind = "video"
+		}
+		key = kind + "|" + key
+		group := laneGroup{filepath.Dir(source), label, key, kind}
+		if current, ok := groupLabels[key]; !ok || group.parent < current.parent {
+			groupLabels[key] = group
+		}
+		trackKeys[i] = group
+	}
+	v.SourceGroups = len(groupLabels)
+	for i, group := range trackKeys {
+		trackKeys[i] = groupLabels[group.source]
 	}
 	sort.SliceStable(order, func(i, j int) bool {
 		a, b := trackKeys[order[i]], trackKeys[order[j]]
+		if a.kind != b.kind {
+			return a.kind == "video"
+		}
 		if a.parent != b.parent {
 			return a.parent < b.parent
 		}
 		if a.family != b.family {
 			return a.family < b.family
 		}
+		if a.source != b.source {
+			return a.source < b.source
+		}
 		return v.Clips[order[i]].Start < v.Clips[order[j]].Start
 	})
 	laneEnds := []float64{}
 	laneGroups := []laneGroup{}
+	laneCounts := map[string]int{}
 	for _, i := range order {
 		c := &v.Clips[i]
 		group := trackKeys[i]
 		lane := -1
 		for j, g := range laneGroups {
-			if g == group && laneEnds[j] <= c.Start+1e-9 {
+			if g.source == group.source && laneEnds[j] <= c.Start+1e-9 {
 				lane = j
 				break
 			}
 		}
 		if lane < 0 {
 			lane = len(v.Tracks)
-			v.Tracks = append(v.Tracks, Track{Name: fmt.Sprintf("%02d  %s", lane+1, trackFamilyLabel(group.parent, group.family)), Clips: []int{}})
+			laneCounts[group.source]++
+			v.Tracks = append(v.Tracks, Track{Kind: group.kind, ID: fmt.Sprintf("%s|%d", group.source, laneCounts[group.source]), Name: fmt.Sprintf("%02d  %s", lane+1, trackFamilyLabel(group.parent, group.family)), Clips: []int{}})
 			laneEnds = append(laneEnds, 0)
 			laneGroups = append(laneGroups, group)
 		}

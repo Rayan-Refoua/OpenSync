@@ -1,4 +1,4 @@
-param([Parameter(Mandatory=$true)][string]$Output)
+param([Parameter(Mandatory=$true)][string]$Output, [switch]$ExternalMediaTools)
 $ErrorActionPreference = 'Stop'
 $repository = Split-Path -Parent $PSScriptRoot
 $destination = [IO.Path]::GetFullPath($Output)
@@ -14,7 +14,7 @@ try {
     try {
         go run ./tools/winresources
         if ($LASTEXITCODE -ne 0) { throw 'Windows manifest build failed' }
-        go build -trimpath -tags desktop,production -ldflags '-H windowsgui' -o (Join-Path $destination 'opensync.exe') .
+        go build -trimpath -tags desktop,production,debug,devtools -ldflags '-H windowsgui' -o (Join-Path $destination 'opensync.exe') .
         if ($LASTEXITCODE -ne 0) { throw 'Desktop build failed' }
         $notices=Join-Path $destination 'Third-party licenses'
         New-Item -ItemType Directory -Force -Path $notices | Out-Null
@@ -33,10 +33,13 @@ try {
         if (Test-Path -LiteralPath $resource) { Remove-Item -LiteralPath $resource }
         Pop-Location
     }
+    if (!$ExternalMediaTools) {
     foreach ($program in @('ffmpeg','ffprobe')) { Copy-Item -LiteralPath (Get-Command $program -ErrorAction Stop).Source -Destination (Join-Path $destination "runtime/bin/$program.exe") }
+    }
     Copy-Item -LiteralPath 'LICENSE' -Destination $destination
     Copy-Item -LiteralPath 'docs/DESKTOP.md' -Destination (Join-Path $destination 'DESKTOP-NOTES.md')
     Copy-Item -LiteralPath 'docs/COMPONENT-AND-CHRONOLOGY.md' -Destination (Join-Path $destination 'ENGINE-NOTES.md')
+    if (!$ExternalMediaTools) {
     $savedErrorPreference = $ErrorActionPreference
     try {
         # Windows PowerShell 5.1 can promote native stderr into a terminating
@@ -47,10 +50,11 @@ try {
         & (Join-Path $destination 'runtime/bin/ffmpeg.exe') -version 2>&1 | Out-File -LiteralPath (Join-Path $destination 'FFmpeg-version.txt') -Encoding utf8
         if ($LASTEXITCODE -ne 0) { throw 'FFmpeg version capture failed' }
     } finally { $ErrorActionPreference = $savedErrorPreference }
+    }
     & (Join-Path $destination 'opensync-cli.exe') --help | Set-Content -LiteralPath (Join-Path $destination 'CLI-HELP.txt')
     if ($LASTEXITCODE -ne 0) { throw 'CLI smoke test failed' }
     git rev-parse HEAD | Set-Content -LiteralPath (Join-Path $destination 'source-checkpoint.txt')
     git status --porcelain | Set-Content -LiteralPath (Join-Path $destination 'source-worktree-status.txt')
-    Get-ChildItem -LiteralPath $destination -Recurse -File | Get-FileHash -Algorithm SHA256 | Select-Object Path,Hash | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $destination 'package-hashes.json')
+    Get-ChildItem -LiteralPath $destination -Recurse -File | Get-FileHash -Algorithm SHA256 | Select-Object @{Name='Path';Expression={$_.Path.Substring($destination.TrimEnd('\','/').Length + 1)}},Hash | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $destination 'package-hashes.json')
     Write-Output "Built OpenSync desktop and CLI: $destination"
 } finally { $env:CGO_ENABLED=$priorCGO;Pop-Location }

@@ -11,6 +11,14 @@ const descriptions = {
     "Controls how broadly OpenSync searches after its initial acoustic passes leave clips unresolved.",
     "Try Deep for faint scratch audio against several long references. Quick reduces runtime when the initial results are already good. Off skips distributed recovery and can miss weak matches. Changing search depth leaves the verification thresholds in place.",
   ],
+  timingProfiles: [
+    "Controls how many acoustic windows are measured to check a timing model. Both options use the same audio sampling and separate model fitting, selection, and audit regions.",
+    "Adaptive starts with a smaller set on strong, long, single-offset relationships. Weak evidence, suspected drift, and competing offsets use the dense schedule.",
+  ],
+  globalTiming: [
+    "Allows a joint clock and offset fit to refine the final timeline when independent audio windows show lower timing error.",
+    "Enable for a controlled comparison on overlapping continuous recordings. The reference clock, nonlinear timing, and conflicting evidence are protected by placement guards. Leave off for the established production solver.",
+  ],
   readMode: [
     "Automatic can use direct audio reads for supported MP4/MOV files on confirmed SSDs. Buffered uses the standard FFmpeg input path.",
     "Leave Automatic on for SSD camera media. Try Buffered if you suspect a container or storage compatibility issue. Buffered can read more data. Both modes aim to produce the same analysis input.",
@@ -22,6 +30,10 @@ const descriptions = {
   longReferenceHours: [
     "Caps the total duration of reference material examined in extra long-reference searches. Zero uses the recovery preset.",
     "Increase the budget if short clips may overlap late sections of several long recordings. Lower it to finish sooner when extra searches rarely help. Material outside the budget may go unexamined.",
+  ],
+  recoveryReferenceHours: [
+    "Caps the sum of reference durations scheduled for distributed acoustic recovery. Earlier acoustic searches use their usual coverage. Zero leaves the preset in control.",
+    "For example, one reference hour can cover six ten-minute reference comparisons. Raising the cap can recover more candidates. Deferred pairs are recorded as unsearched.",
   ],
   minWave: [
     "Sets the minimum waveform correlation for verification paths that use waveform evidence.",
@@ -95,6 +107,10 @@ const descriptions = {
     "Limits how many active cameras the monitor can show and buffer at once.",
     "Use two feeds for a slow disk or four for a multicamera review. Raising the limit helps compare more angles, but can increase decode load and buffering delays.",
   ],
+  autoAudioFallback: [
+    "When neither selected audition track has audio at the playhead, temporarily play up to two other tracks. Your selection resumes automatically as soon as either selected track has audio.",
+    "Enable for continuous listening across camera or recorder gaps. Leave off to hear those gaps as silence when inspecting specific tracks. Turning every audition track off always mutes playback.",
+  ],
   monitorPosition: [
     "Moves the multicamera monitor without changing the timeline or synchronization.",
     "Choose Right of timeline for a tall portrait grid. Choose Above timeline when you want a full-width timeline. The tradeoff is horizontal versus vertical editing space.",
@@ -119,7 +135,13 @@ const optionGuides = {
     balanced: "Start here for normal production jobs with mixed clip lengths and scratch audio quality.",
     quick: "Use for a fast pass when references are clear and extra searching is unlikely to help. Some weak overlaps may remain unresolved.",
     deep: "Use when short or distant clips remain unresolved and several references could contain the same event. Expect more processing time. Verification criteria still apply.",
+    forensic: "Use when coverage matters more than runtime. Searches every eligible reference for unresolved short clips and includes occupied offsets. The explicit project cap still applies.",
     off: "Use to isolate the standard matching passes or skip distributed recovery on well-recorded material. This can miss weak matches that need a broader search.",
+  },
+  timingProfiles: {
+    auto: "Use routinely. Automatic uses dense timing for small workloads and tries sparse timing on expensive workloads only where independent holdout evidence already supports the offset.",
+    dense: "Use for production, critical reviews, and projects with intermittent timing changes. Measures the complete set of timing windows.",
+    adaptive: "Try on long, continuous recordings with clear shared audio. A sparse pass can miss a brief timing change between sampled windows. Use Dense if that risk matters.",
   },
   readMode: {
     auto: "Use routinely. Compatible MP4/MOV files on confirmed SSDs can use direct audio reads, with the standard input path available for other sources.",

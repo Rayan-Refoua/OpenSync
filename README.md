@@ -16,13 +16,13 @@ The project combines a native synchronization engine with a desktop timeline for
 
 **Our goal is to build a reliable, high-performance, freely available alternative to proprietary synchronization tools, without compromising transparency or source-media integrity.**
 
-> **Project status — Public alpha development**
+> **Project status — Public beta**
 >
-> OpenSync currently includes a native Go synchronization engine, a Windows desktop workstation, an interactive waveform timeline, buffered multicamera monitoring, review revisions, configurable sync/export policies, and Premiere-compatible XML export. The public alpha is available as a portable Windows x64 package.
+> OpenSync currently includes a native Go synchronization engine, a Windows desktop workstation, an interactive waveform timeline, buffered multicamera monitoring, review revisions, configurable sync/export policies, and Premiere-compatible XML export. The first public beta is available as a portable Windows x64 package.
 >
-> This is an early alpha, not a production-certified release. The engine acceptance benchmark remains advisory and has known gaps; Premiere XML has structural checks but is not certified across all Premiere versions, media types, or production workflows. See [known limits and benchmark results](docs/ENGINE-ACCEPTANCE.md) before relying on a result without review.
+> This beta is intended for evaluation with reviewed timelines. The engine acceptance benchmark remains advisory and has known gaps; Premiere XML has structural checks but is not certified across all Premiere versions, media types, or production workflows. See [known limits and benchmark results](docs/ENGINE-ACCEPTANCE.md) before relying on a result without review.
 >
-> Download [OpenSync v0.1.0-alpha.4](https://github.com/Rayan-Refoua/OpenSync/releases/tag/v0.1.0-alpha.4) or browse [all releases](https://github.com/Rayan-Refoua/OpenSync/releases).
+> Download [OpenSync v0.1.0-beta.1](https://github.com/Rayan-Refoua/OpenSync/releases/tag/v0.1.0-beta.1) or browse [all releases](https://github.com/Rayan-Refoua/OpenSync/releases).
 
 ---
 
@@ -59,7 +59,7 @@ OpenSync does not assume that every recording can be synchronized. A result that
 | File-time placement in chronological mode                    | Optional, bounded, and explicitly provisional         |
 | Audio refinement of eligible file-time estimates             | Implemented; retains chronological uncertainty        |
 | Native `.opensync` project format                           | Implemented                                          |
-| Windows desktop timeline                                    | Working alpha                                        |
+| Windows desktop timeline                                    | Working beta                                        |
 | Waveform rendering and navigation                           | Implemented                                          |
 | Synchronized audio audition                                 | Implemented                                          |
 | Multicamera preview monitor                                 | Implemented; bounded performance testing             |
@@ -69,7 +69,7 @@ OpenSync does not assume that every recording can be synchronized. A result that
 | Timeline filename search and project drag-and-drop          | Implemented                                          |
 | Additional NLE interchange formats                          | Planned                                              |
 | General-purpose manual timeline editing                     | Not yet implemented                                  |
-| Packaged public releases                                    | Windows x64 portable alpha available                 |
+| Packaged public releases                                    | Windows x64 portable beta available                 |
 
 The available functionality is more extensive than this summary. Technical details and limitations are maintained in the [documentation directory](docs/).
 
@@ -205,7 +205,7 @@ See [Desktop documentation](docs/DESKTOP.md) for controls, playback architecture
 
 ## Getting started
 
-### Windows — Prebuilt alpha
+### Windows — Prebuilt beta
 
 Check the [Releases page](https://github.com/Rayan-Refoua/OpenSync/releases) for an available Windows build.
 
@@ -213,13 +213,13 @@ For a packaged release:
 
 1. Download the Windows x64 archive.
 2. Extract the entire archive into a folder.
-3. Launch `opensync.exe` for the desktop workstation.
+3. Make FFmpeg and FFprobe available, then launch `opensync.exe` for the desktop workstation.
 4. Add recordings and run synchronization.
 5. Inspect uncertain or unresolved results before exporting.
 
-The current published build is [v0.1.0-alpha.4](https://github.com/Rayan-Refoua/OpenSync/releases/tag/v0.1.0-alpha.4). It is a portable alpha, not an installer; Windows file associations and an installer are not included.
+The current published build is [v0.1.0-beta.1](https://github.com/Rayan-Refoua/OpenSync/releases/tag/v0.1.0-beta.1). It is a portable Windows x64 beta. Launch the application from the extracted folder.
 
-The package is designed to keep `ffmpeg.exe` and `ffprobe.exe` in `runtime/bin` beside the application executables.
+Install FFmpeg and FFprobe separately. Put both executables in `runtime/bin` beside the application or make them available through Windows PATH.
 
 Microsoft Edge WebView2 Runtime is required for the desktop application. Windows may show a SmartScreen warning for unsigned or newly distributed binaries.
 
@@ -472,7 +472,7 @@ Near-term priorities include:
 
 Longer-term goals include broader platform support, more capable manual timeline intervention, and professional-grade interoperability across editing applications.
 
-These are development goals, not guarantees that the features are available in the current alpha.
+These are development goals, not guarantees that the features are available in the current beta.
 
 ## Contributing
 

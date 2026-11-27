@@ -13,6 +13,11 @@ import (
 )
 
 type WorkstationSettings struct {
+	ReferenceSource    string                    `json:"referenceSource,omitempty"`
+	UseOriginalAudio   bool                      `json:"useOriginalAudio,omitempty"`
+	QueueUncertain     bool                      `json:"queueUncertain,omitempty"`
+	AutoAudioFallback  bool                      `json:"autoAudioFallback"`
+	SourceReview       string                    `json:"sourceReview"`
 	FileTimePlacement  *bool                     `json:"fileTimePlacement,omitempty"`
 	Analysis           autosync.AnalysisSettings `json:"analysis"`
 	OmitProjectMarker  bool                      `json:"omitProjectMarker"`
@@ -35,6 +40,11 @@ type MonitorLayout struct {
 }
 
 func normalizeLayout(s *WorkstationSettings) error {
+	switch s.SourceReview {
+	case "", "automatic", "ambiguous", "always":
+	default:
+		return fmt.Errorf("invalid source review setting")
+	}
 	if err := s.Analysis.Normalize(); err != nil {
 		return err
 	}

@@ -15,22 +15,24 @@ import (
 )
 
 type MediaRecord struct {
-	ID             string         `json:"id"`
-	Name           string         `json:"name"`
-	Source         string         `json:"source"`
-	LocalSource    string         `json:"local_source"`
-	Cache          string         `json:"cache"`
-	CacheSHA       string         `json:"cache_sha256"`
-	Duration       float64        `json:"duration"`
-	SourceBytes    int64          `json:"source_bytes"`
-	SourceMtime    int64          `json:"source_mtime_ns"`
-	Video          map[string]any `json:"video"`
-	Audio          map[string]any `json:"audio"`
-	SourceTimecode map[string]any `json:"source_timecode"`
-	FormatTags     map[string]any `json:"format_tags,omitempty"`
-	SourceGroup    string         `json:"source_group,omitempty"`
-	AnalysisAudio  string         `json:"analysis_audio,omitempty"`
-	CacheReused    bool           `json:"cache_reused"`
+	ID               string            `json:"id"`
+	Name             string            `json:"name"`
+	Source           string            `json:"source"`
+	LocalSource      string            `json:"local_source"`
+	Cache            string            `json:"cache"`
+	CacheSHA         string            `json:"cache_sha256"`
+	Duration         float64           `json:"duration"`
+	SourceBytes      int64             `json:"source_bytes"`
+	SourceMtime      int64             `json:"source_mtime_ns"`
+	Video            map[string]any    `json:"video"`
+	AudioStreams     []map[string]any  `json:"audio_streams,omitempty"`
+	SourceAssignment *SourceAssignment `json:"source_assignment,omitempty"`
+	Audio            map[string]any    `json:"audio"`
+	SourceTimecode   map[string]any    `json:"source_timecode"`
+	FormatTags       map[string]any    `json:"format_tags,omitempty"`
+	SourceGroup      string            `json:"source_group,omitempty"`
+	AnalysisAudio    string            `json:"analysis_audio,omitempty"`
+	CacheReused      bool              `json:"cache_reused"`
 }
 type TimeModel struct {
 	PlacementUncertainty float64     `json:"placement_uncertainty_seconds,omitempty"`
@@ -48,11 +50,12 @@ type TimeModel struct {
 	Resolved             bool        `json:"globally_resolved"`
 }
 type NativePayload struct {
-	Name    string         `json:"name"`
-	Engine  string         `json:"engine_version"`
-	Records []MediaRecord  `json:"recordings"`
-	Models  []TimeModel    `json:"timing_models"`
-	Graph   map[string]any `json:"graph"`
+	ValidatedRelations []*PairEvidence `json:"validated_relations"`
+	Name               string          `json:"name"`
+	Engine             string          `json:"engine_version"`
+	Records            []MediaRecord   `json:"recordings"`
+	Models             []TimeModel     `json:"timing_models"`
+	Graph              map[string]any  `json:"graph"`
 }
 type NativeProject struct {
 	Format  string          `json:"format"`

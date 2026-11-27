@@ -12,11 +12,19 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output", type=Path, default=ROOT / ".dev-build")
+    parser.add_argument("--output", type=Path, default=ROOT / ".dev-build", help="output for the optional FFmpeg SDK build")
     parser.add_argument("--run", action="store_true", help="launch the built app")
     parser.add_argument("--project", type=Path, help="saved .opensync project to open")
     parser.add_argument("--ffmpeg-sdk", type=Path, help="build and launch the experimental shared FFmpeg decoder")
     args = parser.parse_args()
+    if not args.ffmpeg_sdk:
+        command = [sys.executable, str(ROOT / "tools" / "build_open_windows.py"), "--local", "--debug-ui"]
+        if args.project:
+            command.extend(["--project", str(args.project.resolve())])
+        if not args.run:
+            command.append("--build-only")
+        subprocess.run(command, cwd=ROOT, check=True)
+        return
     if os.name != "nt":
         parser.error("this script builds the Windows desktop app")
     if args.project and (not args.run or not args.project.is_file()):
@@ -26,7 +34,7 @@ def main() -> None:
         parser.error("Go must be on PATH")
     out = args.output.resolve()
     out.mkdir(parents=True, exist_ok=True)
-    exe = out / "opensync-dev.exe"
+    exe = out / "opensync.exe"
     env = dict(os.environ, CGO_ENABLED="0")
     tags = "desktop,production,debug,devtools"
     if args.ffmpeg_sdk:
@@ -58,7 +66,7 @@ def main() -> None:
         candidate = Path(staging) / exe.name
         subprocess.run(
             [go, "build", "-trimpath", "-tags", tags,
-             "-ldflags", "-H windowsgui -X main.openDevTools=true", "-o", str(candidate), "."],
+             "-ldflags", "-H windowsgui", "-o", str(candidate), "."],
             cwd=ROOT / "desktop", env=env, check=True,
         )
         try:
@@ -67,7 +75,7 @@ def main() -> None:
             raise SystemExit(f"Cannot replace {exe}. Close the running dev build and retry.") from exc
     print(exe, flush=True)
     if args.run:
-        command = [str(exe)]
+        command = [str(exe), "--debug-ui"]
         if args.project:
             command.append(str(args.project.resolve()))
         subprocess.Popen(command, cwd=out, env=env)
