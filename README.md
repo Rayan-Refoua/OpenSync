@@ -73,6 +73,8 @@ OpenSync does not assume that every recording can be synchronized. A result that
 
 The available functionality is more extensive than this summary. Technical details and limitations are maintained in the [documentation directory](docs/).
 
+The documentation is also a VitePress site. Run `npm ci` followed by `npm run docs:dev` for a local preview, or `npm run docs:build` to create a static site. The `docs` folder can also be opened as an Obsidian vault.
+
 ## Architecture
 
 OpenSync separates synchronization evidence, timing-model estimation, timeline presentation, and editor export.

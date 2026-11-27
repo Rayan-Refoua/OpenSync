@@ -10,6 +10,8 @@
 /desktop/build/
 /desktop/frontend/wailsjs/
 node_modules/
+docs/.vitepress/cache/
+docs/.vitepress/dist/
 
 # Local research and generated data
 /scratch/

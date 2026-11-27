@@ -8,7 +8,7 @@ OpenSync is being developed as a practical, independently implemented alternativ
 
 | Product | End-to-end runtime | Correctly synchronized clips | Timing error / drift | Unresolved and false matches | Export / usability | Evidence |
 | --- | --- | --- | --- | --- | --- | --- |
-| [OpenSync](../README.md) | Not tested | Not tested | Not tested | Not tested | Not tested | Pending |
+| [OpenSync](./index.md) | Not tested | Not tested | Not tested | Not tested | Not tested | Pending |
 | [Align](https://github.com/FedyaLight/align) | Not tested | Not tested | Not tested | Not tested | Not tested | Pending |
 | Red Giant PluralEyes 4 | Not tested | Not tested | Not tested | Not tested | Not tested | Pending |
 | Syncaila | **Awaiting volunteer** | **Awaiting volunteer** | **Awaiting volunteer** | **Awaiting volunteer** | **Awaiting volunteer** | No license available to the maintainer |
@@ -43,6 +43,6 @@ OpenSync has internal tests and engineering benchmarks documented in [engine acc
 
 ## Contributing benchmark results
 
-Please [open an issue](https://github.com/Rayan-Refoua/OpenSync/issues) with the subject **Benchmark contribution: <product>** and include the product/version, operating system, CPU/RAM, input clip counts and total duration, dataset identifier or hashes, settings, cache state, exact timing boundaries, output artifacts, and verification method. Do not upload copyrighted or private recordings without permission.
+Please [open an issue](https://github.com/Rayan-Refoua/OpenSync/issues) with the subject **Benchmark contribution: &lt;product&gt;** and include the product/version, operating system, CPU/RAM, input clip counts and total duration, dataset identifier or hashes, settings, cache state, exact timing boundaries, output artifacts, and verification method. Do not upload copyrighted or private recordings without permission.
 
 We welcome results that expose OpenSync's weaknesses as much as its strengths. Corrections to published measurements should be traceable to a specific run and documented openly.
